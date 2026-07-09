@@ -1,0 +1,92 @@
+# Local dev stack for Orpheus.
+#
+# Phase 0: minimal — just the dependencies we'll need from Phase 1 onward.
+# Phase 1: API connects to postgres + redis. Workers connect too.
+# Phase 4: Temporal added.
+#
+# Usage:
+#   docker compose up -d           # start
+#   docker compose down            # stop
+#   docker compose down -v         # stop + wipe volumes
+#
+# Default credentials are dev-only. NEVER use these in production.
+
+services:
+  # ─────────────────────────────────────────────────────────────────
+  # Postgres 16 — primary database
+  # ─────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: orpheus-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: orpheus
+      POSTGRES_PASSWORD: orpheus
+      POSTGRES_DB: orpheus
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orpheus -d orpheus"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────
+  # Redis 7 — queue (Arq) + cache + idempotency + rate limits
+  # ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: orpheus-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────
+  # MinIO — S3-compatible object storage (dev only)
+  # Production: real AWS S3.
+  # ─────────────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: orpheus-minio
+    restart: unless-stopped
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: orpheus
+      MINIO_ROOT_PASSWORD: orpheus-dev-secret
+    ports:
+      - "9000:9000"  # S3 API
+      - "9001:9001"  # Web console (http://localhost:9001)
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────
+  # LocalStack — for AWS SDK testing (S3, SQS, etc.) — Phase 0 stub
+  # Uncomment when needed.
+  # ─────────────────────────────────────────────────────────────────
+  # localstack:
+  #   image: localstack/localstack:3
+  #   container_name: orpheus-localstack
+  #   environment:
+  #     SERVICES: s3,sqs
+  #   ports:
+  #     - "4566:4566"
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

@@ -1,0 +1,237 @@
+name: orpheus-monorepo
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.5.10"
+  GO_VERSION: "1.23"
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────
+  # Lint, format, type-check (Python)
+  # ─────────────────────────────────────────────────────────────────
+  lint:
+    name: Lint & type-check (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --frozen
+
+      - name: Ruff (lint)
+        run: uv run ruff check . --output-format=github
+
+      - name: Ruff (format check)
+        run: uv run ruff format --check .
+
+      - name: Pyright (type-check)
+        run: uv run pyright
+
+  # ─────────────────────────────────────────────────────────────────
+  # Test (Python)
+  # ─────────────────────────────────────────────────────────────────
+  test:
+    name: Test (Python)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --frozen
+
+      - name: Run tests
+        run: uv run pytest --cov=apps --cov=packages --cov-report=xml --cov-report=term
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: python
+
+  # ─────────────────────────────────────────────────────────────────
+  # Go — lint, vet, test, coverage
+  # ─────────────────────────────────────────────────────────────────
+  go:
+    name: Go (${{ matrix.go-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.22", "1.23", "1.24"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Download modules
+        working-directory: apps/api
+        run: go mod download
+
+      - name: go vet
+        working-directory: apps/api
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.61.0
+          working-directory: apps/api
+          args: --timeout=5m
+
+      - name: go test (race + coverage)
+        working-directory: apps/api
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage
+        if: matrix.go-version == '1.23'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./apps/api/coverage.out
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: go
+
+  # ─────────────────────────────────────────────────────────────────
+  # Protobuf / gRPC contract (deferred; Phase 1+)
+  # ─────────────────────────────────────────────────────────────────
+  proto:
+    name: Protobuf (buf)
+    runs-on: ubuntu-latest
+    # No protos yet — this job is stubbed for Phase 1+ (see packages/proto/).
+    # It will be wired up once orpheus/v1/*.proto is checked in.
+    continue-on-error: false
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate protos
+        run: |
+          if [ -d "packages/proto" ] && [ -n "$$(find packages/proto -name '*.proto' 2>/dev/null)" ]; then
+            echo "Found .proto files; running buf lint"
+            # buf is not pre-installed on ubuntu-latest runners; install on demand.
+            if ! command -v buf >/dev/null 2>&1; then
+              curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.47.2/buf-Linux-x86_64" \
+                -o /usr/local/bin/buf
+              chmod +x /usr/local/bin/buf
+            fi
+            buf lint packages/proto
+          else
+            echo "⏭  no protos yet — Phase 1+ will define orpheus/v1/*.proto"
+          fi
+
+  # ─────────────────────────────────────────────────────────────────
+  # Security scan (Python)
+  # ─────────────────────────────────────────────────────────────────
+  security:
+    name: Security scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Sync dependencies
+        run: uv sync --all-packages --frozen
+
+      - name: pip-audit
+        run: |
+          uv tool run --from pip-audit pip-audit --strict
+
+  # ─────────────────────────────────────────────────────────────────
+  # OpenAPI / contract validation
+  # Spawns the Go API (apps/api) and validates its OpenAPI spec.
+  # ─────────────────────────────────────────────────────────────────
+  contract:
+    name: OpenAPI validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Download modules
+        working-directory: apps/api
+        run: go mod download
+
+      - name: Start the API server
+        working-directory: apps/api
+        run: go run ./cmd/api &
+        env:
+          PORT: "8080"
+
+      - name: Wait for /health
+        run: |
+          for i in {1..30}; do
+            if curl -fsS http://localhost:8080/health >/dev/null 2>&1; then
+              echo "API is up"
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Validate OpenAPI spec
+        run: |
+          set -e
+          curl -fsS http://localhost:8080/api/openapi.json -o /tmp/openapi.json
+          python3 -c "
+          import json, sys
+          with open('/tmp/openapi.json') as f:
+              spec = json.load(f)
+          assert spec['info']['title'] == 'Orpheus API', spec['info']
+          assert '/health' in spec['paths'], list(spec['paths'])
+          print('OpenAPI OK —', spec['info']['title'], 'v' + spec['info']['version'])
+          "
+
+      - name: Stop the API server
+        if: always()
+        run: |
+          pkill -f 'cmd/api' || true
