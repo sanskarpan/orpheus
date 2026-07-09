@@ -2,36 +2,76 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Orpheus API",
-    "version": "0.1.0",
-    "description": "Multi-tenant SaaS for asynchronous audio processing."
+    "version": "0.2.0",
+    "description": "The Orpheus API provides asynchronous audio processing as a multi-tenant SaaS. Upload raw audio, submit processing jobs (transcription, enhancement, separation, classification, and more), and consume results via polling or webhooks.\n\n## Authentication\n\nAll `/v1/...` endpoints require authentication. Two schemes are supported:\n\n- **Keycloak JWT** \u2014 a bearer token obtained from your org's Keycloak realm. Used for browser-based and user-context access.\n- **API key** \u2014 a long-lived token (prefix `ak_live_...` or `ak_test_...`) issued via `POST /v1/api-keys`. Used for server-to-server and CI/CD integrations. The full secret is returned exactly once at creation; Orpheus stores only a salted hash.\n\nA request may present either scheme via the appropriate header. Endpoints that mint credentials (`POST /v1/api-keys`) require a Keycloak JWT so that an interactive user is always in the loop.\n\n## Rate limits\n\nEvery org has per-minute and per-hour rate limits that apply across all `/v1/...` endpoints. Limits depend on the org's plan and are reported in the `X-RateLimit-Limit`, `X-RateLimit-Remaining`, and `X-RateLimit-Reset` response headers. Exceeding a limit returns `429 Too Many Requests` with a `Retry-After` header.\n\n## Idempotency\n\nThe endpoints that create resources (`POST /v1/uploads`, `POST /v1/jobs`, `POST /v1/jobs/bulk`, `POST /v1/webhooks`, `POST /v1/api-keys`) accept an optional `Idempotency-Key` request header (1\u2013255 characters; a UUIDv4 is recommended). When the same key is replayed with the same body within the 24-hour retention window, the original response is returned without re-executing the operation. Replaying the same key with a different body returns `409 Conflict`.\n\n## Webhooks\n\nOrpheus delivers asynchronous events (job lifecycle, upload completion, billing) to HTTPS endpoints registered via `POST /v1/webhooks`. Each delivery includes an `Orpheus-Signature` header (HMAC-SHA256 of the body, keyed on the endpoint's secret) and a monotonically increasing `Orpheus-Delivery-Id`. Deliveries are retried with exponential backoff for up to 24 hours; inspect `GET /v1/webhooks/{id}/deliveries` for the full history and trigger redelivery via `POST /v1/webhooks/{id}/deliveries/{delivery_id}/replay`.\n\n## Versioning\n\nThe API is versioned via the URL prefix. The current major version is `v1`. Breaking changes will ship under a new prefix; additive changes roll out under `v1` with a deprecation notice in the `Sunset` header and a `Deprecation` notice in the response body.",
+    "contact": {
+      "name": "Orpheus Engineering",
+      "url": "https://docs.orpheus.dev",
+      "email": "api@orpheus.dev"
+    },
+    "license": {
+      "name": "Proprietary",
+      "url": "https://orpheus.dev/license"
+    }
   },
   "servers": [
     {
       "url": "http://localhost:8080",
-      "description": "Local development"
+      "description": "Local dev"
+    },
+    {
+      "url": "https://api.orpheus.dev",
+      "description": "Production (placeholder)"
     }
   ],
   "tags": [
     {
-      "name": "health",
-      "description": "Liveness, readiness, and metrics endpoints used by orchestrators and operators."
+      "name": "uploads",
+      "description": "Multipart uploads to S3 via presigned URLs."
+    },
+    {
+      "name": "artifacts",
+      "description": "Audio artifacts stored in object storage and their derived metadata."
+    },
+    {
+      "name": "jobs",
+      "description": "Asynchronous audio processing jobs."
+    },
+    {
+      "name": "webhooks",
+      "description": "Event subscriptions for org-level notifications."
+    },
+    {
+      "name": "api-keys",
+      "description": "Programmatic API keys for non-interactive access."
+    },
+    {
+      "name": "processors",
+      "description": "Catalog of available audio processing operations and their versions."
+    },
+    {
+      "name": "system",
+      "description": "Org-scoped operational endpoints: usage, audit log, and platform health."
     }
+  ],
+  "security": [
+    {"BearerAuth": []},
+    {"ApiKeyAuth": []}
   ],
   "paths": {
     "/health": {
       "get": {
-        "tags": ["health"],
+        "tags": ["system"],
         "summary": "Liveness probe",
-        "description": "Returns 200 OK if the process is alive. Container orchestrators (Kubernetes, ECS) use this endpoint to decide whether to restart the container. It must not depend on external services.",
+        "description": "Returns 200 OK if the process is alive. Container orchestrators (Kubernetes, ECS) use this endpoint to decide whether to restart the container. It must not depend on external services and requires no authentication.",
         "operationId": "getHealth",
+        "security": [],
         "responses": {
           "200": {
             "description": "Service is alive.",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LivenessResponse"
-                }
+                "schema": {"$ref": "#/components/schemas/LivenessResponse"}
               }
             }
           }
@@ -40,28 +80,25 @@
     },
     "/ready": {
       "get": {
-        "tags": ["health"],
+        "tags": ["system"],
         "summary": "Readiness probe",
-        "description": "Returns 200 OK if the service is ready to accept traffic. In Phase 0 this always returns ready; Phase 1+ will check Postgres, Redis, and S3.",
+        "description": "Returns 200 OK if the service is ready to accept traffic. In Phase 0 this always returns ready; Phase 1+ checks Postgres, Redis, and S3. Requires no authentication.",
         "operationId": "getReady",
+        "security": [],
         "responses": {
           "200": {
             "description": "Service is ready.",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReadinessResponse"
-                }
+                "schema": {"$ref": "#/components/schemas/ReadinessResponse"}
               }
             }
           },
           "503": {
-            "description": "Service is not ready. Phase 1+ will return this when a downstream dependency is unhealthy.",
+            "description": "Service is not ready. Returned when a downstream dependency is unhealthy.",
             "content": {
               "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ReadinessResponse"
-                }
+                "schema": {"$ref": "#/components/schemas/ReadinessResponse"}
               }
             }
           }
@@ -70,10 +107,11 @@
     },
     "/metrics": {
       "get": {
-        "tags": ["health"],
+        "tags": ["system"],
         "summary": "Prometheus metrics",
-        "description": "Prometheus exposition format. Includes Go runtime metrics and process metrics by default. Phase 1+ will register domain-specific counters and histograms.",
+        "description": "Prometheus exposition format. Includes Go runtime and process metrics by default. Phase 1+ registers domain-specific counters and histograms (jobs submitted, jobs succeeded, GPU seconds consumed, etc.). Requires no authentication.",
         "operationId": "getMetrics",
+        "security": [],
         "responses": {
           "200": {
             "description": "Metrics in Prometheus text exposition format.",
@@ -88,12 +126,1043 @@
           }
         }
       }
+    },
+    "/v1/uploads": {
+      "post": {
+        "tags": ["uploads"],
+        "summary": "Create an upload session and receive presigned S3 multipart URLs",
+        "description": "Initiates a multipart upload to S3. The response includes a presigned URL for each part, which the client uses to `PUT` the corresponding byte range directly to S3. Call `POST /v1/uploads/{id}/complete` once all parts have been uploaded.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
+        "operationId": "createUpload",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateUploadRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Upload session created. The `Location` header points to the session resource; `Idempotency-Key` is echoed when present.",
+            "headers": {
+              "Location": {"$ref": "#/components/headers/Location"},
+              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+            },
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/UploadSession"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequestProblem"},
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "409": {"$ref": "#/components/responses/ConflictProblem"},
+          "413": {"$ref": "#/components/responses/PayloadTooLargeProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      },
+      "get": {
+        "tags": ["uploads"],
+        "summary": "List upload sessions for the authenticated org",
+        "description": "Returns upload sessions owned by the org, newest first. Supports cursor-based pagination.",
+        "operationId": "listUploads",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by upload session status.",
+            "schema": {"$ref": "#/components/schemas/UploadStatus"}
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "description": "Only return sessions created at or after this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Only return sessions created at or before this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Cursor"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of upload sessions.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/UploadSessionList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      }
+    },
+    "/v1/uploads/{id}": {
+      "get": {
+        "tags": ["uploads"],
+        "summary": "Get upload session status",
+        "description": "Returns the current state of a multipart upload session, including the presigned part URLs (which are regenerated if they have expired).",
+        "operationId": "getUpload",
+        "parameters": [
+          {"$ref": "#/components/parameters/UploadId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The upload session.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/UploadSession"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/uploads/{id}/complete": {
+      "post": {
+        "tags": ["uploads"],
+        "summary": "Finalize the upload, verify checksums, and create the artifact",
+        "description": "Marks the multipart upload as complete in S3 and verifies the SHA-256 of the assembled object (if provided at creation time). On success, an `Artifact` record is created and returned. The artifact's storage is charged to the org from this moment forward.",
+        "operationId": "completeUpload",
+        "parameters": [
+          {"$ref": "#/components/parameters/UploadId"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CompleteUploadRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upload completed and artifact created.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Artifact"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequestProblem"},
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"},
+          "409": {"$ref": "#/components/responses/ConflictProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      }
+    },
+    "/v1/artifacts": {
+      "get": {
+        "tags": ["artifacts"],
+        "summary": "List artifacts",
+        "description": "Returns artifacts owned by the org, newest first. Supports cursor-based pagination and filtering by content type and creation timestamp.",
+        "operationId": "listArtifacts",
+        "parameters": [
+          {
+            "name": "content_type",
+            "in": "query",
+            "description": "Filter by MIME type (e.g. `audio/wav`, `audio/mpeg`).",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "description": "Only return artifacts created at or after this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Only return artifacts created at or before this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Cursor"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of artifacts.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ArtifactList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      }
+    },
+    "/v1/artifacts/{id}": {
+      "get": {
+        "tags": ["artifacts"],
+        "summary": "Get an artifact",
+        "description": "Returns metadata for a single artifact, including codec, duration, sample rate, and channels extracted by the ingestion probe.",
+        "operationId": "getArtifact",
+        "parameters": [
+          {"$ref": "#/components/parameters/ArtifactId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The artifact.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Artifact"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/artifacts/{id}/signed-url": {
+      "get": {
+        "tags": ["artifacts"],
+        "summary": "Get a presigned download URL",
+        "description": "Returns a short-lived S3 presigned `GET` URL. Default TTL is 15 minutes; the maximum is 1 hour.",
+        "operationId": "getArtifactSignedUrl",
+        "parameters": [
+          {"$ref": "#/components/parameters/ArtifactId"},
+          {
+            "name": "expires_in",
+            "in": "query",
+            "description": "URL lifetime in seconds. Must be between 60 and 3600.",
+            "schema": {
+              "type": "integer",
+              "minimum": 60,
+              "maximum": 3600,
+              "default": 900
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A presigned download URL.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/SignedURL"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/jobs": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Submit an async processing job",
+        "description": "Submits a job that runs a named processor against an existing artifact. Returns immediately with status `queued`; poll the job URL or subscribe to webhooks to learn when it completes.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
+        "operationId": "createJob",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateJobRequest"}
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Job accepted and queued. The `Location` header points to the job resource; `Idempotency-Key` is echoed when present.",
+            "headers": {
+              "Location": {"$ref": "#/components/headers/Location"},
+              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+            },
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Job"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequestProblem"},
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"},
+          "409": {"$ref": "#/components/responses/ConflictProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      },
+      "get": {
+        "tags": ["jobs"],
+        "summary": "List jobs",
+        "description": "Returns jobs owned by the org, newest first. Supports cursor-based pagination and filtering by status, processor, artifact, and creation timestamp.",
+        "operationId": "listJobs",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by job status.",
+            "schema": {"$ref": "#/components/schemas/JobStatus"}
+          },
+          {
+            "name": "processor",
+            "in": "query",
+            "description": "Filter by processor name (e.g. `whisper-transcribe`).",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "artifact_id",
+            "in": "query",
+            "description": "Filter by source artifact ID.",
+            "schema": {"type": "string", "format": "uuid"}
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "description": "Only return jobs created at or after this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Only return jobs created at or before this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Cursor"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of jobs.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/JobList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      }
+    },
+    "/v1/jobs/bulk": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Submit a batch of jobs (async)",
+        "description": "Accepts up to 500 jobs in a single request. Per-item validation failures are returned in the `rejected` array; the rest are queued. Use the `Idempotency-Key` header to make the entire batch replayable.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
+        "operationId": "bulkCreateJobs",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/BulkCreateJobsRequest"}
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Batch accepted. `accepted` is the list of queued job IDs in the same order as the input; `rejected` contains per-item validation errors.",
+            "headers": {
+              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+            },
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/BulkJobsResponse"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequestProblem"},
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "409": {"$ref": "#/components/responses/ConflictProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      }
+    },
+    "/v1/jobs/{id}": {
+      "get": {
+        "tags": ["jobs"],
+        "summary": "Get job status and result",
+        "description": "Returns the full job record, including `result` (populated when `status = succeeded`), `error` (populated when `status = failed`), and `cost_usd`.",
+        "operationId": "getJob",
+        "parameters": [
+          {"$ref": "#/components/parameters/JobId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The job.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Job"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/jobs/{id}/cancel": {
+      "post": {
+        "tags": ["jobs"],
+        "summary": "Request cancellation of a queued or running job",
+        "description": "Returns `202` with the job in `canceled` (if it had not started) or `canceling` (if a worker has already picked it up; the worker will be asked to stop at the next checkpoint).",
+        "operationId": "cancelJob",
+        "parameters": [
+          {"$ref": "#/components/parameters/JobId"}
+        ],
+        "responses": {
+          "202": {
+            "description": "Cancellation requested.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Job"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"},
+          "409": {"$ref": "#/components/responses/ConflictProblem"}
+        }
+      }
+    },
+    "/v1/webhooks": {
+      "post": {
+        "tags": ["webhooks"],
+        "summary": "Subscribe a URL to events",
+        "description": "Registers an HTTPS endpoint to receive Orpheus event deliveries. If `secret` is omitted, Orpheus generates a 32-byte secret and returns it in the response. The same secret is used to sign every delivery (HMAC-SHA256).\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
+        "operationId": "createWebhook",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateWebhookRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Webhook endpoint created.",
+            "headers": {
+              "Location": {"$ref": "#/components/headers/Location"},
+              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+            },
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/WebhookEndpoint"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequestProblem"},
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "409": {"$ref": "#/components/responses/ConflictProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      },
+      "get": {
+        "tags": ["webhooks"],
+        "summary": "List webhook endpoints",
+        "description": "Returns every webhook endpoint registered for the org.",
+        "operationId": "listWebhooks",
+        "responses": {
+          "200": {
+            "description": "A list of webhook endpoints.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/WebhookEndpointList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+        }
+      }
+    },
+    "/v1/webhooks/{id}": {
+      "get": {
+        "tags": ["webhooks"],
+        "summary": "Get a webhook endpoint",
+        "description": "Returns a single webhook endpoint, including its current `active` flag and the timestamp of the most recent successful delivery.",
+        "operationId": "getWebhook",
+        "parameters": [
+          {"$ref": "#/components/parameters/WebhookId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The webhook endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/WebhookEndpoint"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      },
+      "patch": {
+        "tags": ["webhooks"],
+        "summary": "Update a webhook endpoint",
+        "description": "Patches one or more of `subscribed_events`, `active`, `description`, or `url`. Only the fields present in the request body are modified.",
+        "operationId": "updateWebhook",
+        "parameters": [
+          {"$ref": "#/components/parameters/WebhookId"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/UpdateWebhookRequest"}
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated webhook endpoint.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/WebhookEndpoint"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequestProblem"},
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      },
+      "delete": {
+        "tags": ["webhooks"],
+        "summary": "Delete a webhook endpoint",
+        "description": "Permanently deletes a webhook endpoint. In-flight deliveries will be allowed to complete; no new deliveries will be enqueued.",
+        "operationId": "deleteWebhook",
+        "parameters": [
+          {"$ref": "#/components/parameters/WebhookId"}
+        ],
+        "responses": {
+          "204": {
+            "description": "Webhook endpoint deleted."
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries": {
+      "get": {
+        "tags": ["webhooks"],
+        "summary": "List recent deliveries",
+        "description": "Returns the most recent deliveries (and their attempts) for debugging and replay. Supports cursor-based pagination.",
+        "operationId": "listWebhookDeliveries",
+        "parameters": [
+          {"$ref": "#/components/parameters/WebhookId"},
+          {
+            "name": "event_type",
+            "in": "query",
+            "description": "Filter by event type (e.g. `job.succeeded`).",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Filter by delivery status.",
+            "schema": {"$ref": "#/components/schemas/WebhookDeliveryStatus"}
+          },
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Cursor"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of deliveries.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/WebhookDeliveryList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries/{delivery_id}/replay": {
+      "post": {
+        "tags": ["webhooks"],
+        "summary": "Re-deliver a past event",
+        "description": "Enqueues a fresh delivery for a previously sent event. The new delivery is created with `attempt_count = 0` and `status = pending`; the original delivery record is preserved for audit.",
+        "operationId": "replayWebhookDelivery",
+        "parameters": [
+          {"$ref": "#/components/parameters/WebhookId"},
+          {"$ref": "#/components/parameters/DeliveryId"}
+        ],
+        "responses": {
+          "202": {
+            "description": "Replay enqueued.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/WebhookDelivery"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      }
+    },
+    "/v1/api-keys": {
+      "post": {
+        "tags": ["api-keys"],
+        "summary": "Create an API key",
+        "description": "Mints a new API key for the org. The full `secret` is returned **exactly once** in the response and is never stored in plaintext; subsequent reads return only the prefix and metadata. This endpoint requires a Keycloak JWT (an interactive user must mint the key); API keys cannot mint other API keys.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
+        "operationId": "createApiKey",
+        "parameters": [
+          {"$ref": "#/components/parameters/IdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/CreateAPIKeyRequest"}
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "API key created. The `secret` field contains the full token; capture it now \u2014 it will not be shown again.",
+            "headers": {
+              "Location": {"$ref": "#/components/headers/Location"},
+              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+            },
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/APIKey"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/BadRequestProblem"},
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "409": {"$ref": "#/components/responses/ConflictProblem"},
+          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+        }
+      },
+      "get": {
+        "tags": ["api-keys"],
+        "summary": "List API keys",
+        "description": "Returns metadata for every API key in the org. Secrets are never returned by this endpoint; revoke and reissue if a secret is lost.",
+        "operationId": "listApiKeys",
+        "responses": {
+          "200": {
+            "description": "A list of API keys.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/APIKeyList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+        }
+      }
+    },
+    "/v1/api-keys/{id}": {
+      "delete": {
+        "tags": ["api-keys"],
+        "summary": "Revoke an API key",
+        "description": "Immediately invalidates the key. In-flight requests using the key complete normally; subsequent requests return `401`.",
+        "operationId": "deleteApiKey",
+        "parameters": [
+          {"$ref": "#/components/parameters/ApiKeyId"}
+        ],
+        "responses": {
+          "204": {
+            "description": "API key revoked."
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/processors": {
+      "get": {
+        "tags": ["processors"],
+        "summary": "List available processors",
+        "description": "Returns a summary of every processor the org is allowed to use, including the latest version and the set of currently active versions.",
+        "operationId": "listProcessors",
+        "responses": {
+          "200": {
+            "description": "A list of processor summaries.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ProcessorList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+        }
+      }
+    },
+    "/v1/processors/{name}": {
+      "get": {
+        "tags": ["processors"],
+        "summary": "Describe a processor and its available versions",
+        "description": "Returns the full record for a processor, including every published version, its parameter schema, and its per-second cost.",
+        "operationId": "getProcessor",
+        "parameters": [
+          {"$ref": "#/components/parameters/ProcessorName"}
+        ],
+        "responses": {
+          "200": {
+            "description": "The processor.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Processor"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
+          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+        }
+      }
+    },
+    "/v1/usage": {
+      "get": {
+        "tags": ["system"],
+        "summary": "Get current billing-period usage for the authenticated org",
+        "description": "Returns aggregate usage and dollar cost for the current billing period, with a per-category breakdown.",
+        "operationId": "getUsage",
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "description": "Which billing period to summarize. `current` (default) or an ISO-8601 month (`YYYY-MM`).",
+            "schema": {
+              "type": "string",
+              "pattern": "^current$|^[0-9]{4}-[0-9]{2}$",
+              "default": "current"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage summary.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/Usage"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+        }
+      }
+    },
+    "/v1/audit-log": {
+      "get": {
+        "tags": ["system"],
+        "summary": "List audit log entries for the authenticated org",
+        "description": "Returns the org's audit log, newest first. Each entry records the actor (user or API key), the action, the affected resource, and the source IP / user agent. Supports cursor-based pagination.",
+        "operationId": "listAuditLog",
+        "parameters": [
+          {
+            "name": "action",
+            "in": "query",
+            "description": "Filter by action (e.g. `api_key.create`, `job.cancel`).",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "actor_id",
+            "in": "query",
+            "description": "Filter by the actor's user or API key ID.",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "resource_type",
+            "in": "query",
+            "description": "Filter by resource type (e.g. `job`, `artifact`, `webhook`).",
+            "schema": {"type": "string"}
+          },
+          {
+            "name": "created_after",
+            "in": "query",
+            "description": "Only return entries created at or after this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {
+            "name": "created_before",
+            "in": "query",
+            "description": "Only return entries created at or before this timestamp (RFC 3339).",
+            "schema": {"type": "string", "format": "date-time"}
+          },
+          {"$ref": "#/components/parameters/Limit"},
+          {"$ref": "#/components/parameters/Cursor"}
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of audit log entries.",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/AuditLogList"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+        }
+      }
     }
   },
   "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Keycloak-issued JWT. Obtain via your org's Keycloak realm's standard OAuth2/OIDC flow and pass in the `Authorization` header as `Bearer <token>`."
+      },
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Prefix-scoped API key (e.g. `ak_live_xxx`). Issued via `POST /v1/api-keys`; the full secret is returned exactly once at creation."
+      }
+    },
+    "parameters": {
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "description": "Optional client-supplied key that makes the request safely retryable. 1\u2013255 characters; a UUIDv4 is recommended. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
+        "required": false,
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 255
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "description": "Maximum number of items to return. Default 50, maximum 200.",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "Opaque pagination cursor returned as `next_cursor` in the previous page. Omit to fetch the first page.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "UploadId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Upload session ID.",
+        "schema": {"type": "string", "format": "uuid"}
+      },
+      "ArtifactId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Artifact ID.",
+        "schema": {"type": "string", "format": "uuid"}
+      },
+      "JobId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Job ID.",
+        "schema": {"type": "string", "format": "uuid"}
+      },
+      "WebhookId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Webhook endpoint ID.",
+        "schema": {"type": "string", "format": "uuid"}
+      },
+      "DeliveryId": {
+        "name": "delivery_id",
+        "in": "path",
+        "required": true,
+        "description": "Webhook delivery ID.",
+        "schema": {"type": "string", "format": "uuid"}
+      },
+      "ApiKeyId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "API key ID.",
+        "schema": {"type": "string", "format": "uuid"}
+      },
+      "ProcessorName": {
+        "name": "name",
+        "in": "path",
+        "required": true,
+        "description": "Processor name (e.g. `whisper-transcribe`).",
+        "schema": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,63}$"}
+      }
+    },
+    "responses": {
+      "BadRequestProblem": {
+        "description": "Request validation failed. See `errors` for field-level details.",
+        "content": {
+          "application/problem+json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          },
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          }
+        }
+      },
+      "UnauthorizedProblem": {
+        "description": "Missing or invalid credentials.",
+        "content": {
+          "application/problem+json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          },
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          }
+        }
+      },
+      "NotFoundProblem": {
+        "description": "The requested resource does not exist or is not visible to the authenticated org.",
+        "content": {
+          "application/problem+json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          },
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          }
+        }
+      },
+      "ConflictProblem": {
+        "description": "The request conflicts with the current state of the target resource (e.g. idempotency-key reuse with a different body, or cancellation of a finished job).",
+        "content": {
+          "application/problem+json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          },
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          }
+        }
+      },
+      "PayloadTooLargeProblem": {
+        "description": "The requested upload exceeds the org's maximum artifact size.",
+        "content": {
+          "application/problem+json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          },
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          }
+        }
+      },
+      "RateLimitedProblem": {
+        "description": "Rate limit exceeded. See `Retry-After` for when to retry.",
+        "headers": {
+          "Retry-After": {"$ref": "#/components/headers/RetryAfter"}
+        },
+        "content": {
+          "application/problem+json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          },
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/Problem"}
+          }
+        }
+      }
+    },
+    "headers": {
+      "Location": {
+        "description": "Canonical URL of the created resource.",
+        "schema": {"type": "string", "format": "uri"}
+      },
+      "IdempotencyKey": {
+        "description": "Echoes the `Idempotency-Key` request header so clients can confirm which key the server associated with the response.",
+        "schema": {"type": "string"}
+      },
+      "RetryAfter": {
+        "description": "Seconds to wait before retrying. Present on 429 and 503 responses.",
+        "schema": {"type": "integer", "minimum": 1}
+      }
+    },
     "schemas": {
+      "Problem": {
+        "type": "object",
+        "description": "RFC 7807 problem details.",
+        "required": ["type", "title", "status"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri",
+            "description": "URI identifying the problem type. Should resolve to human-readable documentation.",
+            "example": "https://docs.orpheus.dev/errors/validation"
+          },
+          "title": {
+            "type": "string",
+            "description": "Short, human-readable summary of the problem type.",
+            "example": "Validation failed"
+          },
+          "status": {
+            "type": "integer",
+            "description": "HTTP status code generated by the origin server.",
+            "example": 400
+          },
+          "detail": {
+            "type": "string",
+            "description": "Human-readable explanation specific to this occurrence.",
+            "example": "Field 'filename' is required"
+          },
+          "instance": {
+            "type": "string",
+            "description": "URI identifying this specific occurrence of the problem.",
+            "example": "/v1/uploads"
+          },
+          "errors": {
+            "type": "array",
+            "description": "Optional field-level error details, primarily populated for 400 responses.",
+            "items": {"$ref": "#/components/schemas/ErrorField"}
+          }
+        }
+      },
+      "ErrorField": {
+        "type": "object",
+        "description": "A single field-level validation error, embedded in a `Problem`.",
+        "required": ["field", "code", "message"],
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "Dotted path to the offending field.",
+            "example": "params.language"
+          },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code.",
+            "example": "required"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable error message.",
+            "example": "must be present"
+          }
+        }
+      },
       "LivenessResponse": {
         "type": "object",
+        "description": "Response body for `GET /health`.",
         "required": ["status"],
         "properties": {
           "status": {
@@ -105,6 +1174,7 @@
       },
       "ReadinessResponse": {
         "type": "object",
+        "description": "Response body for `GET /ready`.",
         "required": ["status", "checks"],
         "properties": {
           "status": {
@@ -115,13 +1185,1128 @@
           "checks": {
             "type": "object",
             "description": "Per-dependency readiness results, keyed by dependency name.",
-            "additionalProperties": {
-              "type": "string"
-            },
+            "additionalProperties": {"type": "string"},
             "example": {
-              "service": "ok"
+              "postgres": "ok",
+              "redis": "ok",
+              "s3": "ok"
             }
           }
+        }
+      },
+      "CreateUploadRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/uploads`.",
+        "required": ["filename", "content_type", "size_bytes"],
+        "properties": {
+          "filename": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "Original filename. Stored as artifact metadata; not used for storage path.",
+            "example": "interview-2026-07-09.wav"
+          },
+          "content_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "IANA MIME type. Must be a supported audio type.",
+            "example": "audio/wav"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5368709120,
+            "description": "Total object size in bytes. Must not exceed the org's quota.",
+            "example": 104857600
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "Optional client-computed SHA-256 of the assembled object. Verified during completion; a mismatch causes the upload to fail.",
+            "example": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      "UploadSession": {
+        "type": "object",
+        "description": "A multipart upload session.",
+        "required": ["id", "status", "part_size", "parts", "expires_at", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Session ID.",
+            "example": "3fa85f64-5717-4562-b3fc-2c963f66afa6"
+          },
+          "status": {
+            "$ref": "#/components/schemas/UploadStatus"
+          },
+          "part_size": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Byte size that the client must use for each part.",
+            "example": 8388608
+          },
+          "parts": {
+            "type": "array",
+            "description": "One entry per part. `part_number` is 1-indexed; `url` is a presigned S3 `PUT` URL valid until `expires_at`.",
+            "items": {"$ref": "#/components/schemas/Part"}
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the session itself expires. After this time the session can no longer be completed.",
+            "example": "2026-07-10T12:00:00Z"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the session was created."
+          },
+          "fields": {
+            "type": "object",
+            "description": "Optional extra form fields the client must include with each part `PUT` (currently always empty for S3 multipart).",
+            "additionalProperties": {"type": "string"},
+            "example": {}
+          }
+        }
+      },
+      "Part": {
+        "type": "object",
+        "description": "A single part in a multipart upload session.",
+        "required": ["part_number", "url", "expires_at"],
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
+            "description": "1-indexed part number, matching the byte range sent to `url`.",
+            "example": 1
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Presigned S3 `PUT` URL for this part.",
+            "example": "https://orpheus-uploads.s3.amazonaws.com/..."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this individual part URL expires.",
+            "example": "2026-07-09T13:00:00Z"
+          }
+        }
+      },
+      "CompleteUploadRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/uploads/{id}/complete`.",
+        "required": ["parts"],
+        "properties": {
+          "parts": {
+            "type": "array",
+            "minItems": 1,
+            "description": "List of parts in ascending `part_number` order. The S3 `ETag` returned by each part `PUT` must be supplied verbatim.",
+            "items": {"$ref": "#/components/schemas/CompletedPart"}
+          }
+        }
+      },
+      "CompletedPart": {
+        "type": "object",
+        "description": "An uploaded part being reported back to the server.",
+        "required": ["part_number", "etag"],
+        "properties": {
+          "part_number": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10000,
+            "description": "1-indexed part number."
+          },
+          "etag": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "S3 `ETag` header value for this part, as returned by S3.",
+            "example": "\"d41d8cd98f00b204e9800998ecf8427e\""
+          }
+        }
+      },
+      "UploadStatus": {
+        "type": "string",
+        "description": "Lifecycle state of an upload session.",
+        "enum": ["pending", "completed", "aborted", "expired"],
+        "example": "pending"
+      },
+      "UploadSessionList": {
+        "type": "object",
+        "description": "Cursor-paginated list of upload sessions.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/UploadSession"}
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether another page is available after this one.",
+            "example": true
+          },
+          "next_cursor": {
+            "type": ["string", "null"],
+            "description": "Opaque cursor to pass back as `cursor` to fetch the next page. `null` when `has_more` is `false`.",
+            "example": "eyJpZCI6IjY0ZjFi...",
+            "nullable": true
+          }
+        }
+      },
+      "Artifact": {
+        "type": "object",
+        "description": "A stored audio artifact and its derived metadata.",
+        "required": [
+          "id",
+          "sha256",
+          "size_bytes",
+          "content_type",
+          "codec",
+          "duration_seconds",
+          "sample_rate",
+          "channels",
+          "created_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Artifact ID."
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 of the object's bytes."
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Object size in bytes."
+          },
+          "content_type": {
+            "type": "string",
+            "description": "MIME type as supplied at upload time.",
+            "example": "audio/wav"
+          },
+          "codec": {
+            "type": "string",
+            "description": "Audio codec extracted by the ingestion probe.",
+            "example": "pcm_s16le"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Audio duration in seconds.",
+            "example": 642.5
+          },
+          "sample_rate": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Sample rate in Hz.",
+            "example": 48000
+          },
+          "channels": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of audio channels.",
+            "example": 2
+          },
+          "filename": {
+            "type": "string",
+            "description": "Original filename supplied at upload time."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the artifact was created."
+          }
+        }
+      },
+      "SignedURL": {
+        "type": "object",
+        "description": "A presigned S3 `GET` URL for an artifact.",
+        "required": ["url", "expires_at"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Presigned download URL."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the URL becomes invalid.",
+            "example": "2026-07-09T13:15:00Z"
+          }
+        }
+      },
+      "ArtifactList": {
+        "type": "object",
+        "description": "Cursor-paginated list of artifacts.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/Artifact"}
+          },
+          "has_more": {
+            "type": "boolean",
+            "example": false
+          },
+          "next_cursor": {
+            "type": ["string", "null"],
+            "nullable": true
+          }
+        }
+      },
+      "ProcessorRef": {
+        "type": "object",
+        "description": "A reference to a named processor at a specific version.",
+        "required": ["name", "version"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Processor name (e.g. `whisper-transcribe`).",
+            "example": "whisper-transcribe"
+          },
+          "version": {
+            "type": "string",
+            "description": "Semantic version of the processor (e.g. `1.2.0`).",
+            "example": "1.2.0"
+          }
+        }
+      },
+      "CreateJobRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/jobs`.",
+        "required": ["artifact_id", "processor"],
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the artifact to process."
+          },
+          "processor": {
+            "$ref": "#/components/schemas/ProcessorRef"
+          },
+          "params": {
+            "type": "object",
+            "description": "Processor-specific parameters. Validate against `GET /v1/processors/{name}` for the chosen version.",
+            "additionalProperties": true,
+            "example": {"language": "en", "diarize": true}
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "default": 50,
+            "description": "Queue priority. Higher values run sooner. Subject to per-plan ceilings."
+          },
+          "idempotency_key": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "description": "Optional inline alternative to the `Idempotency-Key` header. If both are supplied they must be equal; otherwise the request is rejected with `400`."
+          }
+        }
+      },
+      "Job": {
+        "type": "object",
+        "description": "A submitted or in-flight processing job.",
+        "required": [
+          "id",
+          "artifact_id",
+          "processor",
+          "status",
+          "attempts",
+          "max_retries",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Job ID."
+          },
+          "artifact_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the artifact being processed."
+          },
+          "processor": {
+            "$ref": "#/components/schemas/ProcessorRef"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobStatus"
+          },
+          "params": {
+            "type": "object",
+            "description": "Effective parameters (after defaulting and validation).",
+            "additionalProperties": true
+          },
+          "result": {
+            "type": "object",
+            "description": "Processor-specific output. Populated only when `status = succeeded`.",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "error": {
+            "type": "object",
+            "description": "Structured error. Populated only when `status = failed`.",
+            "properties": {
+              "code": {"type": "string", "example": "processor_timeout"},
+              "message": {"type": "string", "example": "Processor exceeded its 300s budget."}
+            },
+            "nullable": true
+          },
+          "attempts": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of execution attempts so far (initial run counts as 1)."
+          },
+          "max_retries": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Maximum number of additional retries after the first attempt."
+          },
+          "cost_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Cost in US dollars accrued by this job so far.",
+            "example": 0.0042
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the worker first picked up the job. `null` if still queued.",
+            "nullable": true
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the job reached a terminal state. `null` until it does.",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "poll_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Convenience URL to `GET /v1/jobs/{id}`. Returned on creation responses; not stored long-term."
+          }
+        }
+      },
+      "JobStatus": {
+        "type": "string",
+        "description": "Lifecycle state of a job.",
+        "enum": ["queued", "running", "succeeded", "failed", "canceled", "canceling"],
+        "example": "queued"
+      },
+      "JobList": {
+        "type": "object",
+        "description": "Cursor-paginated list of jobs.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/Job"}
+          },
+          "has_more": {"type": "boolean"},
+          "next_cursor": {"type": ["string", "null"], "nullable": true}
+        }
+      },
+      "BulkCreateJobsRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/jobs/bulk`.",
+        "required": ["jobs"],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 500,
+            "description": "Jobs to submit. Per-item validation failures are surfaced in the `rejected` array of the response; well-formed items are queued regardless.",
+            "items": {"$ref": "#/components/schemas/CreateJobRequest"}
+          }
+        }
+      },
+      "BulkJobsResponse": {
+        "type": "object",
+        "description": "Response body for `POST /v1/jobs/bulk`.",
+        "required": ["batch_id", "accepted", "rejected"],
+        "properties": {
+          "batch_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Server-assigned ID for this batch. Echoed in the `batch_id` webhook field for any `job.batch.processed` event."
+          },
+          "accepted": {
+            "type": "array",
+            "description": "IDs of jobs that were queued, in the same order as the corresponding `jobs` entries.",
+            "items": {"type": "string", "format": "uuid"}
+          },
+          "rejected": {
+            "type": "array",
+            "description": "Per-item validation errors. `index` references the position in the request `jobs` array.",
+            "items": {"$ref": "#/components/schemas/BulkRejection"}
+          }
+        }
+      },
+      "BulkRejection": {
+        "type": "object",
+        "description": "A single per-item rejection from a bulk job submission.",
+        "required": ["index", "reason"],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Zero-based index into the request `jobs` array."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Human-readable explanation of why the item was rejected.",
+            "example": "artifact_id is required"
+          },
+          "code": {
+            "type": "string",
+            "description": "Machine-readable error code.",
+            "example": "validation_failed"
+          }
+        }
+      },
+      "WebhookEvent": {
+        "type": "string",
+        "description": "Event type identifier.",
+        "enum": [
+          "job.queued",
+          "job.started",
+          "job.succeeded",
+          "job.failed",
+          "job.canceled",
+          "upload.completed",
+          "upload.failed",
+          "api_key.created",
+          "api_key.revoked",
+          "billing.period_closed"
+        ],
+        "example": "job.succeeded"
+      },
+      "CreateWebhookRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/webhooks`.",
+        "required": ["url", "subscribed_events"],
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "HTTPS URL that will receive event deliveries. HTTP is rejected.",
+            "example": "https://example.com/hooks/orpheus"
+          },
+          "subscribed_events": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Event types this endpoint wants to receive. Use `[\"*\"]` to subscribe to every event.",
+            "items": {"$ref": "#/components/schemas/WebhookEvent"}
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Free-form label for the org's own bookkeeping.",
+            "example": "Production ingest pipeline"
+          },
+          "secret": {
+            "type": "string",
+            "minLength": 16,
+            "maxLength": 256,
+            "description": "Optional HMAC signing secret. If omitted, Orpheus generates one and returns it on the response."
+          }
+        }
+      },
+      "UpdateWebhookRequest": {
+        "type": "object",
+        "description": "Request body for `PATCH /v1/webhooks/{id}`. Only present fields are modified.",
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "subscribed_events": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"$ref": "#/components/schemas/WebhookEvent"}
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "active": {
+            "type": "boolean",
+            "description": "When `false`, deliveries are paused without deleting the endpoint."
+          }
+        }
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "description": "A registered webhook subscription.",
+        "required": ["id", "url", "subscribed_events", "active", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "subscribed_events": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/WebhookEvent"}
+          },
+          "description": {
+            "type": "string"
+          },
+          "active": {
+            "type": "boolean",
+            "description": "Whether new deliveries are currently enabled for this endpoint."
+          },
+          "secret": {
+            "type": "string",
+            "description": "The HMAC signing secret. Returned only on the response to `POST /v1/webhooks` when Orpheus generated it; never returned on `GET` or `PATCH`."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "description": "A record of a single attempt (or replay) at delivering an event to a webhook endpoint.",
+        "required": ["id", "webhook_id", "event_id", "event_type", "status", "attempt_count", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Delivery ID."
+          },
+          "webhook_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Owning webhook endpoint."
+          },
+          "event_id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Underlying event ID. Multiple deliveries (e.g. retries) share the same `event_id`."
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/WebhookEvent"
+          },
+          "status": {
+            "$ref": "#/components/schemas/WebhookDeliveryStatus"
+          },
+          "attempt_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of HTTP attempts made so far for this delivery."
+          },
+          "last_attempt_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "last_status_code": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 599,
+            "description": "HTTP status code returned by the most recent attempt.",
+            "nullable": true
+          },
+          "last_error": {
+            "type": "string",
+            "description": "Last transport-level error (DNS, TLS, timeout, etc.).",
+            "nullable": true
+          },
+          "payload_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL where the event payload can be retrieved for inspection. Signed with the endpoint's secret."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookDeliveryStatus": {
+        "type": "string",
+        "description": "State of a single delivery.",
+        "enum": ["pending", "succeeded", "failed", "retrying"],
+        "example": "succeeded"
+      },
+      "WebhookEndpointList": {
+        "type": "object",
+        "description": "List of webhook endpoints for the org.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/WebhookEndpoint"}
+          },
+          "has_more": {"type": "boolean"},
+          "next_cursor": {"type": ["string", "null"], "nullable": true}
+        }
+      },
+      "WebhookDeliveryList": {
+        "type": "object",
+        "description": "Cursor-paginated list of webhook deliveries.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/WebhookDelivery"}
+          },
+          "has_more": {"type": "boolean"},
+          "next_cursor": {"type": ["string", "null"], "nullable": true}
+        }
+      },
+      "APIKeyScope": {
+        "type": "string",
+        "description": "A permission granted to an API key. Use `*` for full org access.",
+        "enum": [
+          "uploads:read",
+          "uploads:write",
+          "artifacts:read",
+          "artifacts:write",
+          "jobs:read",
+          "jobs:write",
+          "webhooks:read",
+          "webhooks:write",
+          "usage:read",
+          "audit:read",
+          "*"
+        ],
+        "example": "jobs:read"
+      },
+      "CreateAPIKeyRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/api-keys`.",
+        "required": ["name", "scopes"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100,
+            "description": "Human-readable label for the key.",
+            "example": "ci-deploy-key"
+          },
+          "scopes": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Permissions granted to the key. Use `[\"*\"]` for full access.",
+            "items": {"$ref": "#/components/schemas/APIKeyScope"}
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Optional expiry. If omitted, the key is valid until revoked.",
+            "nullable": true
+          }
+        }
+      },
+      "APIKey": {
+        "type": "object",
+        "description": "An API key. The `secret` field is populated **only** on the response to `POST /v1/api-keys` and is never returned by any other endpoint.",
+        "required": ["id", "name", "prefix", "scopes", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "Public, non-secret prefix used to identify the key in logs and the dashboard.",
+            "example": "ak_live_a1b2c3"
+          },
+          "secret": {
+            "type": "string",
+            "description": "Full API key, including the secret portion. Returned exactly once at creation; capture it now.",
+            "example": "ak_live_a1b2c3d4e5f6g7h8...",
+            "nullable": true
+          },
+          "scopes": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/APIKeyScope"}
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "last_used_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the key was last used to authenticate a request.",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "APIKeyList": {
+        "type": "object",
+        "description": "List of API keys for the org. Secrets are never included.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/APIKey"}
+          },
+          "has_more": {"type": "boolean"},
+          "next_cursor": {"type": ["string", "null"], "nullable": true}
+        }
+      },
+      "Processor": {
+        "type": "object",
+        "description": "A processor and its published versions.",
+        "required": ["name", "display_name", "versions"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Stable identifier used in `CreateJobRequest.processor.name`.",
+            "example": "whisper-transcribe"
+          },
+          "display_name": {
+            "type": "string",
+            "description": "Human-readable name for UI surfaces.",
+            "example": "Whisper Transcription"
+          },
+          "description": {
+            "type": "string",
+            "description": "What the processor does."
+          },
+          "category": {
+            "type": "string",
+            "description": "Coarse grouping for UI surfaces.",
+            "example": "transcription"
+          },
+          "versions": {
+            "type": "array",
+            "description": "All published versions (including deprecated ones). Newest first.",
+            "items": {"$ref": "#/components/schemas/ProcessorVersion"}
+          }
+        }
+      },
+      "ProcessorVersion": {
+        "type": "object",
+        "description": "A single published version of a processor.",
+        "required": ["version", "status", "params_schema"],
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Semantic version.",
+            "example": "1.2.0"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProcessorVersionStatus"
+          },
+          "released_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deprecated_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "sunset_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When this version will stop accepting new jobs. `null` for active versions.",
+            "nullable": true
+          },
+          "input_schema": {
+            "type": "object",
+            "description": "JSON Schema describing the input artifact's required properties.",
+            "additionalProperties": true
+          },
+          "params_schema": {
+            "type": "object",
+            "description": "JSON Schema describing the accepted `params` object.",
+            "additionalProperties": true
+          },
+          "output_schema": {
+            "type": "object",
+            "description": "JSON Schema describing the shape of `Job.result` on success.",
+            "additionalProperties": true
+          },
+          "default_params": {
+            "type": "object",
+            "description": "Default parameter values that are merged with the user's `params` before validation.",
+            "additionalProperties": true
+          },
+          "gpu_memory_mb": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Approximate peak GPU memory required to run this version.",
+            "example": 4096
+          },
+          "cost_per_second_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Per-second GPU cost in US dollars. Billed by wall-clock time the worker holds the job.",
+            "example": 0.00012
+          },
+          "max_audio_duration_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Reject jobs whose input audio is longer than this. `null` means no limit.",
+            "nullable": true
+          }
+        }
+      },
+      "ProcessorVersionStatus": {
+        "type": "string",
+        "description": "Lifecycle state of a processor version.",
+        "enum": ["active", "beta", "deprecated", "sunset"],
+        "example": "active"
+      },
+      "ProcessorSummary": {
+        "type": "object",
+        "description": "Lightweight summary of a processor returned by `GET /v1/processors`.",
+        "required": ["name", "display_name", "latest_version", "active_versions"],
+        "properties": {
+          "name": {"type": "string"},
+          "display_name": {"type": "string"},
+          "description": {"type": "string"},
+          "category": {"type": "string"},
+          "latest_version": {
+            "type": "string",
+            "description": "Highest published version, regardless of status.",
+            "example": "1.2.0"
+          },
+          "active_versions": {
+            "type": "array",
+            "description": "Versions currently accepting new jobs.",
+            "items": {"type": "string"},
+            "example": ["1.2.0", "1.1.3"]
+          }
+        }
+      },
+      "ProcessorList": {
+        "type": "object",
+        "description": "List of processor summaries for the org.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/ProcessorSummary"}
+          },
+          "has_more": {"type": "boolean"},
+          "next_cursor": {"type": ["string", "null"], "nullable": true}
+        }
+      },
+      "Usage": {
+        "type": "object",
+        "description": "Aggregate usage and dollar cost for a single billing period.",
+        "required": [
+          "org_id",
+          "period",
+          "jobs_count",
+          "gpu_seconds",
+          "storage_gb_days",
+          "egress_gb",
+          "total_usd"
+        ],
+        "properties": {
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "period": {
+            "$ref": "#/components/schemas/UsagePeriod"
+          },
+          "jobs_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of jobs that completed (in any terminal state) during the period."
+          },
+          "gpu_seconds": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Total wall-clock seconds workers spent executing jobs."
+          },
+          "storage_gb_days": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Artifact storage consumed, in GB \u00b7 days."
+          },
+          "egress_gb": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Bytes served via presigned download URLs, in GB."
+          },
+          "total_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Total cost for the period in US dollars.",
+            "example": 142.57
+          },
+          "breakdown": {
+            "type": "array",
+            "description": "Per-category breakdown of the cost.",
+            "items": {"$ref": "#/components/schemas/UsageBreakdown"}
+          }
+        }
+      },
+      "UsagePeriod": {
+        "type": "object",
+        "description": "The billing period a `Usage` summary covers.",
+        "required": ["start", "end"],
+        "properties": {
+          "start": {
+            "type": "string",
+            "format": "date"
+          },
+          "end": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "UsageBreakdown": {
+        "type": "object",
+        "description": "A single line item in a `Usage` summary.",
+        "required": ["category", "amount_usd"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "description": "Line-item category.",
+            "enum": ["compute", "storage", "egress", "ingest", "other"],
+            "example": "compute"
+          },
+          "quantity": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Raw quantity consumed in this category.",
+            "example": 3600
+          },
+          "unit": {
+            "type": "string",
+            "description": "Unit of the `quantity` field.",
+            "enum": ["seconds", "gb_days", "gb", "bytes", "count"],
+            "example": "seconds"
+          },
+          "amount_usd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Cost in US dollars for this line item.",
+            "example": 0.43
+          }
+        }
+      },
+      "AuditLog": {
+        "type": "object",
+        "description": "A single audit log entry recording an authenticated action.",
+        "required": ["id", "org_id", "actor_type", "action", "resource_type", "created_at"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "org_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "actor_id": {
+            "type": "string",
+            "description": "User ID for human actors, API key ID for machine actors. `null` for unauthenticated system events.",
+            "nullable": true
+          },
+          "actor_type": {
+            "type": "string",
+            "description": "Whether the actor is a human user, an API key, or a system process.",
+            "enum": ["user", "api_key", "system"],
+            "example": "user"
+          },
+          "action": {
+            "type": "string",
+            "description": "Dot-separated action identifier (e.g. `job.create`, `api_key.revoke`).",
+            "example": "api_key.create"
+          },
+          "resource_type": {
+            "type": "string",
+            "description": "Resource category affected by the action.",
+            "enum": [
+              "upload",
+              "artifact",
+              "job",
+              "webhook",
+              "api_key",
+              "processor",
+              "org"
+            ],
+            "example": "api_key"
+          },
+          "resource_id": {
+            "type": "string",
+            "description": "ID of the affected resource, when applicable.",
+            "nullable": true
+          },
+          "ip": {
+            "type": "string",
+            "format": "ipv4",
+            "description": "Source IP of the request, when available.",
+            "nullable": true
+          },
+          "user_agent": {
+            "type": "string",
+            "nullable": true
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Action-specific structured detail (e.g. the job's processor name and version, the API key scopes).",
+            "additionalProperties": true,
+            "nullable": true
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuditLogList": {
+        "type": "object",
+        "description": "Cursor-paginated list of audit log entries.",
+        "required": ["data", "has_more"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/AuditLog"}
+          },
+          "has_more": {"type": "boolean"},
+          "next_cursor": {"type": ["string", "null"], "nullable": true}
         }
       }
     }
