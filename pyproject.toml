@@ -1,0 +1,99 @@
+[project]
+name = "orpheus-monorepo"
+version = "0.1.0"
+description = "Orpheus — multi-tenant SaaS for asynchronous audio processing"
+requires-python = ">=3.12"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "ruff>=0.7.0",
+    "pyright>=1.1.0",
+]
+
+[tool.uv]
+package = false
+
+# Polyglot workspace: only Python packages are members.
+#   - apps/api/ is Go (excluded by listing apps/workers explicitly)
+#   - packages/proto/ is a Protobuf-only package (excluded by listing
+#     each Python package explicitly rather than globbing packages/*)
+[tool.uv.workspace]
+members = [
+    "apps/workers",
+    "packages/contracts",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "dist", "build"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "UP",  # pyupgrade
+    "N",   # pep8-naming
+    "S",   # flake8-bandit (security)
+    "C4",  # flake8-comprehensions
+    "PT",  # flake8-pytest-style
+    "RUF", # ruff-specific rules
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "S101",  # allow assert (covered by S in test files via per-file-ignores)
+    "E501",  # line length (handled by formatter)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S311"]
+"**/migrations/**" = ["E", "F", "I", "N", "UP"]
+"scripts/**" = ["S", "T"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+include = ["apps", "packages"]
+exclude = ["**/migrations/**", "**/__pycache__", ".venv"]
+pythonVersion = "3.12"
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# The Go API lives at apps/api/ and is tested with `go test ./...` — see
+# the `go` job in .github/workflows/ci.yml. The Python test surface for
+# Phase 0 is empty; Phase 2 will add apps/workers/tests/.
+testpaths = [
+    "apps/workers/tests",
+    "packages/contracts/tests",
+]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+# uv workspaces put each package's source in its own src/ dir. Add them so
+# pytest can import package_name directly without an editable install.
+# Only Python packages need to be on pythonpath (apps/api/ is Go).
+pythonpath = [
+    "packages/contracts/src",
+]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--showlocals",
+    "--tb=short",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:botocore.*",
+    "ignore::DeprecationWarning:urllib3.*",
+]
