@@ -127,6 +127,12 @@ jobs:
         working-directory: apps/api
         run: go mod download
 
+      - name: go mod tidy (verify)
+        working-directory: apps/api
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
       - name: go vet
         working-directory: apps/api
         run: go vet ./...
