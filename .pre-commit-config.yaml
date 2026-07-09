@@ -1,0 +1,55 @@
+# Pre-commit hooks for Orpheus
+# Install: uv tool run pre-commit install
+# Run all: uv tool run pre-commit run --all-files
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        types_or: [python, pyi]
+      - id: ruff-format
+        types_or: [python, pyi]
+
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.5.10
+    hooks:
+      - id: uv-lock
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/biomejs/pre-commit
+    rev: v0.3.3
+    hooks:
+      - id: biome-format
+        additional_dependencies: ["@biomejs/biome@^1.9.0"]
+        files: \.(json|js|ts|tsx|jsx|css|md|mdx)$
+      - id: biome-lint
+        additional_dependencies: ["@biomejs/biome@^1.9.0"]
+        files: \.(json|js|ts|tsx|jsx)$
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.43.0
+    hooks:
+      - id: markdownlint
+        args: [--fix]
+        # Don't lint generated/large docs
+        exclude: |
+          (?x)^(
+              node_modules/.*|
+              docs/architecture/PRODUCTION_DESIGN\.md
+          )$
