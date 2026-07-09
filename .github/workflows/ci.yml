@@ -79,7 +79,21 @@ jobs:
         run: uv sync --all-packages --frozen
 
       - name: Run tests
-        run: uv run pytest --cov=apps --cov=packages --cov-report=xml --cov-report=term
+        # Phase 0 has no Python tests yet (testpaths in pyproject.toml point at
+        # apps/workers/tests and packages/contracts/tests, which are placeholders
+        # until Phase 2). pytest exits 5 ("no tests collected") in that case —
+        # treat that as a pass so the matrix doesn't block main on placeholder
+        # test directories. Any other exit code still fails the job.
+        run: |
+          set +e
+          uv run pytest --cov=apps --cov=packages --cov-report=xml --cov-report=term
+          rc=$?
+          set -e
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 5 ]; then
+            echo "::error::pytest failed with exit code $rc"
+            exit "$rc"
+          fi
+          echo "pytest exit code: $rc (5=no tests collected, treated as success for Phase 0)"
 
       - name: Upload coverage
         if: matrix.python-version == '3.12'
