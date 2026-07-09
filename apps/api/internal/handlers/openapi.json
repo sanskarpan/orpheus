@@ -1,0 +1,129 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Orpheus API",
+    "version": "0.1.0",
+    "description": "Multi-tenant SaaS for asynchronous audio processing."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development"
+    }
+  ],
+  "tags": [
+    {
+      "name": "health",
+      "description": "Liveness, readiness, and metrics endpoints used by orchestrators and operators."
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Liveness probe",
+        "description": "Returns 200 OK if the process is alive. Container orchestrators (Kubernetes, ECS) use this endpoint to decide whether to restart the container. It must not depend on external services.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Service is alive.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ready": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Readiness probe",
+        "description": "Returns 200 OK if the service is ready to accept traffic. In Phase 0 this always returns ready; Phase 1+ will check Postgres, Redis, and S3.",
+        "operationId": "getReady",
+        "responses": {
+          "200": {
+            "description": "Service is ready.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service is not ready. Phase 1+ will return this when a downstream dependency is unhealthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Prometheus metrics",
+        "description": "Prometheus exposition format. Includes Go runtime metrics and process metrics by default. Phase 1+ will register domain-specific counters and histograms.",
+        "operationId": "getMetrics",
+        "responses": {
+          "200": {
+            "description": "Metrics in Prometheus text exposition format.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "# HELP go_goroutines Number of goroutines that currently exist.\n# TYPE go_goroutines gauge\ngo_goroutines 7\n"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "LivenessResponse": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Static liveness token. Always \"ok\" when the process is running.",
+            "example": "ok"
+          }
+        }
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "required": ["status", "checks"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Aggregate readiness verdict. \"ready\" iff every check is \"ok\".",
+            "example": "ready"
+          },
+          "checks": {
+            "type": "object",
+            "description": "Per-dependency readiness results, keyed by dependency name.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "example": {
+              "service": "ok"
+            }
+          }
+        }
+      }
+    }
+  }
+}
