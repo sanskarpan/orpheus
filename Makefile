@@ -52,17 +52,37 @@ api-dev: ## Run the Go API server
 	cd $(GO_DIR) && go run ./cmd/api
 
 .PHONY: up
-up: ## Start local stack (Postgres, Redis, MinIO) via docker compose
-	docker compose up -d
-	@echo "✓ Local stack up. Postgres on :5432, Redis on :6379, MinIO on :9000 (console :9001)"
+up: infra-up ## Start the full local stack (alias for infra-up)
 
 .PHONY: down
-down: ## Stop local stack
-	docker compose down
+down: infra-down ## Stop the local stack (alias for infra-down)
 
 .PHONY: nuke
-nuke: ## Stop local stack AND wipe volumes
+nuke: infra-reset ## Wipe all infra volumes (alias for infra-reset)
+
+.PHONY: infra-up
+infra-up: ## Start local stack (Postgres, Redis, MinIO, Keycloak, NATS) via docker compose
+	docker compose up -d
+	@echo ""
+	@echo "✓ Local stack up."
+	@echo "    Postgres  :5432       (orpheus / orpheus)"
+	@echo "    Redis     :6379"
+	@echo "    MinIO     :9000       (console :9001, orpheus / orpheus-dev-secret)"
+	@echo "    Keycloak  :8088       (admin console, admin / admin)"
+	@echo "    NATS      :4222       (HTTP monitor :8222)"
+
+.PHONY: infra-down
+infra-down: ## Stop local stack
+	docker compose down
+
+.PHONY: infra-logs
+infra-logs: ## Follow docker compose logs
+	docker compose logs -f --tail=100
+
+.PHONY: infra-reset
+infra-reset: ## Stop local stack AND wipe volumes (DESTRUCTIVE)
 	docker compose down -v
+	@echo "✓ Volumes wiped. Next 'make up' will re-init Postgres, Keycloak, NATS."
 
 # ─────────────────────────────────────────────────────────────────────
 # Quality — combined (Python + Go)
