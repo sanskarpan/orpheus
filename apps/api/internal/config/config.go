@@ -27,6 +27,36 @@ type Config struct {
 	// ShutdownGraceSeconds is how long the server waits for in-flight
 	// requests to complete before forcefully shutting down.
 	ShutdownGraceSeconds int `envconfig:"SHUTDOWN_GRACE_SECONDS" default:"30"`
+
+	// --- External services (Phase 1+) ------------------------------------
+	// DatabaseURL points at the Postgres primary. The same value is
+	// passed to both the sql.DB used by goose migrations and the pgx
+	// pool used at request time.
+	DatabaseURL string `envconfig:"DATABASE_URL" default:"postgres://orpheus:orpheus@localhost:5432/orpheus?sslmode=disable"`
+
+	// RedisURL is used for the Arq work queue, rate limiting, and
+	// short-lived idempotency cache.
+	RedisURL string `envconfig:"REDIS_URL" default:"redis://localhost:6379/0"`
+
+	// NATSURL is the JetStream connection string used by the outbox
+	// dispatcher and the worker's job-channel subscriber.
+	NATSURL string `envconfig:"NATS_URL" default:"nats://localhost:4222"`
+
+	// S3Endpoint is the MinIO endpoint in dev. In prod this is the
+	// regional S3 endpoint (e.g. https://s3.us-east-1.amazonaws.com).
+	S3Endpoint  string `envconfig:"S3_ENDPOINT" default:"http://localhost:9000"`
+	S3AccessKey string `envconfig:"S3_ACCESS_KEY" default:"orpheus"`
+	S3SecretKey string `envconfig:"S3_SECRET_KEY" default:"orpheus-dev-secret"`
+
+	// S3Bucket is the bucket where upload parts and finalized artifacts
+	// live. One bucket per environment; key prefix encodes the org id.
+	S3Bucket string `envconfig:"S3_BUCKET" default:"orpheus-uploads"`
+
+	// Keycloak is the OIDC provider. The API validates bearer tokens
+	// against this realm; clients obtain tokens out-of-band.
+	KeycloakURL      string `envconfig:"KEYCLOAK_URL" default:"http://localhost:8088"`
+	KeycloakRealm    string `envconfig:"KEYCLOAK_REALM" default:"orpheus"`
+	KeycloakClientID string `envconfig:"KEYCLOAK_CLIENT_ID" default:"orpheus-api"`
 }
 
 // Load reads the configuration from the environment.
