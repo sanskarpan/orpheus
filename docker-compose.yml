@@ -2,6 +2,7 @@
 #
 # Phase 0: minimal — just the dependencies we'll need from Phase 1 onward.
 # Phase 1: API connects to postgres + redis. Workers connect too.
+#          Adds Keycloak (auth) + NATS JetStream (event bus).
 # Phase 4: Temporal added.
 #
 # Usage:
@@ -27,6 +28,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orpheus -d orpheus"]
       interval: 5s
@@ -75,6 +77,62 @@ services:
       retries: 5
 
   # ─────────────────────────────────────────────────────────────────
+  # Keycloak — identity & access management (OIDC / OAuth2)
+  # Phase 1+: API validates bearer tokens against this realm.
+  #   - Admin console: http://localhost:8088  (admin / admin)
+  #   - Realm: orpheus (auto-imported from keycloak/realm-orpheus.json)
+  #   - HTTPS port 8443 is started inside the container but NOT published.
+  # ─────────────────────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: orpheus-keycloak
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: orpheus
+      KC_DB_PASSWORD: orpheus
+    ports:
+      - "8088:8080"  # HTTP only — 8443 (HTTPS) is not exposed in dev
+    volumes:
+      - ./keycloak/realm-orpheus.json:/opt/keycloak/data/import/realm-orpheus.json:ro
+      - keycloak_data:/opt/keycloak/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────
+  # NATS JetStream — event bus (Phase 1+).
+  # Used by the API to publish domain events; workers subscribe.
+  #   - Client port:   4222
+  #   - HTTP monitor:  http://localhost:8222
+  # ─────────────────────────────────────────────────────────────────
+  nats:
+    image: nats:2.10-alpine
+    container_name: orpheus-nats
+    restart: unless-stopped
+    command: ["--jetstream", "--store_dir=/data", "--http_port", "8222"]
+    ports:
+      - "4222:4222"  # client
+      - "8222:8222"  # HTTP monitoring
+    volumes:
+      - nats_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────
   # LocalStack — for AWS SDK testing (S3, SQS, etc.) — Phase 0 stub
   # Uncomment when needed.
   # ─────────────────────────────────────────────────────────────────
@@ -90,3 +148,5 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  keycloak_data:
+  nats_data:
