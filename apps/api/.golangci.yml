@@ -13,7 +13,6 @@ run:
   timeout: 5m
   # Run linters on test files too — tests are part of the API surface.
   tests: true
-  test-timeout: 5m
 
 linters:
   # Start from a blank slate and enable only the linters we want, so the
