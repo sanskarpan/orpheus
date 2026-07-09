@@ -1,0 +1,34 @@
+# golangci-lint configuration for the Orpheus API.
+#
+# golangci-lint v2 splits linters and formatters into two sections.
+# Linters report issues; formatters enforce style and can be auto-applied
+# with `golangci-lint fmt`.
+#
+# See: https://golangci-lint.run/product/configuration-v2/
+
+version: "2"
+
+run:
+  # Allow CI to finish within the standard 5-minute budget.
+  timeout: 5m
+  # Run linters on test files too — tests are part of the API surface.
+  tests: true
+  test-timeout: 5m
+
+linters:
+  # Start from a blank slate and enable only the linters we want, so the
+  # config is explicit and does not silently change with golangci-lint
+  # releases.
+  default: none
+  enable:
+    - errcheck      # unchecked errors
+    - govet         # standard go vet checks
+    - ineffassign   # unused assignments
+    - staticcheck   # static analysis (includes SA, ST, S, Q rules)
+    - unused        # unused identifiers (also covered by staticcheck, listed per spec)
+    - gocritic      # opinionated style + correctness checks
+
+formatters:
+  enable:
+    - gofmt     # canonical Go formatting
+    - goimports # import grouping and ordering
