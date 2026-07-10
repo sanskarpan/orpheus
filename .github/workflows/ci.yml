@@ -157,31 +157,35 @@ jobs:
           flags: go
 
   # ─────────────────────────────────────────────────────────────────
-  # Protobuf / gRPC contract (deferred; Phase 1+)
+  # Protobuf / gRPC contract
   # ─────────────────────────────────────────────────────────────────
   proto:
     name: Protobuf (buf)
     runs-on: ubuntu-latest
-    # No protos yet — this job is stubbed for Phase 1+ (see packages/proto/).
-    # It will be wired up once orpheus/v1/*.proto is checked in.
+    # buf breaking --against '.git#branch=main' needs the full git history
+    # so we fetch with depth 0. We do NOT run `buf generate` in CI — generated
+    # code is checked in and the developer is expected to run `make proto-gen`
+    # before pushing. The contract this job enforces is: lint passes + no
+    # breaking changes vs main. The breaking check is a no-op on the first
+    # PR that adds protos to packages/proto (main has no protos yet), and
+    # becomes active in every subsequent PR.
+    env:
+      BUF_VERSION: "1.47.2"
     continue-on-error: false
     steps:
       - uses: actions/checkout@v4
-      - name: Validate protos
-        if: hashFiles('packages/proto/**/*.proto') != ''
+        with:
+          fetch-depth: 0
+
+      - name: Install buf
         run: |
-          if [ -d "packages/proto" ] && [ -n "$(find packages/proto -name '*.proto' 2>/dev/null)" ]; then
-            echo "Found .proto files; running buf lint"
-            # buf is not pre-installed on ubuntu-latest runners; install on demand.
-            if ! command -v buf >/dev/null 2>&1; then
-              curl -sSL "https://github.com/bufbuild/buf/releases/download/v1.47.2/buf-Linux-x86_64" \
-                -o /usr/local/bin/buf
-              chmod +x /usr/local/bin/buf
-            fi
-            cd packages/proto && buf lint || (cd ../.. && echo "buf lint not configured yet — skipping" && exit 0)
-          else
-            echo "⏭  no protos yet — Phase 1+ will define orpheus/v1/*.proto"
-          fi
+          curl --fail -sSL "https://github.com/bufbuild/buf/releases/download/v${BUF_VERSION}/buf-Linux-x86_64" \
+            -o /usr/local/bin/buf
+          chmod +x /usr/local/bin/buf
+          buf --version
+
+      - name: Lint + breaking-change check
+        run: make proto-lint
 
   # ─────────────────────────────────────────────────────────────────
   # Security scan (Python)

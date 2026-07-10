@@ -1,0 +1,42 @@
+syntax = "proto3";
+package orpheus.v1;
+
+option go_package = "github.com/orpheus/api/internal/gen/orpheus/v1;orpheusv1";
+
+// Pagination is cursor-based: the cursor is the created_at of the last
+// item on the previous page, server-side. The wire format mirrors the
+// REST surface in apps/api/internal/handlers/openapi.json.
+message Page {
+  int32 limit = 1;            // 1..200, default 50
+  string cursor = 2;          // empty for the first page
+}
+
+// TenantRef is the org_id of the caller. Every RPC in this package
+// carries one; the Go API auth middleware resolves it from the
+// Keycloak JWT / API key and the worker control plane trusts it
+// from the gRPC metadata header x-orpheus-org-id.
+message TenantRef {
+  string id = 1;  // uuid
+}
+
+// JobStatus mirrors the Postgres job_status enum in
+// apps/api/internal/db/migrations/0001_init.sql.
+enum JobStatus {
+  JOB_STATUS_UNSPECIFIED = 0;
+  JOB_STATUS_QUEUED      = 1;
+  JOB_STATUS_RUNNING     = 2;
+  JOB_STATUS_COMPLETED   = 3;
+  JOB_STATUS_FAILED      = 4;
+  JOB_STATUS_CANCELED    = 5;
+}
+
+// JobType mirrors the Postgres job_type enum. Only the first three
+// are needed for the Phase 2 slice; the rest are listed so the
+// generated code doesn't need to change when the workers learn
+// new job types.
+enum JobType {
+  JOB_TYPE_UNSPECIFIED     = 0;
+  JOB_TYPE_EXTRACT_METADATA = 1;
+  JOB_TYPE_PROBE            = 2;
+  JOB_TYPE_SLICE            = 3;
+}

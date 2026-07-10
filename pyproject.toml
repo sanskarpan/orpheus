@@ -33,7 +33,7 @@ members = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-extend-exclude = [".venv", "dist", "build"]
+extend-exclude = [".venv", "dist", "build", "**/orpheus/v1/**"]
 
 [tool.ruff.lint]
 select = [
@@ -65,7 +65,7 @@ indent-style = "space"
 
 [tool.pyright]
 include = ["apps", "packages"]
-exclude = ["**/migrations/**", "**/__pycache__", ".venv"]
+exclude = ["**/migrations/**", "**/__pycache__", ".venv", "**/orpheus/v1/**"]
 pythonVersion = "3.12"
 typeCheckingMode = "basic"
 reportMissingTypeStubs = false
