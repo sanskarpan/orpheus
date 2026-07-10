@@ -32,6 +32,7 @@ import (
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/dbtx"
+	"github.com/orpheus/api/internal/outbox"
 )
 
 // JobHandler bundles the dependencies the job endpoints need. All
@@ -182,7 +183,19 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 				'queued'::job_status, $6, 3, 0, 1, $7, $7
 			)
 		`, id, p.OrgID, p.UserID, req.ArtifactID, paramsArg, req.Priority, now)
-		return err
+		if err != nil {
+			return err
+		}
+		return outbox.Enqueue(ctx, h.DB, outbox.Event{
+			OrgID:         p.OrgID,
+			AggregateType: "job",
+			AggregateID:   id,
+			EventType:     "job.queued",
+			Payload: map[string]any{
+				"job_id":   id,
+				"job_type": req.Processor.Name,
+			},
+		})
 	})
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to create job")
@@ -436,7 +449,16 @@ func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 			SET status = 'canceled'::job_status, updated_at = now(), version = version + 1
 			WHERE id = $1 AND status IN ('queued', 'running')
 		`, id)
-		return err
+		if err != nil {
+			return err
+		}
+		return outbox.Enqueue(ctx, h.DB, outbox.Event{
+			OrgID:         p.OrgID,
+			AggregateType: "job",
+			AggregateID:   id,
+			EventType:     "job.canceled",
+			Payload:       map[string]any{"job_id": id},
+		})
 	})
 	if err != nil {
 		msg := err.Error()

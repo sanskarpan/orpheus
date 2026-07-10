@@ -2,8 +2,18 @@ package outbox
 
 import (
 	"context"
+	"database/sql"
+	"errors"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	_ "github.com/jackc/pgx/v5/stdlib"
+
+	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 // TestEnqueueValidations covers the early-exit branches in [Enqueue].
@@ -111,4 +121,110 @@ func TestEnqueueRequiresDB(t *testing.T) {
 		t.Skip("requires ORPHEUS_TEST_DATABASE_URL; skipped in -short mode")
 	}
 	t.Skip("ORPHEUS_TEST_DATABASE_URL not set; skipping live-db outbox test")
+}
+
+// TestEnqueue_InsideWithTenant_RollsBackWithTx is the load-bearing
+// test for the dbtx threading in Enqueue. The flow:
+//
+//  1. Seed an org on a private service-role connection (RLS would
+//     otherwise reject the insert).
+//  2. Open a WithTenant(orgID) block. Inside the closure, call
+//     outbox.Enqueue, then read the outbox table via dbtx.QueryRow
+//     to confirm the row landed on the same connection. The closure
+//     returns a deliberate error so WithTenant skips Commit and
+//     runs the deferred Rollback.
+//  3. After WithTenant returns, read the outbox table on the pool
+//     and assert the row is gone.
+//
+// If a future refactor drops the dbtx.FromContext pick-up and
+// reverts to using the pool, the in-closure read would still see
+// the row (because the pool would have committed it before
+// Rollback ran), and the post-closure read would find the row
+// instead of zero. That is the regression this test exists to
+// catch.
+func TestEnqueue_InsideWithTenant_RollsBackWithTx(t *testing.T) {
+	dsn := os.Getenv("ORPHEUS_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("ORPHEUS_TEST_DATABASE_URL not set; skipping live-DB outbox tx test")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	sqlDB, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	if err := db.Migrate(ctx, sqlDB); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	pool, err := db.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	seedPool, err := db.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("db.New (seed): %v", err)
+	}
+	t.Cleanup(seedPool.Close)
+	seedConn, err := seedPool.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire seed conn: %v", err)
+	}
+	if _, err := seedConn.Exec(ctx, "SET app.is_service = 'true'"); err != nil {
+		seedConn.Release()
+		t.Fatalf("set service role: %v", err)
+	}
+
+	orgID := uuid.NewString()
+	if _, err := seedConn.Exec(ctx,
+		`INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $3)`,
+		orgID, "outbox-tx-test", "outbox-tx-"+orgID[:8],
+	); err != nil {
+		seedConn.Release()
+		t.Fatalf("seed org: %v", err)
+	}
+	seedConn.Release()
+	t.Cleanup(func() {
+		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanCancel()
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM outbox WHERE org_id = $1`, orgID)
+		_, _ = pool.Exec(cleanCtx, `DELETE FROM organizations WHERE id = $1`, orgID)
+	})
+
+	sentinel := errors.New("deliberate rollback")
+	rollbackErr := pool.WithTenant(ctx, orgID, func(ctx context.Context) error {
+		if err := Enqueue(ctx, pool, Event{
+			OrgID:         orgID,
+			AggregateType: "job",
+			AggregateID:   "agg-1",
+			EventType:     "job.queued",
+			Payload:       map[string]any{"job_id": "agg-1"},
+		}); err != nil {
+			return err
+		}
+		var n int
+		if err := dbtx.QueryRow(ctx, pool, `SELECT count(*) FROM outbox WHERE org_id = $1`, orgID).Scan(&n); err != nil {
+			return err
+		}
+		if n != 1 {
+			t.Errorf("in-closure outbox count = %d, want 1 (row not visible inside tx)", n)
+		}
+		return sentinel
+	})
+	if !errors.Is(rollbackErr, sentinel) {
+		t.Fatalf("WithTenant returned %v, want sentinel", rollbackErr)
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM outbox WHERE org_id = $1`, orgID).Scan(&n); err != nil {
+		t.Fatalf("post-rollback count: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("outbox count after rollback = %d, want 0 (enqueue did not honour the tx)", n)
+	}
 }
