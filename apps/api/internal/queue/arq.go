@@ -1,3 +1,14 @@
+// Package queue bridges the Go API's outbox events into the Python
+// worker plane's queue (Arq on Redis). The flow is:
+//
+//	handler -> outbox row (in same tx as business write)
+//	outbox publisher -> NATS (adkil.<event_type>)
+//	ArqEnqueuer -> Redis (arq:result:queue list)
+//	Python arq worker -> noop_job (Phase 2 slice)
+//
+// In Phase 4 the noop_job is replaced with the real processors
+// (transcribe, slice, etc.) and the Arq job's function name +
+// args come from the same payload.
 package queue
 
 import (
