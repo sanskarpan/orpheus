@@ -1,6 +1,0 @@
-version: v1
-plugins:
-  - name: python
-    out: ../../packages/contracts/src/orpheus_contracts
-  - name: pyi
-    out: ../../packages/contracts/src/orpheus_contracts
