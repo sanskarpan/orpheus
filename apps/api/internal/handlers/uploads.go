@@ -31,6 +31,7 @@ import (
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 	"github.com/orpheus/api/internal/storage/s3"
 )
 
@@ -172,7 +173,7 @@ func (h *UploadHandler) Create(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		_, err := h.DB.Exec(ctx, `
+		_, err := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO upload_sessions
 			  (id, org_id, user_id, filename, content_type, size_bytes, status, expires_at, created_at)
 			VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, 'pending', $7, $8)
@@ -224,7 +225,7 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	var bucket, key, uploadID, filename, contentType string
 	var sizeBytes int64
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.QueryRow(ctx, `
+		return dbtx.QueryRow(ctx, h.DB, `
 			SELECT s3_bucket, s3_key, s3_upload_id, filename, content_type, size_bytes
 			FROM upload_sessions WHERE id = $1 AND status = 'pending'
 		`, sessionID).Scan(&bucket, &key, &uploadID, &filename, &contentType, &sizeBytes)
@@ -259,10 +260,7 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 
 	artifactID := uuid.NewString()
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		tx, err := h.DB.Begin(ctx)
-		if err != nil {
-			return err
-		}
+		tx := dbtx.FromContext(ctx)
 		// Rollback is a no-op if Commit succeeded; the error is
 		// intentionally swallowed because the only failure mode is
 		// "tx already finalized", which is benign.
@@ -310,7 +308,7 @@ func (h *UploadHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var s UploadSession
 	var expiresAt time.Time
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.QueryRow(ctx, `
+		return dbtx.QueryRow(ctx, h.DB, `
 			SELECT id, status, expires_at, created_at FROM upload_sessions WHERE id = $1
 		`, id).Scan(&s.ID, &s.Status, &expiresAt, &s.CreatedAt)
 	})
@@ -358,7 +356,7 @@ func (h *UploadHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var sessions []UploadSession
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Query(ctx, query, args...)
+		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
 			return err
 		}

@@ -31,6 +31,7 @@ import (
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 // APIKeyHandler bundles the dependencies the API-key endpoints need.
@@ -100,7 +101,7 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 	id := uuid.NewString()
 	now := time.Now()
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		_, err := h.DB.Exec(ctx, `
+		_, err := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO api_keys (id, org_id, name, hashed_secret, prefix, scopes, created_at)
 			VALUES ($1, $2, $3, $4, $5, $6, $7)
 		`, id, p.OrgID, req.Name, hashed, prefix, req.Scopes, now)
@@ -146,7 +147,7 @@ func (h *APIKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var keys []APIKey
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Query(ctx, query, args...)
+		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
 			return err
 		}
@@ -183,7 +184,7 @@ func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		_, err := h.DB.Exec(ctx, `UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, id)
+		_, err := dbtx.Exec(ctx, h.DB, `UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, id)
 		return err
 	})
 	if err != nil {

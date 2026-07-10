@@ -16,6 +16,7 @@ import (
 
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 // SystemHandler bundles the dependencies the system endpoints need.
@@ -75,7 +76,7 @@ func (h *SystemHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 
 	var u Usage
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.QueryRow(ctx, `
+		return dbtx.QueryRow(ctx, h.DB, `
 			SELECT
 				COUNT(*)::int,
 				COALESCE(SUM(EXTRACT(EPOCH FROM (completed_at - started_at))), 0)::float8,
@@ -175,7 +176,7 @@ func (h *SystemHandler) ListAuditLog(w http.ResponseWriter, r *http.Request) {
 
 	var entries []AuditLogEntry
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Query(ctx, query, args...)
+		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
 			return err
 		}

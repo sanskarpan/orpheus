@@ -26,6 +26,7 @@ import (
 
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 	"github.com/orpheus/api/internal/storage/s3"
 )
 
@@ -61,7 +62,7 @@ func (h *ArtifactHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var dur float64
 	var sampleRate, channels int
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.QueryRow(ctx, `
+		return dbtx.QueryRow(ctx, h.DB, `
 			SELECT id, s3_bucket, s3_key, sha256, size_bytes, content_type, codec, duration_seconds, sample_rate, channels, created_at
 			FROM artifacts WHERE id = $1
 		`, id).Scan(&a.ID, &s3Bucket, &s3Key, &sha256, &a.SizeBytes, &contentType, &codec, &dur, &sampleRate, &channels, &a.CreatedAt)
@@ -101,7 +102,7 @@ func (h *ArtifactHandler) GetSignedURL(w http.ResponseWriter, r *http.Request) {
 
 	var s3Bucket, s3Key string
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.QueryRow(ctx, `SELECT s3_bucket, s3_key FROM artifacts WHERE id = $1`, id).Scan(&s3Bucket, &s3Key)
+		return dbtx.QueryRow(ctx, h.DB, `SELECT s3_bucket, s3_key FROM artifacts WHERE id = $1`, id).Scan(&s3Bucket, &s3Key)
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -153,7 +154,7 @@ func (h *ArtifactHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var artifacts []Artifact
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Query(ctx, query, args...)
+		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
 			return err
 		}
