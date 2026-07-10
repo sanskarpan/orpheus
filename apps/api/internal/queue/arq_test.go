@@ -111,8 +111,8 @@ func TestHandle_HappyPath(t *testing.T) {
 	if err := json.Unmarshal(call.Value, &got); err != nil {
 		t.Fatalf("unmarshal arqJob: %v (blob=%s)", err, call.Value)
 	}
-	if got.Function != arqFunctionNoop {
-		t.Errorf("Function = %q, want %q", got.Function, arqFunctionNoop)
+	if got.Function != "dispatch_job" {
+		t.Errorf("Function = %q, want %q", got.Function, "dispatch_job")
 	}
 	if len(got.Args) != 1 || got.Args[0] != "job-123" {
 		t.Errorf("Args = %v, want [job-123]", got.Args)
@@ -196,7 +196,7 @@ func TestHandle_RedisError_DoesNotPanic(t *testing.T) {
 func TestArqJobJSONShape(t *testing.T) {
 	j := arqJob{
 		TaskID:      "t-1",
-		Function:    arqFunctionNoop,
+		Function:    "dispatch_job",
 		Args:        []any{"job-7"},
 		Kwargs:      map[string]any{},
 		EnqueueTime: 1700000000,
@@ -208,7 +208,7 @@ func TestArqJobJSONShape(t *testing.T) {
 	got := string(blob)
 	for _, want := range []string{
 		`"task_id":"t-1"`,
-		`"function":"noop_job"`,
+		`"function":"dispatch_job"`,
 		`"args":["job-7"]`,
 		`"kwargs":{}`,
 		`"enqueue_time":1700000000`,
