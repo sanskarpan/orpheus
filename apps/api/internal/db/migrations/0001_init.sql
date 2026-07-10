@@ -30,6 +30,7 @@
 -- the NOTICE is replaced by CREATE EXTENSION.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
+-- +goose StatementBegin
 DO $$
 BEGIN
     BEGIN
@@ -43,6 +44,7 @@ BEGIN
         RAISE NOTICE 'pg_cron unavailable, skipping: %', SQLERRM;
     END;
 END $$;
+-- +goose StatementEnd
 
 -- ----------------------------------------------------------------------------
 -- Enums
