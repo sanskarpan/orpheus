@@ -1,19 +1,18 @@
 // Phase 2 extract-metadata end-to-end smoke.
 //
-// Closes the loop the noop-job e2e (queue_e2e_test.go) leaves open:
-// that test only proves the job row reaches the arq queue. This
-// file proves the worker actually executes a real processor:
-// downloads a WAV from MinIO, runs mutagen on it, and writes the
-// result back into the jobs row.
+// Proves the full JetStream pipeline: the worker subscribes to
+// the ORPHEUS_JOBS stream (subjects adkil.job.>), executes a
+// real processor, downloads a WAV from MinIO, runs mutagen on
+// it, and writes the result back into the jobs row.
 //
 // Flow:
 //
-//	seed org + api_key + processor + artifact
+//	seed org + user + api_key + processor + artifact
 //	upload a 1s WAV to MinIO at artifact.s3_key
 //	start the Go API in-process
-//	start the Python arq worker subprocess (uses mutagen + boto3)
+//	start the Python JetStream worker subprocess (uses mutagen + boto3)
 //	POST /v1/jobs {artifact_id, processor: extract-metadata}
-//	  → outbox → NATS → arq → worker → jobs.status = 'completed'
+//	  → outbox → NATS JetStream → worker → jobs.status = 'completed'
 //	poll GET /v1/jobs/{id} until status = 'completed'
 //	assert result.duration_seconds ≈ 1.0 (±0.1)
 //
@@ -21,19 +20,24 @@
 //
 //	ORPHEUS_E2E=1
 //	ORPHEUS_TEST_DATABASE_URL
-//	ORPHEUS_TEST_REDIS_URL
 //	ORPHEUS_TEST_NATS_URL
 //	ORPHEUS_TEST_S3_ENDPOINT
 //	ORPHEUS_TEST_S3_BUCKET
 //	ORPHEUS_TEST_S3_ACCESS_KEY
 //	ORPHEUS_TEST_S3_SECRET_KEY
 //
+// The worker subprocess also needs ORPHEUS_WORKER_DATABASE_URL and
+// ORPHEUS_WORKER_NATS_URL in its env; the test sets DATABASE_URL
+// directly and relies on the S3_* vars being present in the parent
+// env (typical for `docker compose up` or a manual run with the
+// ORPHEUS_TEST_S3_* vars exported).
+//
 // MinIO is only in docker-compose (dev); the CI contract job does
 // not bring it up, so this test self-skips on CI without breaking
 // the build.
 //
 // Hermetic on 127.0.0.1:18082 — distinct from TestE2E_PublicSurface
-// (18080) and TestE2E_OutboxToWorkerQueue (18081).
+// (18080).
 package e2e
 
 import (
@@ -68,7 +72,6 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/redis/go-redis/v9"
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
@@ -76,7 +79,6 @@ import (
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/handlers"
 	"github.com/orpheus/api/internal/outbox"
-	"github.com/orpheus/api/internal/queue"
 	"github.com/orpheus/api/internal/server"
 	"github.com/orpheus/api/internal/webhooks"
 )
@@ -96,16 +98,15 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 		t.Skip("set ORPHEUS_E2E=1 to run")
 	}
 	dsn := os.Getenv("ORPHEUS_TEST_DATABASE_URL")
-	redisURL := os.Getenv("ORPHEUS_TEST_REDIS_URL")
 	natsURL := os.Getenv("ORPHEUS_TEST_NATS_URL")
 	s3Endpoint := os.Getenv("ORPHEUS_TEST_S3_ENDPOINT")
 	s3Bucket := os.Getenv("ORPHEUS_TEST_S3_BUCKET")
 	s3AccessKey := os.Getenv("ORPHEUS_TEST_S3_ACCESS_KEY")
 	s3SecretKey := os.Getenv("ORPHEUS_TEST_S3_SECRET_KEY")
-	if dsn == "" || redisURL == "" || natsURL == "" ||
+	if dsn == "" || natsURL == "" ||
 		s3Endpoint == "" || s3Bucket == "" ||
 		s3AccessKey == "" || s3SecretKey == "" {
-		t.Skip("missing one of ORPHEUS_TEST_{DATABASE,REDIS,NATS,S3}_*_URL")
+		t.Skip("missing one of ORPHEUS_TEST_{DATABASE,NATS,S3}_*_URL")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -133,27 +134,20 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 	}
 	t.Cleanup(pool.Close)
 
-	// ── 2. NATS + Redis clients ───────────────────────────────────────
+	// ── 2. NATS client ────────────────────────────────────────────────
 	natsConn, err := nats.Connect(natsURL, nats.Name("orpheus-api-extract-metadata-e2e"))
 	if err != nil {
 		t.Fatalf("nats.Connect: %v", err)
 	}
 	t.Cleanup(func() { natsConn.Close() })
 
-	rdb, err := emOpenRedis(redisURL)
-	if err != nil {
-		t.Fatalf("openRedis: %v", err)
-	}
-	t.Cleanup(func() { _ = rdb.Close() })
-
-	// ── 3. Background workers: outbox publisher + arq enqueuer ────────
+	// ── 3. Background workers: outbox publisher (JetStream) ─────────
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	js, err := jetstream.New(natsConn)
 	if err != nil {
 		t.Fatalf("jetstream.New: %v", err)
 	}
 	publisher := outbox.New(pool, js, logger)
-	arqEnq := queue.NewArqEnqueuer(natsConn, rdb, logger)
 	delivery := webhooks.New(pool, logger, natsConn, nil)
 
 	bgCtx, bgCancel := context.WithCancel(ctx)
@@ -165,13 +159,6 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 		defer workers.Done()
 		if err := publisher.Run(bgCtx); err != nil {
 			t.Logf("outbox.publisher exited: %v", err)
-		}
-	}()
-	workers.Add(1)
-	go func() {
-		defer workers.Done()
-		if err := arqEnq.Run(bgCtx); err != nil {
-			t.Logf("queue.arq_enqueuer exited: %v", err)
 		}
 	}()
 	workers.Add(1)
@@ -252,19 +239,15 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 
 	emSeedArtifact(t, pool, orgID, artifactID, s3Bucket, emTestS3Key, len(wav))
 
-	// ── 7. Start the Python Arq worker subprocess ─────────────────────
+	// ── 7. Start the Python JetStream worker subprocess ──────────────
 	workerCmd := exec.CommandContext(bgCtx,
 		"uv", "run", "--package", "orpheus-workers",
 		"python", "-m", "orpheus_workers.worker",
 	)
 	workerCmd.Dir = emFindWorkspaceRoot(t)
 	workerCmd.Env = append(os.Environ(),
-		"ORPHEUS_WORKER_REDIS_URL="+redisURL,
+		"ORPHEUS_WORKER_NATS_URL="+natsURL,
 		"ORPHEUS_WORKER_DATABASE_URL="+dsn,
-		"ORPHEUS_WORKER_S3_ENDPOINT="+s3Endpoint,
-		"ORPHEUS_WORKER_S3_BUCKET="+s3Bucket,
-		"ORPHEUS_WORKER_S3_ACCESS_KEY="+s3AccessKey,
-		"ORPHEUS_WORKER_S3_SECRET_KEY="+s3SecretKey,
 	)
 	workerCmd.Stdout = os.Stdout
 	workerCmd.Stderr = os.Stderr
@@ -279,9 +262,9 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 	})
 
 	// The worker has more cold-start work than the noop e2e: `uv run`
-	// spins up the venv, boto3 loads, mutagen loads, then arq connects
-	// to Redis. Two seconds is comfortable on a warm machine; CI isn't
-	// running this test anyway.
+	// spins up the venv, boto3 loads, mutagen loads, then the worker
+	// subscribes to JetStream. Two seconds is comfortable on a warm
+	// machine; CI isn't running this test anyway.
 	time.Sleep(2 * time.Second)
 
 	// ── 8. POST /v1/jobs ─────────────────────────────────────────────
@@ -534,8 +517,8 @@ func emSeedArtifact(t *testing.T, pool *db.DB, orgID, artifactID, bucket, key st
 }
 
 // emWaitForListener polls a TCP address until the listener accepts or
-// the deadline elapses. Renamed from queue_e2e_test.go's waitForListener
-// (the hard rule forbids editing that file to share the helper).
+// the deadline elapses. This is a separate copy from the one in
+// e2e_test.go so this file's helpers stay self-contained.
 func emWaitForListener(t *testing.T, addr string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -550,14 +533,6 @@ func emWaitForListener(t *testing.T, addr string, timeout time.Duration) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-}
-
-func emOpenRedis(rawURL string) (*redis.Client, error) {
-	opts, err := redis.ParseURL(rawURL)
-	if err != nil {
-		return nil, fmt.Errorf("redis.parse: %w", err)
-	}
-	return redis.NewClient(opts), nil
 }
 
 func emFindWorkspaceRoot(t *testing.T) string {
