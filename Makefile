@@ -9,6 +9,7 @@
 .DEFAULT_GOAL := help
 
 GO_DIR       := apps/api
+PROTO_DIR    := packages/proto
 WORKERS_DIR  := apps/workers
 PY_SOURCES   := apps packages
 
@@ -196,15 +197,22 @@ api-build: ## Build the Go API binary into apps/api/bin/
 	cd $(GO_DIR) && go build -o bin/api ./cmd/api
 
 # ─────────────────────────────────────────────────────────────────────
-# Proto (deferred; Phase 1+)
+# Proto
 # ─────────────────────────────────────────────────────────────────────
 .PHONY: proto-gen
-proto-gen: ## Generate Go + Python stubs from .proto files (deferred; Phase 1+)
-	@echo "⏭  proto codegen deferred to Phase 1+"
+proto-gen: ## Generate Go + Python stubs from .proto files via buf
+	cd $(PROTO_DIR) && buf generate --template buf.gen.golang.yaml
+	cd $(PROTO_DIR) && buf generate --template buf.gen.python.yaml
 
 .PHONY: proto-lint
-proto-lint: ## Lint protos with buf (deferred; Phase 1+)
-	@echo "⏭  proto lint deferred to Phase 1+"
+proto-lint: ## Lint protos with buf (and check against main for breaking changes)
+	cd $(PROTO_DIR) && buf lint
+	@if [ -n "$$(git ls-tree -r origin/main -- 'packages/proto/orpheus' 2>/dev/null | grep '\.proto$$')" ]; then \
+		cd $(PROTO_DIR) && buf breaking --against '../../.git#branch=main'; \
+		echo "buf lint + buf breaking: clean"; \
+	else \
+		echo "buf lint + buf breaking: clean (breaking skipped: no protos on main)"; \
+	fi
 
 # ─────────────────────────────────────────────────────────────────────
 # Clean
