@@ -6,13 +6,34 @@ requires-python = ">=3.12"
 readme = "README.md"
 license = { text = "Apache-2.0" }
 
-# Phase 0: empty. Phase 2 will add:
-#   - FastAPI control plane (Arq / Temporal worker registration, health)
-#   - arq (Redis-backed queue) for short jobs
-#   - temporalio for long-running workflows
-#   - ray[serve] + ray[gpu] for GPU inference (transcription, separation)
-#   - pydantic, httpx, structlog, opentelemetry-*
-dependencies = []
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "arq>=0.25.0",
+    "redis>=5.0.0",
+    "orpheus-contracts",
+    "structlog>=24.1.0",
+    "prometheus-client>=0.20.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",
+]
+
+[tool.orpheus_workers]
+grpc_port = 50051
+http_port = 8081
+redis_url = "redis://localhost:6379/0"
+log_level = "INFO"
+worker_concurrency = 4
+
+[tool.uv.sources]
+orpheus-contracts = { workspace = true }
 
 [build-system]
 requires = ["hatchling"]
