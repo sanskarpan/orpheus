@@ -115,6 +115,8 @@ services:
   # Used by the API to publish domain events; workers subscribe.
   #   - Client port:   4222
   #   - HTTP monitor:  http://localhost:8222
+  # Stream: ORPHEUS_JOBS, subjects adkil.job.>, created by the Go API
+  # on startup via apps/api/internal/jobs.EnsureStream.
   # ─────────────────────────────────────────────────────────────────
   nats:
     image: nats:2.10-alpine

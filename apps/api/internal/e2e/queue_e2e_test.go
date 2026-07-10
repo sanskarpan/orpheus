@@ -48,6 +48,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/orpheus/api/internal/audit"
@@ -137,7 +138,11 @@ func TestE2E_OutboxToWorkerQueue(t *testing.T) {
 
 	// ── 3. Background workers: outbox publisher + arq enqueuer ────────
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	publisher := outbox.New(pool, natsConn, logger)
+	js, err := jetstream.New(natsConn)
+	if err != nil {
+		t.Fatalf("jetstream.New: %v", err)
+	}
+	publisher := outbox.New(pool, js, logger)
 	arqEnq := queue.NewArqEnqueuer(natsConn, rdb, logger)
 	delivery := webhooks.New(pool, logger, natsConn, nil)
 

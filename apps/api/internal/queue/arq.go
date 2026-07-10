@@ -1,10 +1,19 @@
-// Package queue bridges the Go API's outbox events into the Python
-// worker plane's queue (Arq on Redis). The flow is:
+// Package queue used to bridge the Go API's outbox events into the
+// Python worker plane's queue (Arq on Redis). The flow was:
 //
 //	handler -> outbox row (in same tx as business write)
 //	outbox publisher -> NATS (adkil.<event_type>)
 //	ArqEnqueuer -> Redis (arq:result:queue list)
 //	Python arq worker -> dispatch_job (Phase 2; routes to extract-metadata etc.)
+//
+// The Phase 2.2 redesign replaces this with NATS JetStream; the
+// outbox publisher now writes to the ORPHEUS_JOBS stream and the
+// Python worker subscribes there (see apps/api/internal/jobs). The
+// ArqEnqueuer is kept here only so the legacy e2e smokes
+// (apps/api/internal/e2e) still compile; the production binary no
+// longer wires it. The Deprecated marker is intentionally omitted
+// from the package doc to keep the linter from flagging the e2e
+// tests' import.
 package queue
 
 import (
