@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import json
+import signal
+from typing import Any
+
+import nats
+import nats.js
 import structlog
-from arq.connections import RedisSettings
-from arq.worker import Worker
+from nats.aio.client import Client as NATS
+from nats.js import JetStreamContext
+from nats.js.errors import NotFoundError
 
 from .config import WorkerSettings, get_settings
 from .db import WorkerDB
@@ -12,95 +20,150 @@ from .s3 import WorkerS3
 
 logger = structlog.get_logger(__name__)
 
+JOB_STREAM = "ORPHEUS_JOBS"
+JOB_SUBJECTS = "adkil.job.>"
+JOB_DURABLE = "orpheus-workers"
 
-async def dispatch_job(ctx: dict, job_id: str) -> dict:
-    db = ctx["db"]
-    row = db.fetchrow("SELECT org_id, params FROM jobs WHERE id = %s", job_id)
-    if row is None:
-        raise ValueError(f"job {job_id} not found")
-    org_id = str(row["org_id"])
-    params = row["params"] or {}
-    processor = (params.get("_processor") or {}).get("name") or ""
-    proc = get_processor(processor) if processor else None
-    if proc is None:
-        logger.warning(
-            "worker.unknown_processor",
-            job_id=job_id,
-            processor=processor,
+
+class Worker:
+    def __init__(self, settings: WorkerSettings) -> None:
+        self._settings = settings
+        self._db: WorkerDB | None = None
+        self._s3: WorkerS3 | None = None
+        self._nc: NATS | None = None
+        self._js: JetStreamContext | None = None
+        self._sub: JetStreamContext.PushSubscription | None = None
+
+    async def start(self) -> None:
+        settings = self._settings
+        self._db = WorkerDB(settings)
+        self._db.open()
+        self._s3 = WorkerS3(settings)
+        self._nc = await nats.connect(settings.nats_url)
+        self._js = self._nc.jetstream()
+        try:
+            await self._js.stream_info(JOB_STREAM)
+        except NotFoundError:
+            await self._js.add_stream(name=JOB_STREAM, subjects=[JOB_SUBJECTS])
+        self._sub = await self._js.subscribe(
+            JOB_SUBJECTS,
+            cb=self._on_message,
+            durable=JOB_DURABLE,
         )
-        return await noop_job(ctx, job_id)
-    try:
-        result = await proc(ctx, job_id)
-    except Exception as e:
-        logger.exception("worker.processor_failed", job_id=job_id, processor=processor)
-        db.mark_job_failed(job_id, str(e))
-        db.enqueue_outbox(
-            org_id=org_id,
+        logger.info("worker.started", nats_url=settings.nats_url)
+
+    async def stop(self) -> None:
+        if self._sub is not None:
+            await self._sub.unsubscribe()
+            self._sub = None
+        if self._nc is not None:
+            await self._nc.drain()
+            self._nc = None
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+        logger.info("worker.stopped")
+
+    async def _on_message(self, msg: Any) -> None:
+        try:
+            event = json.loads(msg.data.decode())
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.error("worker.bad_message", err=str(exc))
+            await msg.term()
+            return
+        event_type = event.get("event_type")
+        if event_type in ("job.completed", "job.failed"):
+            await msg.ack()
+            return
+        if event_type != "job.queued":
+            logger.warning("worker.unknown_event_type", event_type=event_type)
+            await msg.ack()
+            return
+        await self._handle_job_queued(event, msg)
+
+    async def _handle_job_queued(self, event: dict[str, Any], msg: Any) -> None:
+        job_id = (event.get("payload") or {}).get("job_id")
+        if not job_id:
+            logger.error("worker.missing_job_id", event_data=event)
+            await msg.term()
+            return
+        assert self._db is not None
+        ctx = {
+            "db": self._db,
+            "s3": self._s3,
+            "work_dir": self._settings.work_dir,
+        }
+        row = self._db.fetchrow("SELECT org_id, params FROM jobs WHERE id = %s", job_id)
+        if row is None:
+            logger.error("worker.job_not_found", job_id=job_id)
+            await msg.term()
+            return
+        params = row["params"] or {}
+        if isinstance(params, str):
+            params = json.loads(params)
+        processor_name = ((params.get("_processor") or {}).get("name") or "").strip()
+        if not processor_name:
+            logger.warning("worker.no_processor", job_id=job_id)
+            await msg.ack()
+            return
+        proc = get_processor(processor_name)
+        if proc is None:
+            logger.warning(
+                "worker.unknown_processor",
+                processor=processor_name,
+                job_id=job_id,
+            )
+            await msg.ack()
+            return
+        try:
+            result = await proc(ctx, job_id)
+        except Exception as exc:
+            logger.exception(
+                "worker.processor_failed",
+                job_id=job_id,
+                processor=processor_name,
+            )
+            self._db.mark_job_failed(job_id, str(exc))
+            self._db.enqueue_outbox(
+                org_id=str(row["org_id"]),
+                aggregate_id=job_id,
+                event_type="job.failed",
+                payload={
+                    "job_id": job_id,
+                    "processor": processor_name,
+                    "error": str(exc),
+                },
+            )
+            await msg.nak()
+            return
+        self._db.mark_job_completed(job_id, result or {})
+        self._db.enqueue_outbox(
+            org_id=str(row["org_id"]),
             aggregate_id=job_id,
-            event_type="job.failed",
+            event_type="job.completed",
             payload={
                 "job_id": job_id,
-                "processor": processor,
-                "error": str(e),
+                "processor": processor_name,
+                "duration_seconds": (result or {}).get("duration_seconds"),
             },
         )
-        raise
-    db.mark_job_completed(job_id, result)
-    db.enqueue_outbox(
-        org_id=org_id,
-        aggregate_id=job_id,
-        event_type="job.completed",
-        payload={
-            "job_id": job_id,
-            "processor": processor,
-            "duration_seconds": result.get("duration_seconds"),
-            "tags_count": len(result.get("tags") or {}),
-        },
-    )
-    return result
+        await msg.ack()
 
 
-async def noop_job(ctx: dict, job_id: str) -> dict:
-    """Legacy fallback for unknown processors."""
-    logger.info("worker.noop_job.start", job_id=job_id)
-    return {"job_id": job_id, "status": "completed"}
-
-
-async def startup(ctx: dict) -> None:
-    settings: WorkerSettings = ctx["settings"]
-    db = WorkerDB(settings)
-    s3 = WorkerS3(settings)
-    db.open()
-    ctx["db"] = db
-    ctx["s3"] = s3
-    ctx["work_dir"] = settings.work_dir
-    logger.info("worker.startup", work_dir=settings.work_dir)
-
-
-async def shutdown(ctx: dict) -> None:
-    db: WorkerDB | None = ctx.get("db")
-    if db is not None:
-        db.close()
-    logger.info("worker.shutdown")
-
-
-def get_worker() -> Worker:
-    settings = get_settings()
-    return Worker(
-        redis_settings=RedisSettings.from_dsn(settings.redis_url),
-        functions=[dispatch_job, noop_job],
-        on_startup=startup,
-        on_shutdown=shutdown,
-        max_jobs=settings.worker_concurrency,
-        ctx={"settings": settings},
-    )
-
-
-def main() -> None:
+async def run() -> None:
     from .logging import configure
 
     settings = get_settings()
     configure(settings.log_level)
-    worker = get_worker()
-    logger.info("worker.starting", redis_url=settings.redis_url)
-    worker.run()
+    worker = Worker(settings)
+    await worker.start()
+    stop = asyncio.Event()
+    loop = asyncio.get_event_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    await stop.wait()
+    await worker.stop()
+
+
+def main() -> None:
+    asyncio.run(run())

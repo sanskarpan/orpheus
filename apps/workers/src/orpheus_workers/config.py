@@ -10,7 +10,7 @@ class WorkerSettings(BaseSettings):
 
     grpc_port: int = 50051
     http_port: int = 8081
-    redis_url: str = "redis://localhost:6379/0"
+    nats_url: str = "nats://localhost:4222"
     log_level: str = "INFO"
     worker_concurrency: int = 4
     worker_version: str = __version__
