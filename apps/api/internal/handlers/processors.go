@@ -82,7 +82,7 @@ func (h *ProcessorHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, err := h.DB.Pool.Query(r.Context(), `
+	rows, err := h.DB.Query(r.Context(), `
 		SELECT name, display_name, description FROM processors
 		ORDER BY name
 		LIMIT $1
@@ -122,7 +122,7 @@ func (h *ProcessorHandler) Get(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "name")
 
 	var p Processor
-	err := h.DB.Pool.QueryRow(r.Context(), `
+	err := h.DB.QueryRow(r.Context(), `
 		SELECT name, display_name, description FROM processors WHERE name = $1
 	`, name).Scan(&p.Name, &p.DisplayName, &p.Description)
 	if err != nil {
@@ -134,7 +134,7 @@ func (h *ProcessorHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.DB.Pool.Query(r.Context(), `
+	rows, err := h.DB.Query(r.Context(), `
 		SELECT version, model_id, model_version_id,
 		       COALESCE(slo_p95_seconds, 0)::float8,
 		       COALESCE(slo_p99_seconds, 0)::float8,

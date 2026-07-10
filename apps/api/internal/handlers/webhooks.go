@@ -180,7 +180,7 @@ func (h *WebhookHandler) Create(w http.ResponseWriter, r *http.Request) {
 	id := uuid.NewString()
 	now := time.Now()
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		_, err := h.DB.Pool.Exec(ctx, `
+		_, err := h.DB.Exec(ctx, `
 			INSERT INTO webhook_endpoints
 			  (id, org_id, url, secret, description, subscribed_events, active, created_at, updated_at)
 			VALUES ($1, $2, $3, $4, $5, $6, true, $7, $7)
@@ -237,7 +237,7 @@ func (h *WebhookHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var eps []WebhookEndpoint
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Pool.Query(ctx, query, args...)
+		rows, err := h.DB.Query(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -276,7 +276,7 @@ func (h *WebhookHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	var e WebhookEndpoint
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.Pool.QueryRow(ctx, `
+		return h.DB.QueryRow(ctx, `
 			SELECT id::text, url, description, subscribed_events, active, created_at, updated_at
 			FROM webhook_endpoints WHERE id = $1
 		`, id).Scan(&e.ID, &e.URL, &e.Description, &e.SubscribedEvents, &e.Active, &e.CreatedAt, &e.UpdatedAt)
@@ -344,7 +344,7 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 			UPDATE webhook_endpoints SET %s WHERE id = $1
 			RETURNING id::text, url, description, subscribed_events, active, created_at, updated_at
 		`, set)
-		return h.DB.Pool.QueryRow(ctx, query, args...).Scan(
+		return h.DB.QueryRow(ctx, query, args...).Scan(
 			&updated.ID, &updated.URL, &updated.Description, &updated.SubscribedEvents,
 			&updated.Active, &updated.CreatedAt, &updated.UpdatedAt,
 		)
@@ -374,7 +374,7 @@ func (h *WebhookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		_, err := h.DB.Pool.Exec(ctx, `DELETE FROM webhook_endpoints WHERE id = $1`, id)
+		_, err := h.DB.Exec(ctx, `DELETE FROM webhook_endpoints WHERE id = $1`, id)
 		return err
 	})
 	if err != nil {
@@ -425,7 +425,7 @@ func (h *WebhookHandler) ListDeliveries(w http.ResponseWriter, r *http.Request) 
 
 	var exists bool
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM webhook_endpoints WHERE id = $1 AND org_id = $2)`, id, p.OrgID).Scan(&exists)
+		return h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM webhook_endpoints WHERE id = $1 AND org_id = $2)`, id, p.OrgID).Scan(&exists)
 	})
 	if err != nil || !exists {
 		writeProblem(w, http.StatusNotFound, "not_found", "Webhook not found")
@@ -457,7 +457,7 @@ func (h *WebhookHandler) ListDeliveries(w http.ResponseWriter, r *http.Request) 
 
 	var deliveries []WebhookDelivery
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Pool.Query(ctx, query, args...)
+		rows, err := h.DB.Query(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -530,7 +530,7 @@ func (h *WebhookHandler) Replay(w http.ResponseWriter, r *http.Request) {
 		var (
 			srcEventType, srcEventID, dbStatus string
 		)
-		if err := h.DB.Pool.QueryRow(ctx, `
+		if err := h.DB.QueryRow(ctx, `
 			SELECT event_type, event_id::text, status::text
 			FROM webhook_deliveries
 			WHERE id = $1 AND endpoint_id = $2 AND org_id = $3
@@ -538,7 +538,7 @@ func (h *WebhookHandler) Replay(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 
-		if _, err := h.DB.Pool.Exec(ctx, `
+		if _, err := h.DB.Exec(ctx, `
 			INSERT INTO webhook_deliveries
 			  (id, org_id, endpoint_id, event_type, event_id, payload, status, next_retry_at, attempt_count, max_attempts, created_at)
 			SELECT $1, $2, endpoint_id, event_type, event_id, payload, 'pending', now(), 0, max_attempts, $3

@@ -133,7 +133,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Look up the processor + version in the public catalog.
 	var processorID, versionID string
-	err = h.DB.Pool.QueryRow(r.Context(), `
+	err = h.DB.QueryRow(r.Context(), `
 		SELECT p.id::text, pv.id::text
 		FROM processors p
 		JOIN processor_versions pv ON pv.processor_id = p.id
@@ -152,7 +152,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// the caller's org automatically.
 	var artifactOK bool
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, req.ArtifactID).Scan(&artifactOK)
+		return h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, req.ArtifactID).Scan(&artifactOK)
 	})
 	if err != nil || !artifactOK {
 		writeProblem(w, http.StatusNotFound, "not_found", "Artifact not found")
@@ -171,7 +171,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		_, err := h.DB.Pool.Exec(ctx, `
+		_, err := h.DB.Exec(ctx, `
 			INSERT INTO jobs (
 				id, org_id, user_id, artifact_id, job_type, params,
 				status, priority, max_retries, attempts, version, created_at, updated_at
@@ -220,7 +220,7 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 		startedAt, completedAt *time.Time
 	)
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.Pool.QueryRow(ctx, `
+		return h.DB.QueryRow(ctx, `
 			SELECT
 				id,
 				COALESCE(artifact_id::text, ''),
@@ -352,7 +352,7 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var jobs []Job
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Pool.Query(ctx, query, args...)
+		rows, err := h.DB.Query(ctx, query, args...)
 		if err != nil {
 			return err
 		}
@@ -423,14 +423,14 @@ func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		var cur string
-		if err := h.DB.Pool.QueryRow(ctx, `SELECT status::text FROM jobs WHERE id = $1`, id).Scan(&cur); err != nil {
+		if err := h.DB.QueryRow(ctx, `SELECT status::text FROM jobs WHERE id = $1`, id).Scan(&cur); err != nil {
 			return err
 		}
 		switch cur {
 		case "completed", "failed", "canceled":
 			return fmt.Errorf("conflict: job already %s", cur)
 		}
-		_, err := h.DB.Pool.Exec(ctx, `
+		_, err := h.DB.Exec(ctx, `
 			UPDATE jobs
 			SET status = 'canceled'::job_status, updated_at = now(), version = version + 1
 			WHERE id = $1 AND status IN ('queued', 'running')
@@ -497,7 +497,7 @@ func (h *JobHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 		// same one Create runs; a future iteration will hoist the
 		// shared code into a helper.
 		var procExists, artifactExists bool
-		if err := h.DB.Pool.QueryRow(r.Context(), `
+		if err := h.DB.QueryRow(r.Context(), `
 			SELECT EXISTS(
 				SELECT 1 FROM processors p
 				JOIN processor_versions pv ON pv.processor_id = p.id
@@ -508,14 +508,14 @@ func (h *JobHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-			return h.DB.Pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, j.ArtifactID).Scan(&artifactExists)
+			return h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, j.ArtifactID).Scan(&artifactExists)
 		}); err != nil || !artifactExists {
 			resp.Rejected = append(resp.Rejected, BulkRejection{Index: i, Reason: "artifact not found"})
 			continue
 		}
 
 		if err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-			_, err := h.DB.Pool.Exec(ctx, `
+			_, err := h.DB.Exec(ctx, `
 				INSERT INTO jobs (
 					id, org_id, artifact_id, job_type, params,
 					status, max_retries, attempts, version, created_at, updated_at
