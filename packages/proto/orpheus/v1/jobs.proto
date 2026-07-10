@@ -1,0 +1,70 @@
+syntax = "proto3";
+package orpheus.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orpheus/v1/common.proto";
+
+option go_package = "github.com/orpheus/api/internal/gen/orpheus/v1;orpheusv1";
+
+// ProcessorRef identifies a catalog processor + version. The Go API
+// looks this up by name in the `processors` table on POST /v1/jobs
+// and the worker side uses it to dispatch.
+message ProcessorRef {
+  string name    = 1;  // e.g. "whisper-transcribe"
+  string version = 2;  // e.g. "1.2.0"
+}
+
+// Job is the wire shape of a row in the `jobs` table. Fields that
+// don't exist on the row today (cost, started_at, completed_at)
+// are projected by the API from the `params` jsonb and the
+// `attempts` column for now; see apps/api/internal/handlers/jobs.go.
+message Job {
+  string          id          = 1;  // uuid
+  TenantRef       org         = 2;
+  string          artifact_id = 3;  // uuid
+  ProcessorRef    processor   = 4;
+  JobType         job_type    = 5;
+  JobStatus       status      = 6;
+  google.protobuf.Timestamp created_at   = 7;
+  google.protobuf.Timestamp updated_at   = 8;
+  google.protobuf.Timestamp started_at   = 9;
+  google.protobuf.Timestamp completed_at = 10;
+  int32           attempts    = 11;
+  int32           max_retries = 12;
+}
+
+// WorkerService is the control-plane RPC between the Go API and the
+// Python worker process. It is NOT the queue — Arq (Redis) is the
+// queue. This service exists so the API can ask the worker for
+// live status without going through Postgres.
+service WorkerService {
+  // Ping is the liveness check. Returns the worker's version + a
+  // list of the job_types it knows how to handle. Used by the
+  // Go API's /ready probe in Phase 3+.
+  rpc Ping(PingRequest) returns (PingResponse);
+
+  // GetJobStatus asks the worker for the live status of a job
+  // it has pulled from Arq. The worker may return JOB_STATUS_QUEUED
+  // if it has not yet claimed the job — that is the same value the
+  // Postgres row carries, so the API can choose to fall back to
+  // the row when the worker is unreachable.
+  rpc GetJobStatus(GetJobStatusRequest) returns (GetJobStatusResponse);
+}
+
+message PingRequest {}
+
+message PingResponse {
+  string worker_version = 1;
+  repeated JobType supported_job_types = 2;
+}
+
+message GetJobStatusRequest {
+  string job_id = 1;  // uuid
+}
+
+message GetJobStatusResponse {
+  string job_id = 1;  // uuid
+  JobStatus status = 2;
+  string status_detail = 3;  // optional human-readable detail
+  google.protobuf.Timestamp updated_at = 4;
+}
