@@ -31,6 +31,7 @@ import (
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 // JobHandler bundles the dependencies the job endpoints need. All
@@ -152,7 +153,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	// the caller's org automatically.
 	var artifactOK bool
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, req.ArtifactID).Scan(&artifactOK)
+		return dbtx.QueryRow(ctx, h.DB, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, req.ArtifactID).Scan(&artifactOK)
 	})
 	if err != nil || !artifactOK {
 		writeProblem(w, http.StatusNotFound, "not_found", "Artifact not found")
@@ -171,7 +172,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		_, err := h.DB.Exec(ctx, `
+		_, err := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO jobs (
 				id, org_id, user_id, artifact_id, job_type, params,
 				status, priority, max_retries, attempts, version, created_at, updated_at
@@ -220,7 +221,7 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 		startedAt, completedAt *time.Time
 	)
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.QueryRow(ctx, `
+		return dbtx.QueryRow(ctx, h.DB, `
 			SELECT
 				id,
 				COALESCE(artifact_id::text, ''),
@@ -352,7 +353,7 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	var jobs []Job
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Query(ctx, query, args...)
+		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
 			return err
 		}
@@ -423,14 +424,14 @@ func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		var cur string
-		if err := h.DB.QueryRow(ctx, `SELECT status::text FROM jobs WHERE id = $1`, id).Scan(&cur); err != nil {
+		if err := dbtx.QueryRow(ctx, h.DB, `SELECT status::text FROM jobs WHERE id = $1`, id).Scan(&cur); err != nil {
 			return err
 		}
 		switch cur {
 		case "completed", "failed", "canceled":
 			return fmt.Errorf("conflict: job already %s", cur)
 		}
-		_, err := h.DB.Exec(ctx, `
+		_, err := dbtx.Exec(ctx, h.DB, `
 			UPDATE jobs
 			SET status = 'canceled'::job_status, updated_at = now(), version = version + 1
 			WHERE id = $1 AND status IN ('queued', 'running')
@@ -508,14 +509,14 @@ func (h *JobHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-			return h.DB.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, j.ArtifactID).Scan(&artifactExists)
+			return dbtx.QueryRow(ctx, h.DB, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, j.ArtifactID).Scan(&artifactExists)
 		}); err != nil || !artifactExists {
 			resp.Rejected = append(resp.Rejected, BulkRejection{Index: i, Reason: "artifact not found"})
 			continue
 		}
 
 		if err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-			_, err := h.DB.Exec(ctx, `
+			_, err := dbtx.Exec(ctx, h.DB, `
 				INSERT INTO jobs (
 					id, org_id, artifact_id, job_type, params,
 					status, max_retries, attempts, version, created_at, updated_at
