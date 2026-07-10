@@ -4,11 +4,7 @@
 //	handler -> outbox row (in same tx as business write)
 //	outbox publisher -> NATS (adkil.<event_type>)
 //	ArqEnqueuer -> Redis (arq:result:queue list)
-//	Python arq worker -> noop_job (Phase 2 slice)
-//
-// In Phase 4 the noop_job is replaced with the real processors
-// (transcribe, slice, etc.) and the Arq job's function name +
-// args come from the same payload.
+//	Python arq worker -> dispatch_job (Phase 2; routes to extract-metadata etc.)
 package queue
 
 import (
@@ -24,9 +20,9 @@ import (
 )
 
 const (
-	arqQueueKey     = "arq:result:queue"
-	arqFunctionNoop = "noop_job"
-	noopJobNatsSubj = "adkil.job.queued"
+	arqQueueKey         = "arq:result:queue"
+	arqFunctionDispatch = "dispatch_job"
+	noopJobNatsSubj     = "adkil.job.queued"
 )
 
 type arqJob struct {
@@ -66,9 +62,9 @@ func (r redisClientLPush) LPush(ctx context.Context, key string, values ...any) 
 // Python worker plane's queue (arq on Redis).
 //
 // In Phase 2 the only event type this cares about is
-// `adkil.job.queued`, and the only function it enqueues is
-// `noop_job`. Phase 4 will route to the real processors
-// (transcribe, slice, etc.) using the same payload.
+// `adkil.job.queued`. The enqueued function is `dispatch_job`,
+// which looks up the job's processor from the row and routes to the
+// right processor module (extract-metadata, transcribe, etc.).
 type ArqEnqueuer struct {
 	NC     *nats.Conn
 	Writer redisWriter
@@ -149,7 +145,7 @@ func (a *ArqEnqueuer) handle(msg *nats.Msg) {
 
 	job := arqJob{
 		TaskID:      uuid.NewString(),
-		Function:    arqFunctionNoop,
+		Function:    arqFunctionDispatch,
 		Args:        []any{jobID},
 		Kwargs:      map[string]any{},
 		EnqueueTime: time.Now().Unix(),
