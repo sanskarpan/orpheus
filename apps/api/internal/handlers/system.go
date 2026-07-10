@@ -75,7 +75,7 @@ func (h *SystemHandler) GetUsage(w http.ResponseWriter, r *http.Request) {
 
 	var u Usage
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return h.DB.Pool.QueryRow(ctx, `
+		return h.DB.QueryRow(ctx, `
 			SELECT
 				COUNT(*)::int,
 				COALESCE(SUM(EXTRACT(EPOCH FROM (completed_at - started_at))), 0)::float8,
@@ -175,7 +175,7 @@ func (h *SystemHandler) ListAuditLog(w http.ResponseWriter, r *http.Request) {
 
 	var entries []AuditLogEntry
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		rows, err := h.DB.Pool.Query(ctx, query, args...)
+		rows, err := h.DB.Query(ctx, query, args...)
 		if err != nil {
 			return err
 		}
