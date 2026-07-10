@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/config"
 )
 
@@ -155,6 +156,54 @@ func TestUnknownRoute(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+}
+
+// TestV1RoutesRequireAuth verifies the v1 surface is mounted when an
+// authenticator is supplied and that the auth middleware runs first:
+// a request with no credentials receives 401 before any handler can
+// touch a nil DB. This pins the wiring in place: if a future change
+// drops the auth middleware or moves it under a handler, this test
+// fails loud.
+func TestV1RoutesRequireAuth(t *testing.T) {
+	cfg := &config.Config{
+		Env:                  "test",
+		Host:                 "127.0.0.1",
+		Port:                 0,
+		ShutdownGraceSeconds: 1,
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s := NewWithOptions(cfg, logger, Options{
+		Authn: &auth.Authenticator{}, // both verifiers nil
+	})
+
+	for _, path := range []string{
+		"/v1/uploads",
+		"/v1/jobs",
+		"/v1/webhooks",
+		"/v1/api-keys",
+		"/v1/processors",
+		"/v1/usage",
+		"/v1/audit-log",
+	} {
+		rec := call(s, http.MethodGet, path, nil)
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s: status = %d, want 401", path, rec.Code)
+		}
+	}
+}
+
+// TestV1RoutesAbsentWithoutAuth verifies the v1 routes are NOT
+// mounted when the authenticator is nil. This is the contract the
+// public surface relies on: tests (and external tooling) can build a
+// minimal server without wiring the auth stack.
+func TestV1RoutesAbsentWithoutAuth(t *testing.T) {
+	s := newTestServer(t)
+
+	rec := call(s, http.MethodGet, "/v1/uploads", nil)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (v1 routes must not be mounted without Authn)", rec.Code)
 	}
 }
 
