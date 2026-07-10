@@ -33,6 +33,7 @@ import (
 	"github.com/orpheus/api/internal/idempotency"
 	"github.com/orpheus/api/internal/logging"
 	"github.com/orpheus/api/internal/outbox"
+	"github.com/orpheus/api/internal/queue"
 	"github.com/orpheus/api/internal/ratelimit"
 	"github.com/orpheus/api/internal/server"
 	"github.com/orpheus/api/internal/storage/s3"
@@ -109,7 +110,8 @@ func run() error {
 	idempMW := idempotency.New(pgDB)
 
 	var rateMW *ratelimit.Middleware
-	if rdb, err := openRedis(ctx, cfg.RedisURL); err != nil {
+	var rdb *redis.Client
+	if rdb, err = openRedis(ctx, cfg.RedisURL); err != nil {
 		logger.Warn("orpheus_api.redis_unavailable", "err", err, "note", "rate limiting disabled")
 	} else {
 		defer func() { _ = rdb.Close() }()
@@ -134,10 +136,17 @@ func run() error {
 	// shutdown.
 	publisher := outbox.New(pgDB, natsConn, logger)
 	delivery := webhooks.New(pgDB, logger, natsConn, nil)
+	var arqEnq *queue.ArqEnqueuer
+	if natsConn != nil && rdb != nil {
+		arqEnq = queue.NewArqEnqueuer(natsConn, rdb, logger)
+	}
 
 	var workers sync.WaitGroup
 	startWorker(ctx, &workers, "outbox.publisher", publisher.Run)
 	startWorker(ctx, &workers, "webhooks.delivery", delivery.Run)
+	if arqEnq != nil {
+		startWorker(ctx, &workers, "queue.arq_enqueuer", arqEnq.Run)
+	}
 
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:          pgDB,
