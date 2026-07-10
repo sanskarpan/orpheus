@@ -16,6 +16,14 @@
 //     published in `created_at` order, so a consumer of `job.create`
 //     for a given aggregate will always see the `job.update` that
 //     followed.
+//
+// Call sites for [Enqueue] are expected to be inside a
+// `db.WithTenant(ctx, orgID, fn)` block: the dbtx package threads the
+// `pgx.Tx` through ctx, and Enqueue picks it up via dbtx.FromContext
+// so the outbox row commits or rolls back atomically with the
+// business write. Callers outside a WithTenant block fall back to
+// the supplied pool; that path is here for background workers and
+// tests, not for the request hot path.
 package outbox
 
 import (
@@ -25,7 +33,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/orpheus/api/internal/db"
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 // Event is the in-memory representation of an outbox row. Construct
@@ -64,16 +74,14 @@ type Event struct {
 
 // Enqueue inserts an event into the outbox table.
 //
-// The caller is responsible for invoking this inside the same
-// transaction as the business write — typically via
-// `db.WithTenant(ctx, orgID, fn)` and a follow-up outbox insert in
-// `fn`. The function does not accept a tx handle directly; in Phase 1
-// it relies on a single connection per WithTenant call (see
-// internal/db/db.go). Phase 2 will thread a pgx.Tx through ctx.
-func Enqueue(ctx context.Context, database *db.DB, e Event) error {
-	// Validate inputs first so the caller gets a specific error
-	// before we touch the database. The nil-DB check is last; a
-	// missing DB is a wiring bug, not a data problem.
+// database is the fallback Querier used when no `pgx.Tx` is attached
+// to ctx — typically the *db.DB pool. When ctx carries a tx
+// (i.e. the caller is inside a `db.WithTenant` block), Enqueue runs
+// the INSERT on that tx so the outbox row is in the same database
+// transaction as the business write. This is the load-bearing
+// guarantee of the outbox pattern: either both commit or both roll
+// back.
+func Enqueue(ctx context.Context, database dbtx.Querier, e Event) error {
 	if e.EventType == "" {
 		return fmt.Errorf("outbox.enqueue: empty event_type")
 	}
@@ -81,8 +89,14 @@ func Enqueue(ctx context.Context, database *db.DB, e Event) error {
 		return fmt.Errorf("outbox.enqueue: aggregate (%q, %q) is incomplete",
 			e.AggregateType, e.AggregateID)
 	}
-	if database == nil {
-		return fmt.Errorf("outbox.enqueue: nil db")
+	var q dbtx.Querier
+	if tx := dbtx.FromContext(ctx); tx != nil {
+		q = tx
+	} else {
+		q = database
+		if q == nil {
+			return fmt.Errorf("outbox.enqueue: nil db and no tx in ctx")
+		}
 	}
 	if e.ID == "" {
 		e.ID = newEventID()
@@ -101,17 +115,24 @@ func Enqueue(ctx context.Context, database *db.DB, e Event) error {
 		return fmt.Errorf("outbox.enqueue.marshal_headers: %w", err)
 	}
 
-	const q = `
+	const sql = `
 		INSERT INTO outbox (id, org_id, aggregate_type, aggregate_id, event_type, payload, headers)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
-	if _, err := database.Exec(ctx, q,
+	if _, err := q.Exec(ctx, sql,
 		e.ID, e.OrgID, e.AggregateType, e.AggregateID, e.EventType, payload, headerJSON,
 	); err != nil {
 		return fmt.Errorf("outbox.enqueue.insert: %w", err)
 	}
 	return nil
 }
+
+// Compile-time assertion that the pool satisfies dbtx.Querier, so
+// handlers can keep passing `h.DB` (which embeds *pgxpool.Pool) into
+// Enqueue's signature. The embedded pool's methods are promoted onto
+// *db.DB at compile time, but a concrete check is cheap insurance
+// against a future refactor that drops the embed.
+var _ dbtx.Querier = (*pgxpool.Pool)(nil)
 
 // newEventID returns a 16-byte hex string. We use crypto/rand rather
 // than uuid.New() because (a) the outbox row's PK is uuid but the
