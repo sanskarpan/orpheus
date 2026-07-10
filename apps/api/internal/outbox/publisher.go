@@ -6,9 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/jobs"
 )
 
 // subjectPrefix is the routing key prefix every outbox-published
@@ -16,13 +17,13 @@ import (
 // event, or to "adkil.<aggregate>.*" to filter by domain.
 const subjectPrefix = "adkil."
 
-// Publisher drains the outbox table to NATS. A single Publisher
-// instance is intended to run in its own goroutine; the caller's
-// responsibility is to call [Run] with a context that is cancelled
-// at shutdown.
+// Publisher drains the outbox table to NATS JetStream. A single
+// Publisher instance is intended to run in its own goroutine; the
+// caller's responsibility is to call [Run] with a context that is
+// cancelled at shutdown.
 type Publisher struct {
 	DB       *db.DB
-	NATS     *nats.Conn
+	JS       jobs.Publisher
 	Logger   *slog.Logger
 	Interval time.Duration
 	Batch    int
@@ -31,17 +32,17 @@ type Publisher struct {
 	started bool
 }
 
-// New constructs a Publisher with sensible defaults. database / nc /
+// New constructs a Publisher with sensible defaults. database / js /
 // logger may be nil for tests; the Run loop will skip its work in
 // that case so unit tests can construct and discard a Publisher
 // without panicking.
-func New(database *db.DB, nc *nats.Conn, logger *slog.Logger) *Publisher {
+func New(database *db.DB, js jetstream.JetStream, logger *slog.Logger) *Publisher {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Publisher{
 		DB:       database,
-		NATS:     nc,
+		JS:       js,
 		Logger:   logger,
 		Interval: time.Second,
 		Batch:    100,
@@ -87,12 +88,13 @@ func (p *Publisher) Run(ctx context.Context) error {
 	}
 }
 
-// tick claims a batch of unpublished events, publishes each to NATS,
-// and marks them published. On a publish or mark error it leaves the
-// row unpublished so the next tick will retry — this is the
-// "at-least-once" guarantee the outbox pattern is built around.
+// tick claims a batch of unpublished events, publishes each to the
+// ORPHEUS_JOBS stream, and marks them published. On a publish or
+// mark error it leaves the row unpublished so the next tick will
+// retry — this is the "at-least-once" guarantee the outbox pattern
+// is built around.
 func (p *Publisher) tick(ctx context.Context) {
-	if p.DB == nil || p.NATS == nil {
+	if p.DB == nil || p.JS == nil {
 		return
 	}
 
@@ -133,12 +135,11 @@ func (p *Publisher) tick(ctx context.Context) {
 	}
 
 	for _, c := range batch {
-		subject := subjectPrefix + c.eventType
-		if err := p.NATS.Publish(subject, c.payload); err != nil {
+		if err := jobs.Publish(ctx, p.JS, c.eventType, c.payload, nil); err != nil {
 			p.Logger.Error("outbox.publish_failed",
 				"err", err,
 				"event_id", c.id,
-				"subject", subject,
+				"event_type", c.eventType,
 			)
 			continue
 		}
