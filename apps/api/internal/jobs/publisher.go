@@ -30,12 +30,29 @@ const (
 	DefaultReplicas      = 1
 )
 
+// Publisher is the subset of the JetStream API the outbox publisher
+// uses. Production code passes a jetstream.JetStream (the full
+// interface from nats.go/jetstream, which satisfies Publisher).
+// Tests pass a mock that records the call. Keeping the surface
+// small here lets the publisher take a single dependency and lets
+// unit tests stub it with one method.
+type Publisher interface {
+	PublishMsg(ctx context.Context, msg *nats.Msg, opts ...jetstream.PublishOpt) (*jetstream.PubAck, error)
+}
+
+// StreamManager is the subset of the JetStream API EnsureStream
+// uses. Same trade-off as Publisher: production passes a
+// jetstream.JetStream, tests pass a stub.
+type StreamManager interface {
+	CreateStream(ctx context.Context, cfg jetstream.StreamConfig) (jetstream.Stream, error)
+}
+
 // EnsureStream creates the ORPHEUS_JOBS stream when it does not
 // already exist. A no-op return on duplicates keeps the call
 // idempotent so main.go can call it on every boot.
-func EnsureStream(js jetstream.JetStream, retentionDays int) error {
+func EnsureStream(js StreamManager, retentionDays int) error {
 	if js == nil {
-		return fmt.Errorf("jobs.ensure_stream: nil jetstream context")
+		return fmt.Errorf("jobs.ensure_stream: nil stream manager")
 	}
 	if retentionDays <= 0 {
 		retentionDays = DefaultRetentionDays
@@ -61,9 +78,9 @@ func EnsureStream(js jetstream.JetStream, retentionDays int) error {
 // worker pulls what it needs from the JSON body. Kept in the
 // signature so a future caller (trace ids, idempotency keys) can
 // wire NATS headers without changing the call site.
-func Publish(ctx context.Context, js jetstream.JetStream, eventType string, payload []byte, headers map[string]string) error {
+func Publish(ctx context.Context, js Publisher, eventType string, payload []byte, headers map[string]string) error {
 	if js == nil {
-		return fmt.Errorf("jobs.publish: nil jetstream context")
+		return fmt.Errorf("jobs.publish: nil publisher")
 	}
 	subj := SubjectPrefix + eventType
 	msg := &nats.Msg{
