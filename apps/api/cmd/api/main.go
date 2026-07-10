@@ -24,6 +24,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/orpheus/api/internal/audit"
@@ -31,9 +32,9 @@ import (
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/idempotency"
+	"github.com/orpheus/api/internal/jobs"
 	"github.com/orpheus/api/internal/logging"
 	"github.com/orpheus/api/internal/outbox"
-	"github.com/orpheus/api/internal/queue"
 	"github.com/orpheus/api/internal/ratelimit"
 	"github.com/orpheus/api/internal/server"
 	"github.com/orpheus/api/internal/storage/s3"
@@ -118,11 +119,11 @@ func run() error {
 		rateMW = ratelimit.NewMiddleware(ratelimit.New(rdb), logger)
 	}
 
-	// NATS connection. The outbox publisher drains DB rows to NATS;
-	// the webhook delivery service subscribes to `adkil.>` to enqueue
-	// deliveries on the fast path. Both are safe to run with a nil
-	// conn — they fall back to poll-only behaviour — so a dev binary
-	// without NATS still serves traffic.
+	// NATS connection. The outbox publisher drains DB rows to the
+	// ORPHEUS_JOBS JetStream stream; the webhook delivery service
+	// subscribes to `adkil.>` for the fast enqueue path. Both are
+	// safe to run with a nil conn — they fall back to poll-only
+	// behaviour — so a dev binary without NATS still serves traffic.
 	natsConn, err := openNATS(ctx, cfg.NATSURL)
 	if err != nil {
 		logger.Warn("orpheus_api.nats_unavailable", "err", err, "note", "running in poll-only mode")
@@ -130,23 +131,31 @@ func run() error {
 		defer natsConn.Close()
 	}
 
+	// JetStream context. nil when the NATS connection is nil or
+	// when the server has JetStream disabled; either way the
+	// outbox publisher falls back to "skip publish" with a warning
+	// on the first attempt, matching the soft-dep pattern used for
+	// Redis and Keycloak.
+	var js jetstream.JetStream
+	if natsConn != nil {
+		js, err = jetstream.New(natsConn)
+		if err != nil {
+			logger.Warn("orpheus_api.jetstream_unavailable", "err", err, "note", "outbox publisher will skip publishes")
+		} else if err := jobs.EnsureStream(js, jobs.DefaultRetentionDays); err != nil {
+			logger.Warn("orpheus_api.jetstream_ensure_stream_failed", "err", err)
+		}
+	}
+
 	// Background workers. Each is a long-running goroutine that exits
 	// when ctx is cancelled. The wait group lets run() block until
 	// every worker has returned, so no in-flight delivery is lost at
 	// shutdown.
-	publisher := outbox.New(pgDB, natsConn, logger)
+	publisher := outbox.New(pgDB, js, logger)
 	delivery := webhooks.New(pgDB, logger, natsConn, nil)
-	var arqEnq *queue.ArqEnqueuer
-	if natsConn != nil && rdb != nil {
-		arqEnq = queue.NewArqEnqueuer(natsConn, rdb, logger)
-	}
 
 	var workers sync.WaitGroup
 	startWorker(ctx, &workers, "outbox.publisher", publisher.Run)
 	startWorker(ctx, &workers, "webhooks.delivery", delivery.Run)
-	if arqEnq != nil {
-		startWorker(ctx, &workers, "queue.arq_enqueuer", arqEnq.Run)
-	}
 
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:          pgDB,
@@ -223,10 +232,11 @@ func openRedis(ctx context.Context, rawURL string) (*redis.Client, error) {
 	return rdb, nil
 }
 
-// openNATS connects to the configured NATS URL. We do not require
-// JetStream for the outbox publisher; the worker subscribes to a
-// plain `adkil.>` pattern. A failure here is non-fatal: the
-// outbox + webhook delivery services fall back to poll-only.
+// openNATS connects to the configured NATS URL. The outbox
+// publisher uses the JetStream view of the same connection; the
+// webhook delivery service uses core NATS for the adkil.>
+// fast-enqueue subscription. A failure here is non-fatal: both
+// services fall back to poll-only behaviour.
 func openNATS(_ context.Context, rawURL string) (*nats.Conn, error) {
 	conn, err := nats.Connect(rawURL,
 		nats.Name(strings.TrimSpace("orpheus-api")),
