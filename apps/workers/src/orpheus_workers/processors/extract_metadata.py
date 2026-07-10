@@ -12,16 +12,12 @@ from . import register_processor
 logger = structlog.get_logger(__name__)
 
 
-async def _download_artifact(
-    db: Any, s3: Any, work_dir: str, job_id: str
-) -> str:
+async def _download_artifact(db: Any, s3: Any, work_dir: str, job_id: str) -> str:
     job = db.fetchrow("SELECT artifact_id FROM jobs WHERE id = %s", job_id)
     if job is None:
         raise ValueError(f"job {job_id} not found")
     artifact_id = job["artifact_id"]
-    art = db.fetchrow(
-        "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s", artifact_id
-    )
+    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s", artifact_id)
     if art is None:
         raise ValueError(f"artifact {artifact_id} not found")
     Path(work_dir).mkdir(parents=True, exist_ok=True)

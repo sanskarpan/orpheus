@@ -15,9 +15,7 @@ logger = structlog.get_logger(__name__)
 
 async def dispatch_job(ctx: dict, job_id: str) -> dict:
     db = ctx["db"]
-    row = db.fetchrow(
-        "SELECT org_id, params FROM jobs WHERE id = %s", job_id
-    )
+    row = db.fetchrow("SELECT org_id, params FROM jobs WHERE id = %s", job_id)
     if row is None:
         raise ValueError(f"job {job_id} not found")
     org_id = str(row["org_id"])
@@ -34,9 +32,7 @@ async def dispatch_job(ctx: dict, job_id: str) -> dict:
     try:
         result = await proc(ctx, job_id)
     except Exception as e:
-        logger.exception(
-            "worker.processor_failed", job_id=job_id, processor=processor
-        )
+        logger.exception("worker.processor_failed", job_id=job_id, processor=processor)
         db.mark_job_failed(job_id, str(e))
         db.enqueue_outbox(
             org_id=org_id,
