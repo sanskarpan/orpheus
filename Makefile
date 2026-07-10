@@ -8,10 +8,11 @@
 
 .DEFAULT_GOAL := help
 
-GO_DIR       := apps/api
-PROTO_DIR    := packages/proto
-WORKERS_DIR  := apps/workers
-PY_SOURCES   := apps packages
+GO_DIR        := apps/api
+PROTO_DIR     := packages/proto
+CONTRACTS_DIR := packages/contracts
+WORKERS_DIR   := apps/workers
+PY_SOURCES    := apps packages
 
 # ─────────────────────────────────────────────────────────────────────
 # Help
@@ -200,9 +201,20 @@ api-build: ## Build the Go API binary into apps/api/bin/
 # Proto
 # ─────────────────────────────────────────────────────────────────────
 .PHONY: proto-gen
-proto-gen: ## Generate Go + Python stubs from .proto files via buf
+proto-gen: ## Generate Go + Python stubs from .proto files (buf for Go, grpcio-tools for Python)
 	cd $(PROTO_DIR) && buf generate --template buf.gen.golang.yaml
-	cd $(PROTO_DIR) && buf generate --template buf.gen.python.yaml
+	# Python: grpcio-tools via uv. buf's `python_grpc` plugin emits grpclib
+	# stubs; we want the standard `grpc` runtime so the worker code can use
+	# `grpc.aio.server` + `add_WorkerServiceServicer_to_server`.
+	cd $(PROTO_DIR) && uv run --package orpheus-contracts --no-sync python -m grpc_tools.protoc \
+		-I . \
+		--python_out=$(CONTRACTS_DIR)/src \
+		--pyi_out=$(CONTRACTS_DIR)/src \
+		--grpc_python_out=$(CONTRACTS_DIR)/src \
+		orpheus/v1/*.proto
+	# buf doesn't always create __init__.py files; create them so the
+	# `orpheus` and `orpheus.v1` packages import cleanly.
+	@touch $(CONTRACTS_DIR)/src/orpheus/__init__.py $(CONTRACTS_DIR)/src/orpheus/v1/__init__.py
 
 .PHONY: proto-lint
 proto-lint: ## Lint protos with buf (and check against main for breaking changes)
