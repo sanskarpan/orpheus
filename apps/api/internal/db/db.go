@@ -6,6 +6,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 // DB wraps a pgxpool.Pool so we can hang helpers (such as WithTenant)
@@ -38,16 +40,24 @@ func New(ctx context.Context, dsn string) (*DB, error) {
 }
 
 // WithTenant runs fn inside a single-connection transaction with
-// `app.current_org_id` set to orgID. All reads and writes through that
-// transaction are subject to the RLS policies defined in 0001_init.sql.
+// `app.current_org_id` set to orgID. The tx is attached to the ctx
+// passed to fn via dbtx.WithTx; handlers pull it out through the
+// dbtx.Exec/Query/QueryRow helpers (or the raw tx from
+// dbtx.FromContext) so every query inside fn runs on the same
+// connection that holds the GUC. That makes the row-level-security
+// policies defined in 0001_init.sql load-bearing instead of advisory.
+//
+// Trade-off: the dbtx helpers fall back to the pool when no tx is
+// present, so handler code that legitimately runs outside WithTenant
+// (background workers, system reads, the processor catalog lookup)
+// keeps working unchanged. Inside WithTenant, calls to
+// h.DB.Exec/Query/QueryRow (pool methods) silently bypass the GUC
+// because they acquire a *different* connection from the pool — use
+// the dbtx helpers instead.
 //
 // Use this for every user-facing request: the auth middleware resolves
 // the org from the bearer token, then wraps the handler invocation in
-// WithTenant. fn receives the same context it was called with; queries
-// performed via the *DB methods on the receiver should use a
-// per-request connection (e.g. db.Acquire) to keep the RLS setting in
-// scope. A future iteration will thread the pgx.Tx through ctx so
-// sqlc-generated queries inside fn run on the same transaction.
+// WithTenant.
 func (db *DB) WithTenant(ctx context.Context, orgID string, fn func(ctx context.Context) error) error {
 	conn, err := db.Acquire(ctx)
 	if err != nil {
@@ -64,11 +74,16 @@ func (db *DB) WithTenant(ctx context.Context, orgID string, fn func(ctx context.
 	// finalized", which is benign.
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if _, err := tx.Exec(ctx, "SET LOCAL app.current_org_id = $1", orgID); err != nil {
+	// set_config() (a function call) accepts a parameter; the
+	// "SET LOCAL ... = $1" form is invalid because SET does not
+	// bind parameters. The third arg, `true`, scopes the setting
+	// to the current transaction, matching SET LOCAL semantics.
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_org_id', $1, true)", orgID); err != nil {
 		return fmt.Errorf("db.with_tenant.set_org: %w", err)
 	}
 
-	if err := fn(ctx); err != nil {
+	txCtx := dbtx.WithTx(ctx, tx)
+	if err := fn(txCtx); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -77,7 +92,12 @@ func (db *DB) WithTenant(ctx context.Context, orgID string, fn func(ctx context.
 	return nil
 }
 
-// Compile-time check: pgx.Tx is what the transaction object from Begin
+// Compile-time checks: pgx.Tx is what the transaction object from Begin
 // actually is, so sqlc-generated code (which takes pgx.Tx) can be
 // satisfied by a handle pulled out of context once we wire that up.
-var _ pgx.Tx
+// *pgxpool.Pool satisfies the dbtx.Querier interface, so the dbtx
+// helpers can fall back to the pool when no tx is present in ctx.
+var (
+	_ pgx.Tx
+	_ dbtx.Querier = (*pgxpool.Pool)(nil)
+)
