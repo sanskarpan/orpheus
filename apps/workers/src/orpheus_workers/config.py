@@ -14,6 +14,12 @@ class WorkerSettings(BaseSettings):
     log_level: str = "INFO"
     worker_concurrency: int = 4
     worker_version: str = __version__
+    database_url: str = "postgres://orpheus:orpheus@localhost:5432/orpheus?sslmode=disable"
+    s3_endpoint: str = "http://localhost:9000"
+    s3_access_key: str = "orpheus"
+    s3_secret_key: str = "orpheus-dev-secret"
+    s3_bucket: str = "orpheus-uploads"
+    work_dir: str = "/tmp/orpheus-workers"
 
 
 def get_settings() -> WorkerSettings:
