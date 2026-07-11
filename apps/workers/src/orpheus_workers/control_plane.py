@@ -38,3 +38,7 @@ def main() -> None:
     configure(settings.log_level)
     logger.info("control_plane.starting", port=settings.http_port)
     uvicorn.run(create_app(), host="0.0.0.0", port=settings.http_port, log_config=None)
+
+
+if __name__ == "__main__":
+    main()

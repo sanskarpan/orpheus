@@ -48,3 +48,7 @@ def main() -> None:
     settings = get_settings()
     configure(settings.log_level)
     asyncio.run(serve())
+
+
+if __name__ == "__main__":
+    main()
