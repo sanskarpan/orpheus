@@ -2,6 +2,7 @@ package outbox
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -112,14 +113,6 @@ func (p *Publisher) tick(ctx context.Context) {
 	}
 	defer rows.Close()
 
-	type claimed struct {
-		id          string
-		eventType   string
-		orgID       string
-		aggregateID string
-		payload     []byte
-		headers     []byte
-	}
 	var batch []claimed
 	for rows.Next() {
 		var c claimed
@@ -138,7 +131,16 @@ func (p *Publisher) tick(ctx context.Context) {
 	}
 
 	for _, c := range batch {
-		if err := jobs.Publish(ctx, p.JS, c.eventType, c.payload, nil); err != nil {
+		envBytes, err := buildEnvelope(c)
+		if err != nil {
+			p.Logger.Error("outbox.envelope_failed",
+				"err", err,
+				"event_id", c.id,
+				"event_type", c.eventType,
+			)
+			continue
+		}
+		if err := jobs.Publish(ctx, p.JS, c.eventType, envBytes, nil); err != nil {
 			p.Logger.Error("outbox.publish_failed",
 				"err", err,
 				"event_id", c.id,
@@ -155,6 +157,59 @@ func (p *Publisher) tick(ctx context.Context) {
 			)
 		}
 	}
+}
+
+// envelope is the JSON body the outbox publisher puts on the wire.
+// It matches the contract the Python worker
+// (apps/workers/orpheus_workers/worker.py) expects: the worker reads
+// event_type at the top level and the inner job record under
+// "payload". The raw outbox row is just the columns; this struct is
+// the published shape.
+type envelope struct {
+	EventID     string            `json:"event_id"`
+	EventType   string            `json:"event_type"`
+	OrgID       string            `json:"org_id"`
+	AggregateID string            `json:"aggregate_id"`
+	Payload     json.RawMessage   `json:"payload"`
+	Headers     map[string]string `json:"headers"`
+}
+
+// claimed is one outbox row held in memory between the claim query
+// and the publish call. payload and headers are kept as raw bytes
+// because they round-trip through jsonb unchanged: re-marshalling
+// them would risk lossy ordering, escaping, or float precision.
+type claimed struct {
+	id          string
+	eventType   string
+	orgID       string
+	aggregateID string
+	payload     []byte
+	headers     []byte
+}
+
+// buildEnvelope wraps a claimed outbox row into the published JSON
+// body. The headers column is jsonb (Enqueue stores `{}` when nil);
+// an empty/empty-object value decodes to a non-nil empty map so the
+// wire field is always present.
+func buildEnvelope(c claimed) ([]byte, error) {
+	var headers map[string]string
+	if len(c.headers) > 0 {
+		if err := json.Unmarshal(c.headers, &headers); err != nil {
+			return nil, err
+		}
+	}
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	env := envelope{
+		EventID:     c.id,
+		EventType:   c.eventType,
+		OrgID:       c.orgID,
+		AggregateID: c.aggregateID,
+		Payload:     c.payload,
+		Headers:     headers,
+	}
+	return json.Marshal(env)
 }
 
 // Flush is an optional helper: it synchronously drains the outbox
