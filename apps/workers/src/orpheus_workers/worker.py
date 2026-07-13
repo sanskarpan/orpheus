@@ -12,6 +12,7 @@ import structlog
 from nats.aio.client import Client as NATS
 from nats.js import JetStreamContext
 from nats.js.errors import NotFoundError
+from prometheus_client import start_http_server
 
 from . import metrics
 from .config import WorkerSettings, get_settings
@@ -52,6 +53,8 @@ class Worker:
             cb=self._on_message,
             durable=JOB_DURABLE,
         )
+        start_http_server(settings.metrics_port)
+        logger.info("worker.metrics_started", port=settings.metrics_port)
         logger.info("worker.started", nats_url=settings.nats_url)
 
     async def stop(self) -> None:
