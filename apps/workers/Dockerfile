@@ -1,10 +1,14 @@
+FROM mwader/staticffmpeg:7.1.1 AS ffmpeg
+
 FROM python:3.12-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir uv==0.5.10
+COPY --from=ffmpeg /ffmpeg /usr/local/bin/ffmpeg
+COPY --from=ffmpeg /ffprobe /usr/local/bin/ffprobe
 COPY pyproject.toml uv.lock /app/
 COPY apps /app/apps
 COPY packages /app/packages
