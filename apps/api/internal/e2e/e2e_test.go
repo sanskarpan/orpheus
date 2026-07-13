@@ -32,6 +32,7 @@ import (
 
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/metrics"
 	"github.com/orpheus/api/internal/server"
 )
 
@@ -134,13 +135,15 @@ func bootAPI(t *testing.T) (baseURL string, pool *db.DB, shutdown func()) {
 		ShutdownGraceSeconds: 5,
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := server.New(cfg, logger)
+	srv := server.NewWithOptions(cfg, logger, server.Options{
+		Metrics: metrics.New(),
+	})
 	baseURL, shutdown = startServer(t, srv, cfg.Addr())
 	t.Cleanup(shutdown)
 	return baseURL, pool, shutdown
 }
 
-func TestE2E_PublicSurface(t *testing.T) {
+func TestE2E_Health(t *testing.T) {
 	baseURL, _, _ := bootAPI(t)
 	client := &http.Client{Timeout: 5 * time.Second}
 
@@ -198,8 +201,8 @@ func TestE2E_PublicSurface(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("status = %d, want 200", resp.StatusCode)
 		}
-		if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/plain") {
-			t.Errorf("Content-Type = %q, want text/plain", got)
+		if got := resp.Header.Get("Content-Type"); !strings.Contains(got, "text/plain; version=0.0.4") {
+			t.Errorf("Content-Type = %q, want text/plain; version=0.0.4", got)
 		}
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
@@ -207,6 +210,12 @@ func TestE2E_PublicSurface(t *testing.T) {
 		}
 		if !strings.Contains(string(body), "# HELP") {
 			t.Errorf("metrics body does not contain # HELP")
+		}
+		if !strings.Contains(string(body), "orpheus_http_requests_total") {
+			t.Errorf("metrics body does not contain orpheus_http_requests_total")
+		}
+		if !strings.Contains(string(body), "go_goroutines") {
+			t.Errorf("metrics body does not contain go_goroutines")
 		}
 	})
 
