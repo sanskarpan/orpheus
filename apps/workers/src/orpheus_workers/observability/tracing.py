@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import logging
-
+import structlog
 from opentelemetry import trace
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk.resources import Resource
@@ -11,7 +10,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 def init(service_name: str = "orpheus-workers") -> None:
