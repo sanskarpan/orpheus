@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 import structlog
+from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from .config import WorkerSettings
@@ -18,7 +19,6 @@ class WorkerDB:
             conninfo=settings.database_url,
             min_size=1,
             max_size=settings.worker_concurrency,
-            kwargs={"autocommit": True},
         )
 
     def open(self) -> None:
@@ -30,12 +30,21 @@ class WorkerDB:
     @contextmanager
     def conn(self) -> Iterator[Any]:
         with self._pool.connection() as c:
-            with c.cursor() as cur:
-                cur.execute("SET LOCAL app.is_service = 'true'")
-            yield c
+            original_autocommit = c.autocommit
+            c.autocommit = False
+            try:
+                with c.cursor() as cur:
+                    cur.execute("SET LOCAL app.is_service = 'true'")
+                yield c
+                c.commit()
+            except Exception:
+                c.rollback()
+                raise
+            finally:
+                c.autocommit = original_autocommit
 
     def fetchrow(self, sql: str, *args: Any) -> Any:
-        with self.conn() as c, c.cursor() as cur:
+        with self.conn() as c, c.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, args)
             return cur.fetchone()
 
