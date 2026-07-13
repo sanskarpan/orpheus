@@ -15,7 +15,7 @@ from nats.js.errors import NotFoundError
 from .config import WorkerSettings, get_settings
 from .db import WorkerDB
 from .processors import get_processor
-from .processors import extract_metadata, probe  # noqa: F401  (registers handlers)
+from .processors import extract_metadata, probe, slice  # noqa: F401  (registers handlers)
 from .s3 import WorkerS3
 
 logger = structlog.get_logger(__name__)
