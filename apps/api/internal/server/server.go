@@ -170,7 +170,7 @@ func (s *Server) v1Routes() {
 		r.Get("/artifacts/{id}", ah.Get)
 		r.Get("/artifacts/{id}/signed-url", ah.GetSignedURL)
 
-		jh := &handlers.JobHandler{DB: s.opts.DB, Audit: s.opts.Audit}
+		jh := &handlers.JobHandler{DB: s.opts.DB, Audit: s.opts.Audit, Metrics: s.opts.Metrics}
 		r.Post("/jobs", jh.Create)
 		r.Post("/jobs/bulk", jh.BulkCreate)
 		r.Get("/jobs", jh.List)
