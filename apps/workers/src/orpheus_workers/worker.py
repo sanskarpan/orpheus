@@ -12,11 +12,15 @@ import structlog
 from nats.aio.client import Client as NATS
 from nats.js import JetStreamContext
 from nats.js.errors import NotFoundError
+from opentelemetry import trace
+from opentelemetry.propagate import extract
+from opentelemetry.trace import Status, StatusCode
 from prometheus_client import start_http_server
 
 from . import metrics
 from .config import WorkerSettings, get_settings
 from .db import WorkerDB
+from .observability.tracing import init as init_tracing
 from .processors import get_processor
 from .processors import extract_metadata, probe, slice  # noqa: F401  (registers handlers)
 from .s3 import WorkerS3
@@ -27,9 +31,12 @@ JOB_STREAM = "ORPHEUS_JOBS"
 JOB_SUBJECTS = "adkil.job.>"
 JOB_DURABLE = "orpheus-workers"
 
+tracer = trace.get_tracer("orpheus-workers")
+
 
 class Worker:
     def __init__(self, settings: WorkerSettings) -> None:
+        init_tracing("orpheus-workers")
         self._settings = settings
         self._db: WorkerDB | None = None
         self._s3: WorkerS3 | None = None
@@ -127,9 +134,20 @@ class Worker:
             await msg.ack()
             metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
+        parent_ctx = extract(event.get("headers") or {})
         start = time.monotonic()
         try:
-            result = await proc(ctx, job_id)
+            with tracer.start_as_current_span(
+                "worker.process_job",
+                context=parent_ctx,
+                attributes={"job.id": job_id, "job.processor": processor_name},
+            ) as span:
+                try:
+                    result = await proc(ctx, job_id)
+                except Exception as exc:
+                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                    raise
+                span.set_status(Status(StatusCode.OK))
             metrics.JOBS_PROCESSED.labels(processor=processor_name, status="completed").inc()
             self._db.mark_job_completed(job_id, result or {})
             self._db.enqueue_outbox(
