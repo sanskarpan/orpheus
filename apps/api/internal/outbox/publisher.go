@@ -99,7 +99,7 @@ func (p *Publisher) tick(ctx context.Context) {
 	}
 
 	rows, err := p.DB.Query(ctx, `
-		SELECT id, event_type, payload
+		SELECT id, event_type, org_id, aggregate_id, payload, headers
 		FROM outbox
 		WHERE published_at IS NULL
 		ORDER BY created_at ASC
@@ -113,14 +113,17 @@ func (p *Publisher) tick(ctx context.Context) {
 	defer rows.Close()
 
 	type claimed struct {
-		id        string
-		eventType string
-		payload   []byte
+		id          string
+		eventType   string
+		orgID       string
+		aggregateID string
+		payload     []byte
+		headers     []byte
 	}
 	var batch []claimed
 	for rows.Next() {
 		var c claimed
-		if err := rows.Scan(&c.id, &c.eventType, &c.payload); err != nil {
+		if err := rows.Scan(&c.id, &c.eventType, &c.orgID, &c.aggregateID, &c.payload, &c.headers); err != nil {
 			p.Logger.Error("outbox.scan_failed", "err", err)
 			continue
 		}
