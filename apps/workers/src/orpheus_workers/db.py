@@ -5,6 +5,7 @@ from contextlib import contextmanager
 from typing import Any, Iterator
 
 import structlog
+from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from .config import WorkerSettings
@@ -43,7 +44,7 @@ class WorkerDB:
                 c.autocommit = original_autocommit
 
     def fetchrow(self, sql: str, *args: Any) -> Any:
-        with self.conn() as c, c.cursor() as cur:
+        with self.conn() as c, c.cursor(row_factory=dict_row) as cur:
             cur.execute(sql, args)
             return cur.fetchone()
 
