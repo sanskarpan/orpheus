@@ -69,8 +69,8 @@ async def slice_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
             size_bytes,
         )
         return {
-            "slice_artifact_id": slice_id,
-            "source_artifact_id": src_artifact_id,
+            "slice_artifact_id": str(slice_id),
+            "source_artifact_id": str(src_artifact_id),
             "start_seconds": start_seconds,
             "end_seconds": end_seconds,
             "size_bytes": size_bytes,
