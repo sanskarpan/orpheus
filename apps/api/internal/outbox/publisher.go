@@ -8,11 +8,22 @@ import (
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/jobs"
 	"github.com/orpheus/api/internal/metrics"
 )
+
+// tracer is the per-package handle to the global OTel tracer. Resolved
+// at package init against whatever the global TracerProvider is at
+// that moment (the observability.Init call in cmd/api is the prod
+// wiring); the SDK is safe to call Tracer() before SetTracerProvider.
+var tracer = otel.Tracer("orpheus-outbox")
 
 // subjectPrefix is the routing key prefix every outbox-published
 // message shares. Consumers subscribe to "adkil.>" to receive every
@@ -136,44 +147,70 @@ func (p *Publisher) tick(ctx context.Context) {
 	}
 
 	for _, c := range batch {
-		envBytes, err := buildEnvelope(c)
-		if err != nil {
-			p.Logger.Error("outbox.envelope_failed",
-				"err", err,
-				"event_id", c.id,
-				"event_type", c.eventType,
+		func() {
+			ctx, span := tracer.Start(ctx, "outbox.publish",
+				trace.WithAttributes(
+					attribute.String("outbox.event_id", c.id),
+					attribute.String("outbox.event_type", c.eventType),
+				),
 			)
-			continue
-		}
-		start := time.Now()
-		pubErr := jobs.Publish(ctx, p.JS, c.eventType, envBytes, nil)
-		latency := time.Since(start).Seconds()
-		result := "success"
-		if pubErr != nil {
-			result = "error"
-			p.Logger.Error("outbox.publish_failed",
-				"err", pubErr,
-				"event_id", c.id,
-				"event_type", c.eventType,
-			)
+			defer span.End()
+
+			carrier := propagation.MapCarrier{}
+			otel.GetTextMapPropagator().Inject(ctx, carrier)
+
+			env := envelope{
+				EventID:     c.id,
+				EventType:   c.eventType,
+				OrgID:       c.orgID,
+				AggregateID: c.aggregateID,
+				Payload:     c.payload,
+				Headers:     carrier,
+			}
+			envBytes, err := json.Marshal(env)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, "marshal envelope")
+				span.SetAttributes(attribute.String("outbox.result", "error"))
+				p.Logger.Error("outbox.envelope_failed",
+					"err", err,
+					"event_id", c.id,
+					"event_type", c.eventType,
+				)
+				return
+			}
+
+			start := time.Now()
+			pubErr := jobs.Publish(ctx, p.JS, c.eventType, envBytes, nil)
+			latency := time.Since(start).Seconds()
+			result := "success"
+			if pubErr != nil {
+				result = "error"
+				span.RecordError(pubErr)
+				span.SetStatus(codes.Error, "publish failed")
+				p.Logger.Error("outbox.publish_failed",
+					"err", pubErr,
+					"event_id", c.id,
+					"event_type", c.eventType,
+				)
+			}
+			span.SetAttributes(attribute.String("outbox.result", result))
 			if p.Metrics != nil {
 				p.Metrics.OutboxPublished.WithLabelValues(c.eventType, result).Inc()
 				p.Metrics.OutboxPublishLatency.WithLabelValues(c.eventType).Observe(latency)
 			}
-			continue
-		}
-		if p.Metrics != nil {
-			p.Metrics.OutboxPublished.WithLabelValues(c.eventType, result).Inc()
-			p.Metrics.OutboxPublishLatency.WithLabelValues(c.eventType).Observe(latency)
-		}
-		if _, err := p.DB.Exec(ctx,
-			`UPDATE outbox SET published_at = now() WHERE id = $1`, c.id,
-		); err != nil {
-			p.Logger.Error("outbox.mark_published_failed",
-				"err", err,
-				"event_id", c.id,
-			)
-		}
+			if pubErr != nil {
+				return
+			}
+			if _, err := p.DB.Exec(ctx,
+				`UPDATE outbox SET published_at = now() WHERE id = $1`, c.id,
+			); err != nil {
+				p.Logger.Error("outbox.mark_published_failed",
+					"err", err,
+					"event_id", c.id,
+				)
+			}
+		}()
 	}
 }
 
