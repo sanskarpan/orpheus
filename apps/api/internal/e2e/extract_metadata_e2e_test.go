@@ -100,7 +100,7 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 	})
 
 	apiKey := setup.SeedAPIKey(t, ctx, pool, orgID)
-	jobID := setup.PostJob(t, ctx, apiURL, apiKey, artifactID, emTestProcessorName, emTestProcessorVersion)
+	jobID := setup.PostJob(t, ctx, apiURL, apiKey, artifactID, emTestProcessorName, emTestProcessorVersion, "")
 	status, resultRaw := setup.WaitForJobComplete(t, ctx, apiURL, apiKey, jobID, setup.WaitJob)
 
 	if status != "completed" {

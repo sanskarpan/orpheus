@@ -92,7 +92,7 @@ func TestE2E_Probe(t *testing.T) {
 	})
 
 	apiKey := setup.SeedAPIKey(t, ctx, pool, orgID)
-	jobID := setup.PostJob(t, ctx, apiURL, apiKey, artifactID, "probe", "1.0.0")
+	jobID := setup.PostJob(t, ctx, apiURL, apiKey, artifactID, "probe", "1.0.0", "")
 	status, resultRaw := setup.WaitForJobComplete(t, ctx, apiURL, apiKey, jobID, setup.WaitJob)
 
 	if status != "completed" {
