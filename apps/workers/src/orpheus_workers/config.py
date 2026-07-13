@@ -10,6 +10,7 @@ class WorkerSettings(BaseSettings):
 
     grpc_port: int = 50051
     http_port: int = 8081
+    metrics_port: int = 8082
     nats_url: str = "nats://localhost:4222"
     log_level: str = "INFO"
     worker_concurrency: int = 4
