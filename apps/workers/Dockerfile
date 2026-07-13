@@ -14,7 +14,7 @@ COPY apps /app/apps
 COPY packages /app/packages
 RUN uv sync --all-packages --frozen
 
-EXPOSE 8081 50051
+EXPOSE 8081 50051 8082
 
 COPY apps/workers/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

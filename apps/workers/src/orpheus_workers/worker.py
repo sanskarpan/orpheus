@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import time
 from typing import Any
 
 import nats
@@ -11,7 +12,9 @@ import structlog
 from nats.aio.client import Client as NATS
 from nats.js import JetStreamContext
 from nats.js.errors import NotFoundError
+from prometheus_client import start_http_server
 
+from . import metrics
 from .config import WorkerSettings, get_settings
 from .db import WorkerDB
 from .processors import get_processor
@@ -50,6 +53,8 @@ class Worker:
             cb=self._on_message,
             durable=JOB_DURABLE,
         )
+        start_http_server(settings.metrics_port)
+        logger.info("worker.metrics_started", port=settings.metrics_port)
         logger.info("worker.started", nats_url=settings.nats_url)
 
     async def stop(self) -> None:
@@ -70,14 +75,17 @@ class Worker:
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             logger.error("worker.bad_message", err=str(exc))
             await msg.term()
+            metrics.JETSTREAM_MESSAGES.labels(result="parse_error").inc()
             return
         event_type = event.get("event_type")
         if event_type in ("job.completed", "job.failed"):
             await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
         if event_type != "job.queued":
             logger.warning("worker.unknown_event_type", event_type=event_type)
             await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
         await self._handle_job_queued(event, msg)
 
@@ -86,6 +94,7 @@ class Worker:
         if not job_id:
             logger.error("worker.missing_job_id", event_data=event)
             await msg.term()
+            metrics.JETSTREAM_MESSAGES.labels(result="term").inc()
             return
         assert self._db is not None
         ctx = {
@@ -97,6 +106,7 @@ class Worker:
         if row is None:
             logger.error("worker.job_not_found", job_id=job_id)
             await msg.term()
+            metrics.JETSTREAM_MESSAGES.labels(result="term").inc()
             return
         params = row["params"] or {}
         if isinstance(params, str):
@@ -105,6 +115,7 @@ class Worker:
         if not processor_name:
             logger.warning("worker.no_processor", job_id=job_id)
             await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
         proc = get_processor(processor_name)
         if proc is None:
@@ -114,10 +125,27 @@ class Worker:
                 job_id=job_id,
             )
             await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
+        start = time.monotonic()
         try:
             result = await proc(ctx, job_id)
+            metrics.JOBS_PROCESSED.labels(processor=processor_name, status="completed").inc()
+            self._db.mark_job_completed(job_id, result or {})
+            self._db.enqueue_outbox(
+                org_id=str(row["org_id"]),
+                aggregate_id=job_id,
+                event_type="job.completed",
+                payload={
+                    "job_id": job_id,
+                    "processor": processor_name,
+                    "duration_seconds": (result or {}).get("duration_seconds"),
+                },
+            )
+            await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
         except Exception as exc:
+            metrics.JOBS_PROCESSED.labels(processor=processor_name, status="failed").inc()
             logger.exception(
                 "worker.processor_failed",
                 job_id=job_id,
@@ -135,19 +163,11 @@ class Worker:
                 },
             )
             await msg.nak()
-            return
-        self._db.mark_job_completed(job_id, result or {})
-        self._db.enqueue_outbox(
-            org_id=str(row["org_id"]),
-            aggregate_id=job_id,
-            event_type="job.completed",
-            payload={
-                "job_id": job_id,
-                "processor": processor_name,
-                "duration_seconds": (result or {}).get("duration_seconds"),
-            },
-        )
-        await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="nak").inc()
+        finally:
+            metrics.JOB_PROCESSING_DURATION.labels(processor=processor_name).observe(
+                time.monotonic() - start
+            )
 
 
 async def run() -> None:
