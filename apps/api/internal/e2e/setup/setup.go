@@ -465,20 +465,24 @@ func StartWorker(t *testing.T, ctx context.Context, natsURL, dsn, s3Endpoint, s3
 
 // ── HTTP helpers ─────────────────────────────────────────────────────
 
-// PostJob POSTs {artifact_id, processor:{name,version}} to /v1/
-// jobs and returns the new job id.
-func PostJob(t *testing.T, ctx context.Context, apiURL, secret, artifactID, procName, procVersion string) string {
+// PostJob POSTs {artifact_id, processor:{name,version}, params?}
+// to /v1/jobs and returns the new job id. params is the raw JSON
+// blob stored in jobs.params (e.g. `{"start_seconds":0.5}`);
+// pass "" when the processor takes no params.
+func PostJob(t *testing.T, ctx context.Context, apiURL, secret, artifactID, procName, procVersion, params string) string {
 	t.Helper()
 	type procRef struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	}
 	body, err := json.Marshal(struct {
-		ArtifactID string  `json:"artifact_id"`
-		Processor  procRef `json:"processor"`
+		ArtifactID string          `json:"artifact_id"`
+		Processor  procRef         `json:"processor"`
+		Params     json.RawMessage `json:"params,omitempty"`
 	}{
 		ArtifactID: artifactID,
 		Processor:  procRef{Name: procName, Version: procVersion},
+		Params:     json.RawMessage(params),
 	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
