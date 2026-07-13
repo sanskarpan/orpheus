@@ -1,4 +1,5 @@
 """OpenTelemetry tracing setup for the Python worker."""
+
 from __future__ import annotations
 
 import logging
