@@ -390,9 +390,10 @@ func StartAPI(t *testing.T, ctx context.Context, pool *db.DB, natsURL string, po
 		ShutdownGraceSeconds: 5,
 	}
 	srv := server.NewWithOptions(cfg, logger, server.Options{
-		DB:    pool,
-		Authn: authn,
-		Audit: auditRec,
+		DB:      pool,
+		Authn:   authn,
+		Audit:   auditRec,
+		Metrics: mtr,
 	})
 
 	errCh := make(chan error, 1)

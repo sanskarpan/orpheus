@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
@@ -20,6 +21,7 @@ import (
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/handlers"
 	"github.com/orpheus/api/internal/idempotency"
+	"github.com/orpheus/api/internal/metrics"
 	"github.com/orpheus/api/internal/ratelimit"
 	"github.com/orpheus/api/internal/storage/s3"
 )
@@ -36,6 +38,7 @@ type Options struct {
 	Idempotency *idempotency.Middleware
 	RateLimit   *ratelimit.Middleware
 	Audit       *audit.Recorder
+	Metrics     *metrics.Metrics
 }
 
 // Server is the HTTP server for the Orpheus API.
@@ -62,6 +65,30 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 	}
 	s.installBaseMiddleware()
 	s.routes()
+	s.installHTTP(cfg)
+	return s
+}
+
+// NewWithOptions constructs a Server with the full /v1 surface in
+// addition to the public routes. The /v1 routes are mounted only
+// when opts.Authn is non-nil. Call [Server.Run] to start serving.
+func NewWithOptions(cfg *config.Config, logger *slog.Logger, opts Options) *Server {
+	s := &Server{
+		cfg:    cfg,
+		logger: logger,
+		mux:    chi.NewRouter(),
+		opts:   opts,
+	}
+	s.installBaseMiddleware()
+	s.routes()
+	if opts.Authn != nil {
+		s.v1Routes()
+	}
+	s.installHTTP(cfg)
+	return s
+}
+
+func (s *Server) installHTTP(cfg *config.Config) {
 	s.http = &http.Server{
 		Addr:              cfg.Addr(),
 		Handler:           s.mux,
@@ -70,19 +97,6 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	return s
-}
-
-// NewWithOptions constructs a Server with the full /v1 surface in
-// addition to the public routes. The /v1 routes are mounted only
-// when opts.Authn is non-nil. Call [Server.Run] to start serving.
-func NewWithOptions(cfg *config.Config, logger *slog.Logger, opts Options) *Server {
-	s := New(cfg, logger)
-	s.opts = opts
-	if opts.Authn != nil {
-		s.v1Routes()
-	}
-	return s
 }
 
 // installBaseMiddleware attaches the chi-provided middlewares that
@@ -92,6 +106,9 @@ func (s *Server) installBaseMiddleware() {
 	s.mux.Use(middleware.RequestID)
 	s.mux.Use(middleware.Recoverer)
 	s.mux.Use(middleware.Timeout(30 * time.Second))
+	if s.opts.Metrics != nil {
+		s.mux.Use(MetricsMiddleware(s.opts.Metrics))
+	}
 }
 
 // routes installs the public surface: liveness, readiness, metrics,
@@ -107,7 +124,7 @@ func (s *Server) installBaseMiddleware() {
 func (s *Server) routes() {
 	s.mux.Get("/health", handlers.Liveness)
 	s.mux.Get("/ready", handlers.Readiness)
-	s.mux.Get("/metrics", handlers.Metrics)
+	s.mux.Get("/metrics", promhttp.Handler().ServeHTTP)
 
 	s.mux.Route("/api", func(r chi.Router) {
 		r.Get("/openapi.json", handlers.OpenAPISpec)

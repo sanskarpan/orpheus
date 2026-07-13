@@ -166,6 +166,7 @@ func run() error {
 		Idempotency: idempMW,
 		RateLimit:   rateMW,
 		Audit:       auditRec,
+		Metrics:     mtr,
 	})
 
 	logger.Info("orpheus_api.ready", "addr", cfg.Addr())
