@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
@@ -91,7 +92,7 @@ func NewWithOptions(cfg *config.Config, logger *slog.Logger, opts Options) *Serv
 func (s *Server) installHTTP(cfg *config.Config) {
 	s.http = &http.Server{
 		Addr:              cfg.Addr(),
-		Handler:           s.mux,
+		Handler:           otelhttp.NewHandler(s.mux, "orpheus-api"),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

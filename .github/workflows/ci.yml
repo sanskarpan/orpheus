@@ -251,6 +251,14 @@ jobs:
         working-directory: apps/api
         run: go mod download
 
+      - name: Build the API
+        working-directory: apps/api
+        # Compile the binary up front so the slow OTel build
+        # doesn't blow the 30-second health-check budget in
+        # "Wait for /health" below. The binary is then run
+        # directly in "Start the API server".
+        run: go build -o /tmp/orpheus-api ./cmd/api
+
       - name: Wait for Postgres
         run: |
           for i in {1..30}; do
@@ -262,8 +270,7 @@ jobs:
           done
 
       - name: Start the API server
-        working-directory: apps/api
-        run: go run ./cmd/api &
+        run: /tmp/orpheus-api &
         env:
           PORT: "8080"
 

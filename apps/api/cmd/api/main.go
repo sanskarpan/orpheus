@@ -35,6 +35,7 @@ import (
 	"github.com/orpheus/api/internal/jobs"
 	"github.com/orpheus/api/internal/logging"
 	"github.com/orpheus/api/internal/metrics"
+	"github.com/orpheus/api/internal/observability"
 	"github.com/orpheus/api/internal/outbox"
 	"github.com/orpheus/api/internal/ratelimit"
 	"github.com/orpheus/api/internal/server"
@@ -67,6 +68,18 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	otelShutdown, err := observability.Init(ctx)
+	if err != nil {
+		return fmt.Errorf("orpheus_api.tracing_init: %w", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := otelShutdown(shutdownCtx); err != nil {
+			logger.Warn("orpheus_api.tracing_shutdown_failed", "err", err)
+		}
+	}()
 
 	// Migrations first. We open a short-lived database/sql connection
 	// against the same DSN the pool will use, run every embedded goose
