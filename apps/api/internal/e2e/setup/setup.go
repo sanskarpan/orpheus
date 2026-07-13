@@ -46,6 +46,7 @@ import (
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/metrics"
 	"github.com/orpheus/api/internal/outbox"
 	"github.com/orpheus/api/internal/server"
 	"github.com/orpheus/api/internal/webhooks"
@@ -357,7 +358,8 @@ func StartAPI(t *testing.T, ctx context.Context, pool *db.DB, natsURL string, po
 		t.Fatalf("jetstream.New: %v", err)
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	publisher := outbox.New(pool, js, logger)
+	mtr := metrics.New()
+	publisher := outbox.New(pool, js, mtr, logger)
 	delivery := webhooks.New(pool, logger, natsConn, nil)
 
 	bgCtx, bgCancel := context.WithCancel(ctx)

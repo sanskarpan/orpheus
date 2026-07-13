@@ -34,6 +34,7 @@ import (
 	"github.com/orpheus/api/internal/idempotency"
 	"github.com/orpheus/api/internal/jobs"
 	"github.com/orpheus/api/internal/logging"
+	"github.com/orpheus/api/internal/metrics"
 	"github.com/orpheus/api/internal/outbox"
 	"github.com/orpheus/api/internal/ratelimit"
 	"github.com/orpheus/api/internal/server"
@@ -150,7 +151,8 @@ func run() error {
 	// when ctx is cancelled. The wait group lets run() block until
 	// every worker has returned, so no in-flight delivery is lost at
 	// shutdown.
-	publisher := outbox.New(pgDB, js, logger)
+	mtr := metrics.New()
+	publisher := outbox.New(pgDB, js, mtr, logger)
 	delivery := webhooks.New(pgDB, logger, natsConn, nil)
 
 	var workers sync.WaitGroup
