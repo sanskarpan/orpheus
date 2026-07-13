@@ -3,6 +3,7 @@
 Process-wide collectors are registered with the default registry
 on first import. The worker process exposes them at :8082/metrics.
 """
+
 from __future__ import annotations
 
 from prometheus_client import Counter, Histogram
