@@ -26,5 +26,5 @@ class WorkerS3:
         extra_args: dict[str, Any] = {}
         if content_type is not None:
             extra_args["ContentType"] = content_type
-        self._client.upload_file(bucket, key, src, ExtraArgs=extra_args or None)
+        self._client.upload_file(src, bucket, key, ExtraArgs=extra_args or None)
         return os.path.getsize(src)
