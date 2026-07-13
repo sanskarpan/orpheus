@@ -11,6 +11,7 @@ import (
 
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/jobs"
+	"github.com/orpheus/api/internal/metrics"
 )
 
 // subjectPrefix is the routing key prefix every outbox-published
@@ -23,9 +24,11 @@ const subjectPrefix = "adkil."
 // caller's responsibility is to call [Run] with a context that is
 // cancelled at shutdown.
 type Publisher struct {
-	DB       *db.DB
-	JS       jobs.Publisher
-	Logger   *slog.Logger
+	DB      *db.DB
+	JS      jobs.Publisher
+	Metrics *metrics.Metrics
+	Logger  *slog.Logger
+
 	Interval time.Duration
 	Batch    int
 
@@ -36,14 +39,16 @@ type Publisher struct {
 // New constructs a Publisher with sensible defaults. database / js /
 // logger may be nil for tests; the Run loop will skip its work in
 // that case so unit tests can construct and discard a Publisher
-// without panicking.
-func New(database *db.DB, js jetstream.JetStream, logger *slog.Logger) *Publisher {
+// without panicking. metrics may be nil — tick records metrics
+// defensively so a bare unit test can pass nil.
+func New(database *db.DB, js jetstream.JetStream, m *metrics.Metrics, logger *slog.Logger) *Publisher {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Publisher{
 		DB:       database,
 		JS:       js,
+		Metrics:  m,
 		Logger:   logger,
 		Interval: time.Second,
 		Batch:    100,
@@ -140,13 +145,26 @@ func (p *Publisher) tick(ctx context.Context) {
 			)
 			continue
 		}
-		if err := jobs.Publish(ctx, p.JS, c.eventType, envBytes, nil); err != nil {
+		start := time.Now()
+		pubErr := jobs.Publish(ctx, p.JS, c.eventType, envBytes, nil)
+		latency := time.Since(start).Seconds()
+		result := "success"
+		if pubErr != nil {
+			result = "error"
 			p.Logger.Error("outbox.publish_failed",
-				"err", err,
+				"err", pubErr,
 				"event_id", c.id,
 				"event_type", c.eventType,
 			)
+			if p.Metrics != nil {
+				p.Metrics.OutboxPublished.WithLabelValues(c.eventType, result).Inc()
+				p.Metrics.OutboxPublishLatency.WithLabelValues(c.eventType).Observe(latency)
+			}
 			continue
+		}
+		if p.Metrics != nil {
+			p.Metrics.OutboxPublished.WithLabelValues(c.eventType, result).Inc()
+			p.Metrics.OutboxPublishLatency.WithLabelValues(c.eventType).Observe(latency)
 		}
 		if _, err := p.DB.Exec(ctx,
 			`UPDATE outbox SET published_at = now() WHERE id = $1`, c.id,

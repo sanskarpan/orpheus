@@ -96,7 +96,7 @@ func TestSubject(t *testing.T) {
 // production code never passes nil, but a malformed test
 // configuration shouldn't hang.
 func TestPublisherRunReturnsOnCancel(t *testing.T) {
-	p := New(nil, nil, nil)
+	p := New(nil, nil, nil, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel so Run exits on its first iteration
 	if err := p.Run(ctx); err != nil {
@@ -107,7 +107,7 @@ func TestPublisherRunReturnsOnCancel(t *testing.T) {
 // TestTickSkipsWhenWiringMissing confirms the safety net in tick:
 // with nil DB or nil NATS, tick is a no-op rather than a panic.
 func TestTickSkipsWhenWiringMissing(t *testing.T) {
-	p := New(nil, nil, nil)
+	p := New(nil, nil, nil, nil)
 	// Should not panic.
 	p.tick(context.Background())
 }

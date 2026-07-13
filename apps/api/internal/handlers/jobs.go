@@ -32,14 +32,16 @@ import (
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/dbtx"
+	"github.com/orpheus/api/internal/metrics"
 	"github.com/orpheus/api/internal/outbox"
 )
 
 // JobHandler bundles the dependencies the job endpoints need. All
 // fields are required; zero values will fail at request time.
 type JobHandler struct {
-	DB    *db.DB
-	Audit *audit.Recorder
+	DB      *db.DB
+	Audit   *audit.Recorder
+	Metrics *metrics.Metrics
 }
 
 // ProcessorRef is a (name, version) pair referencing a catalog
@@ -200,6 +202,10 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to create job")
 		return
+	}
+
+	if h.Metrics != nil {
+		h.Metrics.JobsSubmitted.WithLabelValues(req.Processor.Name).Inc()
 	}
 
 	_ = h.Audit.Record(r.Context(), audit.Entry{

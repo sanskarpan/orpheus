@@ -31,7 +31,7 @@
 // the build.
 //
 // Hermetic on 127.0.0.1:18082 — distinct from TestE2E_Probe
-// (18083) and TestE2E_PublicSurface (18080).
+// (18083) and TestE2E_Health (18080).
 package e2e
 
 import (

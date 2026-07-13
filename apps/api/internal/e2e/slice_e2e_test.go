@@ -30,7 +30,7 @@
 //	ORPHEUS_TEST_S3_SECRET_KEY
 //
 // Hermetic on 127.0.0.1:18084 — distinct from TestE2E_ExtractMetadata
-// (18082) and TestE2E_Probe (18083) and TestE2E_PublicSurface (18080).
+// (18082) and TestE2E_Probe (18083) and TestE2E_Health (18080).
 package e2e
 
 import (
