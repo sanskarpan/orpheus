@@ -66,6 +66,37 @@ class WorkerDB:
             job_id,
         )
 
+    def mark_artifact_probed(
+        self,
+        artifact_id: str,
+        codec: str | None,
+        sample_rate: int | None,
+        channels: int | None,
+        duration_seconds: float | None,
+    ) -> None:
+        self.execute(
+            """
+            UPDATE artifacts
+            SET probe_status = 'completed'::probe_status,
+                codec = %s,
+                sample_rate = %s,
+                channels = %s,
+                duration_seconds = %s
+            WHERE id = %s
+            """,
+            codec,
+            sample_rate,
+            channels,
+            duration_seconds,
+            artifact_id,
+        )
+
+    def mark_artifact_probe_failed(self, artifact_id: str) -> None:
+        self.execute(
+            "UPDATE artifacts SET probe_status = 'failed'::probe_status WHERE id = %s",
+            artifact_id,
+        )
+
     def enqueue_outbox(
         self,
         org_id: str,
