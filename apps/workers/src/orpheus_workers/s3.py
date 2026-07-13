@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+from typing import Any
+
 import boto3
 from botocore.client import Config
 
@@ -18,3 +21,10 @@ class WorkerS3:
 
     def download_file(self, bucket: str, key: str, dest: str) -> None:
         self._client.download_file(bucket, key, dest)
+
+    def upload_file(self, bucket: str, key: str, src: str, content_type: str | None = None) -> int:
+        extra_args: dict[str, Any] = {}
+        if content_type is not None:
+            extra_args["ContentType"] = content_type
+        self._client.upload_file(bucket, key, src, ExtraArgs=extra_args or None)
+        return os.path.getsize(src)

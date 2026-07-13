@@ -97,6 +97,36 @@ class WorkerDB:
             artifact_id,
         )
 
+    def insert_artifact(
+        self,
+        artifact_id: str,
+        org_id: str,
+        s3_bucket: str,
+        s3_key: str,
+        content_type: str,
+        size_bytes: int,
+        probe_status: str = "pending",
+    ) -> None:
+        self.execute(
+            """
+            INSERT INTO artifacts (
+                id, org_id, upload_session_id, s3_bucket, s3_key,
+                sha256, size_bytes, content_type, probe_status, created_at
+            )
+            VALUES (
+                %s, %s, NULL, %s, %s,
+                '', %s, %s, %s::probe_status, now()
+            )
+            """,
+            artifact_id,
+            org_id,
+            s3_bucket,
+            s3_key,
+            size_bytes,
+            content_type,
+            probe_status,
+        )
+
     def enqueue_outbox(
         self,
         org_id: str,
