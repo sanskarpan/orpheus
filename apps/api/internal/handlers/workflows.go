@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"time"
 
@@ -86,7 +85,7 @@ func (h *WorkflowHandler) CreateTranscribeLong(w http.ResponseWriter, r *http.Re
 			return err
 		}
 
-		merged := mergeWorkflowID(req.Params, workflowID)
+		merged := mergeProcessorAndWorkflowID(req.Params, workflowID)
 		jobID = uuid.NewString()
 		if _, err := tx.Exec(txCtx, `
 			INSERT INTO jobs (
@@ -168,15 +167,22 @@ func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wf)
 }
 
-func mergeWorkflowID(params json.RawMessage, workflowID string) []byte {
-	if len(params) == 0 {
-		return []byte(fmt.Sprintf(`{"_workflow_id": %q}`, workflowID))
+func mergeProcessorAndWorkflowID(params json.RawMessage, workflowID string) []byte {
+	out := map[string]any{
+		"_processor":   map[string]string{"name": "transcribe", "version": "1.0.0"},
+		"_workflow_id": workflowID,
 	}
-	var m map[string]any
-	if err := json.Unmarshal(params, &m); err != nil {
-		return []byte(fmt.Sprintf(`{"_workflow_id": %q}`, workflowID))
+	if len(params) > 0 {
+		var existing map[string]any
+		if err := json.Unmarshal(params, &existing); err == nil {
+			for k, v := range existing {
+				if k == "_processor" || k == "_workflow_id" {
+					continue
+				}
+				out[k] = v
+			}
+		}
 	}
-	m["_workflow_id"] = workflowID
-	out, _ := json.Marshal(m)
-	return out
+	b, _ := json.Marshal(out)
+	return b
 }
