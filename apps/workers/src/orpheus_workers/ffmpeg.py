@@ -48,3 +48,33 @@ def slice(src: str | Path, dst: str | Path, start_seconds: float, end_seconds: f
     )
     if out.returncode != 0:
         raise FFmpegError(f"ffmpeg exited {out.returncode}: {out.stderr.strip()}")
+
+
+def convert_to_wav_16k_mono(src: str | Path, dst: str | Path) -> None:
+    """Convert any audio file to 16kHz mono 16-bit PCM wav, the
+    input format whisper prefers. Raises FFmpegError on failure.
+    """
+    bin = find_ffmpeg()
+    out = subprocess.run(
+        [
+            bin,
+            "-y",
+            "-v",
+            "error",
+            "-i",
+            str(src),
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-c:a",
+            "pcm_s16le",
+            str(dst),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    if out.returncode != 0:
+        raise FFmpegError(f"ffmpeg convert exited {out.returncode}: {out.stderr.strip()}")
