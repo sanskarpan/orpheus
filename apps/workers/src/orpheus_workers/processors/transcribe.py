@@ -38,6 +38,7 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
     params = job["params"] or {}
     if isinstance(params, str):
         import json as _json
+
         params = _json.loads(params)
     chunk_seconds = float(params.get("chunk_seconds", DEFAULT_CHUNK_SECONDS))
 
@@ -83,11 +84,13 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 except FileNotFoundError:
                     pass
             for seg in result.get("segments") or []:
-                all_segments.append({
-                    "start": float(seg.get("start", 0.0)) + start,
-                    "end": float(seg.get("end", 0.0)) + start,
-                    "text": seg.get("text", ""),
-                })
+                all_segments.append(
+                    {
+                        "start": float(seg.get("start", 0.0)) + start,
+                        "end": float(seg.get("end", 0.0)) + start,
+                        "text": seg.get("text", ""),
+                    }
+                )
             text = result.get("text", "").strip()
             if text:
                 all_text.append(text)
