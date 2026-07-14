@@ -196,6 +196,10 @@ func (s *Server) v1Routes() {
 		r.Get("/api-keys", kh.List)
 		r.Delete("/api-keys/{id}", kh.Revoke)
 
+		wh2 := &handlers.WorkflowHandler{DB: s.opts.DB, Audit: s.opts.Audit}
+		r.Post("/workflows/transcribe-long", wh2.CreateTranscribeLong)
+		r.Get("/workflows/{id}", wh2.Get)
+
 		sh := &handlers.SystemHandler{DB: s.opts.DB}
 		r.Get("/usage", sh.GetUsage)
 		r.Get("/audit-log", sh.ListAuditLog)

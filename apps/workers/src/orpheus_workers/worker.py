@@ -150,6 +150,7 @@ class Worker:
                 span.set_status(Status(StatusCode.OK))
             metrics.JOBS_PROCESSED.labels(processor=processor_name, status="completed").inc()
             self._db.mark_job_completed(job_id, result or {})
+            self._sync_workflow_status(job_id, params, completed=True, result=result or {})
             self._db.enqueue_outbox(
                 org_id=str(row["org_id"]),
                 aggregate_id=job_id,
@@ -170,6 +171,7 @@ class Worker:
                 processor=processor_name,
             )
             self._db.mark_job_failed(job_id, str(exc))
+            self._sync_workflow_status(job_id, params, completed=False, error=str(exc))
             self._db.enqueue_outbox(
                 org_id=str(row["org_id"]),
                 aggregate_id=job_id,
@@ -185,6 +187,48 @@ class Worker:
         finally:
             metrics.JOB_PROCESSING_DURATION.labels(processor=processor_name).observe(
                 time.monotonic() - start
+            )
+
+    def _sync_workflow_status(
+        self,
+        job_id: str,
+        params: dict[str, Any],
+        *,
+        completed: bool,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        assert self._db is not None
+        if not isinstance(params, dict):
+            return
+        wf_id = params.get("_workflow_id")
+        if not wf_id:
+            return
+        new_status = "completed" if completed else "failed"
+        payload = json.dumps(result) if completed and result is not None else None
+        try:
+            if completed:
+                self._db.execute(
+                    "UPDATE workflows SET status = %s, result = %s, updated_at = now() "
+                    "WHERE current_job_id = %s",
+                    new_status,
+                    payload,
+                    job_id,
+                )
+            else:
+                self._db.execute(
+                    "UPDATE workflows SET status = %s, error = %s, updated_at = now() "
+                    "WHERE current_job_id = %s",
+                    new_status,
+                    error,
+                    job_id,
+                )
+        except Exception:
+            logger.warning(
+                "worker.workflow_sync_failed",
+                workflow_id=wf_id,
+                job_id=job_id,
+                exc_info=True,
             )
 
 
