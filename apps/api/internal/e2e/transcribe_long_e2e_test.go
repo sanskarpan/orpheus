@@ -242,8 +242,18 @@ func TestE2E_TranscribeLong(t *testing.T) {
 // ("espeak" or "ffmpeg") so the caller can decide whether to
 // assert on the transcript content.
 func generateTestWAV(path, phrase string) (string, error) {
-	if _, err := exec.LookPath("espeak-ng"); err == nil {
-		cmd := exec.Command("espeak-ng", "-w", path, phrase)
+	espeakPath, err := exec.LookPath("espeak-ng")
+	if err != nil {
+		// Look in common Homebrew paths even when not on PATH.
+		for _, p := range []string{"/opt/homebrew/bin/espeak-ng", "/usr/local/bin/espeak-ng"} {
+			if _, statErr := os.Stat(p); statErr == nil {
+				espeakPath = p
+				break
+			}
+		}
+	}
+	if espeakPath != "" {
+		cmd := exec.Command(espeakPath, "-w", path, phrase)
 		if runErr := cmd.Run(); runErr == nil {
 			return "espeak", nil
 		}
