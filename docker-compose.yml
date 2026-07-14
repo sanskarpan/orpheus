@@ -146,6 +146,128 @@ services:
   #   ports:
   #     - "4566:4566"
 
+  # ─────────────────────────────────────────────────────────────────
+  # Orpheus workers — single-image dev mode (all 3 processes in 1).
+  # This is the default in `make up`. The 3 split services below
+  # (orpheus-workers-control / -grpc / -worker) are for prod-style
+  # deployment where each process runs in its own container. Start
+  # them with:
+  #   docker compose --profile split up -d
+  # ─────────────────────────────────────────────────────────────────
+  orpheus-workers-all:
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    container_name: orpheus-workers-all
+    restart: unless-stopped
+    environment:
+      ORPHEUS_WORKERS_PROCESS: all
+      ORPHEUS_WORKER_NATS_URL: nats://nats:4222
+      ORPHEUS_WORKER_DATABASE_URL: postgres://orpheus:orpheus@postgres:5432/orpheus?sslmode=disable
+      ORPHEUS_WORKER_REDIS_URL: redis://redis:6379/0
+      ORPHEUS_WORKER_S3_ENDPOINT: http://minio:9000
+      ORPHEUS_WORKER_S3_ACCESS_KEY: orpheus
+      ORPHEUS_WORKER_S3_SECRET_KEY: orpheus-dev-secret
+    ports:
+      - "8081:8081"   # control plane
+      - "50051:50051" # gRPC
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────────────────────────────
+  # Orpheus workers — split mode (one process per container).
+  # Opt-in via the `split` profile; not started by `make up` so the
+  # dev single-image mode keeps working without port conflicts.
+  #
+  # Usage:
+  #   docker compose --profile split up -d
+  #   # or stop the all-mode dev container first to free the ports:
+  #   docker compose stop orpheus-workers-all
+  # ─────────────────────────────────────────────────────────────────
+  orpheus-workers-control:
+    profiles: ["split"]
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    container_name: orpheus-workers-control
+    restart: unless-stopped
+    environment:
+      ORPHEUS_WORKERS_PROCESS: control
+      ORPHEUS_WORKER_NATS_URL: nats://nats:4222
+      ORPHEUS_WORKER_DATABASE_URL: postgres://orpheus:orpheus@postgres:5432/orpheus?sslmode=disable
+      ORPHEUS_WORKER_REDIS_URL: redis://redis:6379/0
+      ORPHEUS_WORKER_S3_ENDPOINT: http://minio:9000
+      ORPHEUS_WORKER_S3_ACCESS_KEY: orpheus
+      ORPHEUS_WORKER_S3_SECRET_KEY: orpheus-dev-secret
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  orpheus-workers-grpc:
+    profiles: ["split"]
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    container_name: orpheus-workers-grpc
+    restart: unless-stopped
+    environment:
+      ORPHEUS_WORKERS_PROCESS: grpc
+      ORPHEUS_WORKER_NATS_URL: nats://nats:4222
+      ORPHEUS_WORKER_DATABASE_URL: postgres://orpheus:orpheus@postgres:5432/orpheus?sslmode=disable
+      ORPHEUS_WORKER_S3_ENDPOINT: http://minio:9000
+      ORPHEUS_WORKER_S3_ACCESS_KEY: orpheus
+      ORPHEUS_WORKER_S3_SECRET_KEY: orpheus-dev-secret
+    ports:
+      - "50051:50051"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  orpheus-workers-worker:
+    profiles: ["split"]
+    build:
+      context: .
+      dockerfile: apps/workers/Dockerfile
+    container_name: orpheus-workers-worker
+    restart: unless-stopped
+    environment:
+      ORPHEUS_WORKERS_PROCESS: worker
+      ORPHEUS_WORKER_NATS_URL: nats://nats:4222
+      ORPHEUS_WORKER_DATABASE_URL: postgres://orpheus:orpheus@postgres:5432/orpheus?sslmode=disable
+      ORPHEUS_WORKER_S3_ENDPOINT: http://minio:9000
+      ORPHEUS_WORKER_S3_ACCESS_KEY: orpheus
+      ORPHEUS_WORKER_S3_SECRET_KEY: orpheus-dev-secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
