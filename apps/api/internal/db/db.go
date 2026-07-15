@@ -92,6 +92,32 @@ func (db *DB) WithTenant(ctx context.Context, orgID string, fn func(ctx context.
 	return nil
 }
 
+// AssertTenantSafeRole verifies the connection's role does NOT bypass
+// row-level security. A Postgres superuser (or a role with BYPASSRLS)
+// ignores every RLS policy even when tables are FORCE'd, which would
+// silently defeat the entire multi-tenant isolation model. Call this at
+// startup in production and refuse to run if it fails; the app must
+// connect as a dedicated NOSUPERUSER / NOBYPASSRLS role.
+func (db *DB) AssertTenantSafeRole(ctx context.Context) error {
+	var super, bypass bool
+	var user string
+	err := db.QueryRow(ctx, `
+		SELECT current_user, rolsuper, rolbypassrls
+		FROM pg_roles WHERE rolname = current_user
+	`).Scan(&user, &super, &bypass)
+	if err != nil {
+		return fmt.Errorf("db.assert_role: %w", err)
+	}
+	if super || bypass {
+		return fmt.Errorf(
+			"db.assert_role: application role %q bypasses RLS (superuser=%v bypassrls=%v); "+
+				"multi-tenant isolation requires a NOSUPERUSER NOBYPASSRLS role",
+			user, super, bypass,
+		)
+	}
+	return nil
+}
+
 // Compile-time checks: pgx.Tx is what the transaction object from Begin
 // actually is, so sqlc-generated code (which takes pgx.Tx) can be
 // satisfied by a handle pulled out of context once we wire that up.

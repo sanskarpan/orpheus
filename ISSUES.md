@@ -7,6 +7,30 @@ be **false positives** are listed at the bottom so we don't chase them again.
 
 Status legend: ⬜ open · 🟦 in progress · ✅ fixed+tested
 
+## Completion summary — ALL fixed + tested
+
+All planned issues (1–15) are fixed. Fixing them surfaced **7 more real bugs**
+(16–22), several of them critical, now also fixed:
+
+| # | Summary | Sev |
+|---|---------|-----|
+| 16 | `GET /artifacts/{id}` 500s on unprobed artifacts (NULL scan) + malformed-id 500 | Med |
+| 17 | Upload Complete inserted invalid `probe_status='ok'` → 500 | High |
+| 18 | Upload Complete double-committed the tx → 500 | High |
+| 19 | Handler audited `workflow.create`, not in the enum → insert fails | Med |
+| 20 | **All audit writes rejected by RLS** (Record ran on bare pool, not WithTenant) | High |
+| 21 | **Outbox drain saw zero rows** (publisher had no service context) → pipeline dead | Crit |
+| 22 | **Idempotency cached nothing** (middleware ran on bare pool vs FORCE-RLS) | High |
+
+Recurring root cause (20/21/22): code touching a FORCE-RLS table on the bare pool
+with no tenant/service GUC → silently sees zero rows / rejected inserts. Fixed by
+running those paths under `WithTenant` or a transaction-local service GUC.
+
+Verification: full Go suite green under `go test -race ./...` against the live
+Postgres/NATS/MinIO/Redis stack; 42 Python worker tests pass. Each fix has a
+dedicated regression test (many are new live-DB integration tests that the prior
+suite never ran).
+
 ---
 
 ## Critical / High (functional breakage or externally-triggerable security)
