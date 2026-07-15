@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/alexedwards/argon2id"
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/orpheus/api/internal/audit"
@@ -181,7 +180,13 @@ func (h *APIKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 // key both return 204 so the client can retry freely.
 func (h *APIKeyHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		// Revoke is idempotent: an unknown or malformed id is a no-op 204,
+		// not a cast error surfaced as 500.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		_, err := dbtx.Exec(ctx, h.DB, `UPDATE api_keys SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL`, id)

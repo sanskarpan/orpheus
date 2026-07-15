@@ -44,7 +44,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -273,7 +272,11 @@ func (h *WebhookHandler) List(w http.ResponseWriter, r *http.Request) {
 // to the caller's org.
 func (h *WebhookHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Webhook not found")
+		return
+	}
 
 	var e WebhookEndpoint
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
@@ -298,7 +301,11 @@ func (h *WebhookHandler) Get(w http.ResponseWriter, r *http.Request) {
 // is honoured.
 func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Webhook not found")
+		return
+	}
 
 	var req UpdateWebhookRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&req); err != nil {
@@ -372,7 +379,12 @@ func (h *WebhookHandler) Update(w http.ResponseWriter, r *http.Request) {
 // return 204 just like a real delete.
 func (h *WebhookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		// Delete is idempotent: a malformed/unknown id is a no-op 204.
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		_, err := dbtx.Exec(ctx, h.DB, `DELETE FROM webhook_endpoints WHERE id = $1`, id)
@@ -397,7 +409,11 @@ func (h *WebhookHandler) Delete(w http.ResponseWriter, r *http.Request) {
 // 200 are silently capped), `cursor` (created_at RFC3339Nano).
 func (h *WebhookHandler) ListDeliveries(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Webhook not found")
+		return
+	}
 
 	limit := 50
 	if l := r.URL.Query().Get("limit"); l != "" {
@@ -516,8 +532,16 @@ func (h *WebhookHandler) Replay(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusUnauthorized, "unauthenticated", "Unauthorized")
 		return
 	}
-	webhookID := chi.URLParam(r, "id")
-	deliveryID := chi.URLParam(r, "delivery_id")
+	webhookID, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Webhook not found")
+		return
+	}
+	deliveryID, ok := uuidParam(r, "delivery_id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Delivery not found")
+		return
+	}
 
 	newID := uuid.NewString()
 	now := time.Now()

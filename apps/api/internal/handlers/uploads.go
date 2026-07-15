@@ -8,11 +8,9 @@
 // `artifacts` row in the same transaction, so a half-completed
 // multipart upload can never leak an artifact row.
 //
-// NOTE: the upload_sessions / artifacts schemas in
-// internal/db/migrations/0001_init.sql do not yet include the
-// s3_bucket / s3_key / s3_upload_id columns referenced below; those
-// are tracked in #102 and #105. Once the migration lands this code
-// runs unchanged.
+// The upload_sessions table carries the S3 multipart coordinates
+// (s3_bucket / s3_key / s3_upload_id) that Create writes and Complete
+// reads back to finalise the multipart upload against S3.
 package handlers
 
 import (
@@ -24,7 +22,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -175,9 +172,11 @@ func (h *UploadHandler) Create(w http.ResponseWriter, r *http.Request) {
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		_, err := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO upload_sessions
-			  (id, org_id, user_id, filename, content_type, size_bytes, status, expires_at, created_at)
-			VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, 'pending', $7, $8)
-		`, id, p.OrgID, p.UserID, req.Filename, req.ContentType, req.SizeBytes, sessionExpires, now)
+			  (id, org_id, user_id, filename, content_type, size_bytes, status, expires_at, created_at,
+			   s3_bucket, s3_key, s3_upload_id)
+			VALUES ($1, $2, NULLIF($3, '')::uuid, $4, $5, $6, 'pending', $7, $8, $9, $10, $11)
+		`, id, p.OrgID, p.UserID, req.Filename, req.ContentType, req.SizeBytes, sessionExpires, now,
+			h.S3.Bucket(), key, uploadID)
 		return err
 	})
 	if err != nil {
@@ -210,7 +209,11 @@ func (h *UploadHandler) Create(w http.ResponseWriter, r *http.Request) {
 // the two cannot diverge.
 func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	sessionID := chi.URLParam(r, "id")
+	sessionID, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Upload session not found")
+		return
+	}
 
 	var req CompleteUploadRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
@@ -259,23 +262,24 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	artifactID := uuid.NewString()
+	// WithTenant owns the transaction lifecycle: it commits when the
+	// closure returns nil and rolls back on error. The closure must NOT
+	// commit the tx itself (doing so made the outer commit fail with
+	// "tx is closed" and 500'd every completion). Both statements run on
+	// the same tx via the dbtx helpers, so the session transition and the
+	// artifact insert are atomic.
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		tx := dbtx.FromContext(ctx)
-		// Rollback is a no-op if Commit succeeded; the error is
-		// intentionally swallowed because the only failure mode is
-		// "tx already finalized", which is benign.
-		defer func() { _ = tx.Rollback(ctx) }()
-
-		if _, err := tx.Exec(ctx, `UPDATE upload_sessions SET status = 'complete', completed_at = now() WHERE id = $1`, sessionID); err != nil {
+		if _, err := dbtx.Exec(ctx, h.DB, `UPDATE upload_sessions SET status = 'complete', completed_at = now() WHERE id = $1`, sessionID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
+		// probe_status starts 'pending': the async probe worker sets it
+		// to completed/failed later. ('ok' is not a member of the
+		// probe_status enum, which is pending/running/completed/failed.)
+		_, err := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO artifacts (id, org_id, upload_session_id, s3_bucket, s3_key, sha256, size_bytes, content_type, probe_status, created_at)
-			VALUES ($1, $2, $3, $4, $5, '', $6, $7, 'ok', now())
-		`, artifactID, p.OrgID, sessionID, bucket, key, actualSize, actualContentType); err != nil {
-			return err
-		}
-		return tx.Commit(ctx)
+			VALUES ($1, $2, $3, $4, $5, '', $6, $7, 'pending', now())
+		`, artifactID, p.OrgID, sessionID, bucket, key, actualSize, actualContentType)
+		return err
 	})
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to record artifact")
@@ -303,7 +307,11 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 // need a fresh URL should re-create the session.
 func (h *UploadHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Upload session not found")
+		return
+	}
 
 	var s UploadSession
 	var expiresAt time.Time
@@ -338,7 +346,7 @@ func (h *UploadHandler) List(w http.ResponseWriter, r *http.Request) {
 	cursor := r.URL.Query().Get("cursor")
 	status := r.URL.Query().Get("status")
 
-	args := []any{p.OrgID, limit + 1}
+	args := []any{p.OrgID}
 	query := `SELECT id, status, expires_at, created_at FROM upload_sessions WHERE org_id = $1`
 	argIdx := 2
 	if cursor != "" {

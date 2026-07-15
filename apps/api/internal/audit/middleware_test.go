@@ -45,25 +45,26 @@ func TestDeriveResource(t *testing.T) {
 	}
 }
 
-// TestBuildAction verifies the verb-resource pair lines up with the
-// audit_action enum when a known resource is used. The format is
-// `<verb>.<singular_resource>`, e.g. "create.upload".
+// TestBuildAction verifies the action is composed as `resource.verb`
+// to match the audit_action enum (e.g. "upload.create"), with the
+// resource normalised from its plural/hyphenated URL form.
 func TestBuildAction(t *testing.T) {
 	cases := []struct {
 		verb     string
 		resource string
 		want     string
 	}{
-		// Known enum members — singular form produced from plural input.
-		{"create", "uploads", "create.upload"},
-		{"update", "jobs", "update.job"},
-		{"delete", "webhooks", "delete.webhook"},
+		// Known enum members — singular noun produced from plural input.
+		{"create", "uploads", "upload.create"},
+		{"update", "jobs", "job.update"},
+		{"delete", "webhooks", "webhook.delete"},
 		// Singular input stays singular.
-		{"create", "upload", "create.upload"},
-		// Unknown resource: keep the dotted shape; the DB will reject
-		// it and the caller will see a 500. That's intentional — audit
-		// failures should be loud.
-		{"create", "widgets", "create.widgets"},
+		{"create", "upload", "upload.create"},
+		// Hyphenated resource collapses to the enum noun.
+		{"create", "api-keys", "apikey.create"},
+		// Unknown resource still forms resource.verb; the middleware
+		// gates on isAuditAction and skips non-enum shapes.
+		{"create", "widgets", "widget.create"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.want, func(t *testing.T) {
@@ -147,7 +148,7 @@ func TestRecordNoPrincipal(t *testing.T) {
 		DB:     nil, // we never reach the DB: the principal check returns first
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	if err := r.Record(context.Background(), Entry{Action: "create.upload"}); err != nil {
+	if err := r.Record(context.Background(), Entry{Action: "upload.create"}); err != nil {
 		t.Errorf("Record with no principal returned %v, want nil", err)
 	}
 }

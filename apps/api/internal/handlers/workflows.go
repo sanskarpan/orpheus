@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -140,7 +139,11 @@ func (h *WorkflowHandler) CreateTranscribeLong(w http.ResponseWriter, r *http.Re
 
 func (h *WorkflowHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Workflow not found")
+		return
+	}
 	var wf Workflow
 	var paramsBytes []byte
 	var resultBytes []byte

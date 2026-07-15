@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/orpheus/api/internal/auth"
@@ -55,12 +54,21 @@ type ArtifactList struct {
 // caller's org scope (RLS) and returns the artifact metadata.
 func (h *ArtifactHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Artifact not found")
+		return
+	}
 
 	var a Artifact
-	var s3Bucket, s3Key, sha256, contentType, codec string
-	var dur float64
-	var sampleRate, channels int
+	// The audio-probe columns (codec, duration_seconds, sample_rate,
+	// channels) are NULL until the async probe worker runs, so they must
+	// be scanned through nullable holders — scanning NULL into a plain
+	// string/float64/int errors and would 500 every unprobed artifact.
+	var s3Bucket, s3Key, sha256, contentType string
+	var codec *string
+	var dur *float64
+	var sampleRate, channels *int
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		return dbtx.QueryRow(ctx, h.DB, `
 			SELECT id, s3_bucket, s3_key, sha256, size_bytes, content_type, codec, duration_seconds, sample_rate, channels, created_at
@@ -77,10 +85,10 @@ func (h *ArtifactHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	a.SHA256 = sha256
 	a.ContentType = contentType
-	a.Codec = codec
-	a.DurationSeconds = dur
-	a.SampleRate = sampleRate
-	a.Channels = channels
+	a.Codec = derefStr(codec)
+	a.DurationSeconds = derefFloat(dur)
+	a.SampleRate = derefInt(sampleRate)
+	a.Channels = derefInt(channels)
 
 	writeJSON(w, http.StatusOK, a)
 }
@@ -91,7 +99,11 @@ func (h *ArtifactHandler) Get(w http.ResponseWriter, r *http.Request) {
 // package additionally caps it at 1 hour.
 func (h *ArtifactHandler) GetSignedURL(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Artifact not found")
+		return
+	}
 
 	ttl := 900
 	if e := r.URL.Query().Get("expires_in"); e != "" {
@@ -135,7 +147,7 @@ func (h *ArtifactHandler) List(w http.ResponseWriter, r *http.Request) {
 	cursor := r.URL.Query().Get("cursor")
 	contentType := r.URL.Query().Get("content_type")
 
-	args := []any{p.OrgID, limit + 1}
+	args := []any{p.OrgID}
 	query := `SELECT id, s3_bucket, s3_key, sha256, size_bytes, content_type, codec, duration_seconds, sample_rate, channels, created_at
 			  FROM artifacts WHERE org_id = $1`
 	argIdx := 2
@@ -161,18 +173,19 @@ func (h *ArtifactHandler) List(w http.ResponseWriter, r *http.Request) {
 		defer rows.Close()
 		for rows.Next() {
 			var a Artifact
-			var s3Bucket, s3Key, sha256, contentType, codec string
-			var dur float64
-			var sampleRate, channels int
+			var s3Bucket, s3Key, sha256, contentType string
+			var codec *string
+			var dur *float64
+			var sampleRate, channels *int
 			if err := rows.Scan(&a.ID, &s3Bucket, &s3Key, &sha256, &a.SizeBytes, &contentType, &codec, &dur, &sampleRate, &channels, &a.CreatedAt); err != nil {
 				return err
 			}
 			a.SHA256 = sha256
 			a.ContentType = contentType
-			a.Codec = codec
-			a.DurationSeconds = dur
-			a.SampleRate = sampleRate
-			a.Channels = channels
+			a.Codec = derefStr(codec)
+			a.DurationSeconds = derefFloat(dur)
+			a.SampleRate = derefInt(sampleRate)
+			a.Channels = derefInt(channels)
 			artifacts = append(artifacts, a)
 		}
 		return rows.Err()

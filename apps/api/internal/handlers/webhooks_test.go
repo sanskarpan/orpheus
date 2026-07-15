@@ -161,6 +161,7 @@ func TestWebhookUpdate_RejectsEmptyBody(t *testing.T) {
 	body := strings.NewReader(`{}`)
 	req := httptest.NewRequest(http.MethodPatch, "/v1/webhooks/abc", body)
 	req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+	req = withURLParam(req, "id", "11111111-1111-1111-1111-111111111111")
 	rec := httptest.NewRecorder()
 	h.Update(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -174,6 +175,7 @@ func TestWebhookUpdate_RejectsNonHTTPS(t *testing.T) {
 	body := strings.NewReader(`{"url":"http://example.com/h"}`)
 	req := httptest.NewRequest(http.MethodPatch, "/v1/webhooks/abc", body)
 	req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+	req = withURLParam(req, "id", "11111111-1111-1111-1111-111111111111")
 	rec := httptest.NewRecorder()
 	h.Update(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -187,6 +189,7 @@ func TestWebhookUpdate_RejectsEmptySubscribedEvents(t *testing.T) {
 	body := strings.NewReader(`{"subscribed_events":[]}`)
 	req := httptest.NewRequest(http.MethodPatch, "/v1/webhooks/abc", body)
 	req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+	req = withURLParam(req, "id", "11111111-1111-1111-1111-111111111111")
 	rec := httptest.NewRecorder()
 	h.Update(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -247,6 +250,7 @@ func TestListDeliveries_RejectsInvalidStatus(t *testing.T) {
 	h := &WebhookHandler{DB: nil, Audit: &audit.Recorder{}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/webhooks/abc/deliveries?status=bogus", nil)
 	req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+	req = withURLParam(req, "id", "11111111-1111-1111-1111-111111111111")
 	rec := httptest.NewRecorder()
 	// nil-DB → recovery; the validation should fire first, so we
 	// expect 400 even if the DB layer would later panic.
@@ -264,6 +268,7 @@ func TestListDeliveries_RejectsNonPositiveLimit(t *testing.T) {
 	h := &WebhookHandler{DB: nil, Audit: &audit.Recorder{}}
 	req := httptest.NewRequest(http.MethodGet, "/v1/webhooks/abc/deliveries?limit=-1", nil)
 	req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+	req = withURLParam(req, "id", "11111111-1111-1111-1111-111111111111")
 	rec := httptest.NewRecorder()
 	func() {
 		defer func() { _ = recover() }()
@@ -315,6 +320,8 @@ func TestReplay_RequiresDB(t *testing.T) {
 	h := &WebhookHandler{DB: nil, Audit: &audit.Recorder{}}
 	req := httptest.NewRequest(http.MethodPost, "/v1/webhooks/abc/deliveries/del/replay", nil)
 	req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+	req = withURLParam(req, "id", "11111111-1111-1111-1111-111111111111")
+	req = withURLParam(req, "delivery_id", "22222222-2222-2222-2222-222222222222")
 	rec := httptest.NewRecorder()
 	func() {
 		defer func() {

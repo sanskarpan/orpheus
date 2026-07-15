@@ -19,6 +19,7 @@ import (
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 	"github.com/orpheus/api/internal/outbox"
 )
 
@@ -254,21 +255,23 @@ func TestJobCreate_EmitsOutboxEvent(t *testing.T) {
 	}
 
 	// Read the most recent outbox row for this org and assert its
-	// shape. We use the pool (not the seed conn) so RLS scopes the
-	// read; the org_id we wrote in Create matches the org_id we set
-	// on the principal.
+	// shape. The read runs inside WithTenant so app.current_org_id is
+	// set on the connection — RLS is FORCE'd on the outbox table, so a
+	// bare pool read (no org context) would correctly return zero rows.
 	var (
 		eventType   string
 		aggregateID string
 		payloadRaw  []byte
 	)
-	if err := pool.QueryRow(ctx, `
-		SELECT event_type, aggregate_id, payload
-		FROM outbox
-		WHERE org_id = $1 AND event_type = 'job.queued'
-		ORDER BY created_at DESC
-		LIMIT 1
-	`, orgID).Scan(&eventType, &aggregateID, &payloadRaw); err != nil {
+	if err := pool.WithTenant(ctx, orgID, func(tctx context.Context) error {
+		return dbtx.QueryRow(tctx, pool, `
+			SELECT event_type, aggregate_id, payload
+			FROM outbox
+			WHERE org_id = $1 AND event_type = 'job.queued'
+			ORDER BY created_at DESC
+			LIMIT 1
+		`, orgID).Scan(&eventType, &aggregateID, &payloadRaw)
+	}); err != nil {
 		t.Fatalf("read outbox row: %v", err)
 	}
 	if eventType != "job.queued" {
