@@ -58,11 +58,13 @@ Status legend: ⬜ open · 🟦 in progress · ✅ fixed+tested
 - **Fix:** Add a `RequireScope` middleware; deny by default on mutating routes; on key creation forbid granting scopes the caller doesn't hold and reject unknown scopes.
 - **Test:** Middleware test: read-only scope → 403 on a write route; subset check on key creation.
 
-### ISSUE-7 ✅ — Outbox claim not transactional → double-publish
-- **Severity:** Medium · **Category:** Race · **Location:** `outbox/publisher.go` `tick` (~L118)
-- **Problem:** `FOR UPDATE SKIP LOCKED` runs on `p.DB.Query` (pool auto-commit, **no enclosing tx**), so row locks release before publish. Two concurrent publishers can claim the same rows and double-publish.
-- **Fix:** Wrap claim→publish→mark in one `pgx.Tx`, or `UPDATE … WHERE id IN (SELECT … FOR UPDATE SKIP LOCKED) RETURNING`.
-- **Test:** Concurrent-publisher test asserting each event published exactly once.
+### ISSUE-7 ✅ — Outbox drain double-publishes AND (ISSUE-21) never ran at all
+- **Severity:** High (ISSUE-21 is Critical) · **Category:** Race/Security · **Location:** `outbox/publisher.go` `tick`
+- **Problem:**
+  - **ISSUE-7:** `FOR UPDATE SKIP LOCKED` ran on `p.DB.Query` (pool auto-commit), so locks released before publish → concurrent publishers double-publish.
+  - **ISSUE-21 (Critical):** the publisher used the plain pool with no `is_service`, but `outbox` has FORCE RLS → the SELECT saw **zero rows always**. The entire async pipeline (outbox → NATS → workers) was dead; no job ever dispatched. Invisible to tests (publisher tests used stubs). Confirmed empirically.
+- **Fix:** Run claim→publish→mark in one tx with `SELECT set_config('app.is_service','true',true)` — service context satisfies RLS *and* the tx holds the SKIP LOCKED locks across publish, preventing double-publish. Commit persists marks / rolls back on failure (at-least-once).
+- **Test:** ✅ `TestTick_DrainsUnderRLSAndMarksPublished` — seeds a row, ticks, asserts it's published + marked, and a re-tick doesn't republish.
 
 ### ISSUE-8 ✅ — Idempotency key stored after side effects; scope lacks method+path
 - **Severity:** Medium · **Category:** Race/Logic · **Location:** `idempotency/middleware.go` (~L105/124/155)

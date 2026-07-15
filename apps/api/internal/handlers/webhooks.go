@@ -40,7 +40,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
@@ -51,6 +50,7 @@ import (
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/dbtx"
+	"github.com/orpheus/api/internal/ssrfguard"
 )
 
 // WebhookHandler bundles the dependencies the webhook endpoints need.
@@ -601,18 +601,30 @@ func (h *WebhookHandler) Replay(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, out)
 }
 
+// validateWebhookURL returns "" if url is a permitted public https
+// target, or a reason string otherwise. It rejects internal/metadata
+// targets (SSRF): loopback, RFC1918/ULA, link-local (incl.
+// 169.254.169.254), and hosts that resolve into those ranges. The
+// delivery client re-checks at dial time to close the DNS-rebind window.
+func validateWebhookURL(raw string) string {
+	if err := ssrfguard.ValidateURLStatic(raw); err != nil {
+		var dis *ssrfguard.ErrDisallowed
+		if errors.As(err, &dis) {
+			return dis.Reason
+		}
+		return "url invalid"
+	}
+	return ""
+}
+
 // validateCreate returns "" on success, or a human-readable reason
 // string for the 400 response.
 func validateCreate(req *CreateWebhookRequest) string {
 	if req.URL == "" {
 		return "url required"
 	}
-	u, err := url.ParseRequestURI(req.URL)
-	if err != nil {
-		return "url invalid"
-	}
-	if u.Scheme != "https" {
-		return "url must be https"
+	if err := validateWebhookURL(req.URL); err != "" {
+		return err
 	}
 	if len(req.SubscribedEvents) == 0 {
 		return "subscribed_events required"
@@ -632,9 +644,8 @@ func validateCreate(req *CreateWebhookRequest) string {
 
 func validateUpdate(req *UpdateWebhookRequest) string {
 	if req.URL != nil {
-		u, err := url.ParseRequestURI(*req.URL)
-		if err != nil || u.Scheme != "https" {
-			return "url must be https"
+		if err := validateWebhookURL(*req.URL); err != "" {
+			return err
 		}
 	}
 	if req.SubscribedEvents != nil {

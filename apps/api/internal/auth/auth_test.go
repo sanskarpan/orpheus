@@ -364,6 +364,36 @@ func TestKeycloakVerifier_OrgIDFallsBackToDefault(t *testing.T) {
 	}
 }
 
+// TestKeycloakVerifier_RejectsMissingOrgIDInProd is the regression test
+// for the tenant-collapse bug: in production a token without org_id must
+// be rejected, not silently mapped to the shared zero-UUID org.
+func TestKeycloakVerifier_RejectsMissingOrgIDInProd(t *testing.T) {
+	privKey, err := jwk.FromRaw(rsaTestKey(t))
+	if err != nil {
+		t.Fatalf("jwk.FromRaw: %v", err)
+	}
+	_ = privKey.Set(jwk.KeyIDKey, "test-kid")
+	_ = privKey.Set(jwk.AlgorithmKey, jwa.RS256)
+	pubKey, _ := privKey.PublicKey()
+	set := jwk.NewSet()
+	_ = set.AddKey(pubKey)
+
+	v, err := auth.NewKeycloakVerifierWithSet(set, &config.Config{
+		Env:              "prod",
+		KeycloakURL:      "https://kc.test",
+		KeycloakRealm:    "orpheus",
+		KeycloakClientID: "orpheus-api",
+	})
+	if err != nil {
+		t.Fatalf("NewKeycloakVerifierWithSet: %v", err)
+	}
+
+	tok := mintToken(t, privKey, nil) // no org_id claim
+	if _, err := v.Verify(context.Background(), tok); err == nil {
+		t.Fatal("Verify accepted a token with no org_id in prod; want rejection")
+	}
+}
+
 func TestKeycloakVerifier_RejectsBadSignature(t *testing.T) {
 	v, key := newTestKeycloakVerifier(t)
 	tok := mintToken(t, key, nil)

@@ -24,13 +24,18 @@ import (
 //   - realm roles in `realm_access.roles` (standard Keycloak shape)
 //
 // If the realm is not yet configured to emit `org_id` we fall back to
-// [DefaultOrgID] so the API stays usable during realm bring-up.
+// [DefaultOrgID] — but ONLY in non-prod. In production a token without
+// org_id is rejected: silently mapping every such token to a single
+// shared org would let unrelated users read and write each other's data
+// (the org_id is the RLS tenant scope). allowDefaultOrg gates this and
+// is derived from cfg.IsProd() at construction.
 type KeycloakVerifier struct {
-	jwks       jwk.Set
-	issuer     string
-	audience   string
-	clock      func() time.Time
-	defaultOrg string
+	jwks            jwk.Set
+	issuer          string
+	audience        string
+	clock           func() time.Time
+	defaultOrg      string
+	allowDefaultOrg bool
 }
 
 // DefaultOrgID is the org_id used when a token has no `org_id` claim.
@@ -74,11 +79,12 @@ func newVerifierFromSet(set jwk.Set, cfg *config.Config) (*KeycloakVerifier, err
 		return nil, errors.New("auth.keycloak: nil config")
 	}
 	return &KeycloakVerifier{
-		jwks:       set,
-		issuer:     strings.TrimRight(cfg.KeycloakURL, "/") + "/realms/" + cfg.KeycloakRealm,
-		audience:   cfg.KeycloakClientID,
-		clock:      time.Now,
-		defaultOrg: DefaultOrgID,
+		jwks:            set,
+		issuer:          strings.TrimRight(cfg.KeycloakURL, "/") + "/realms/" + cfg.KeycloakRealm,
+		audience:        cfg.KeycloakClientID,
+		clock:           time.Now,
+		defaultOrg:      DefaultOrgID,
+		allowDefaultOrg: !cfg.IsProd(),
 	}, nil
 }
 
@@ -106,6 +112,9 @@ func (v *KeycloakVerifier) Verify(ctx context.Context, token string) (*Principal
 
 	orgID := stringClaim(parsed, "org_id")
 	if orgID == "" {
+		if !v.allowDefaultOrg {
+			return nil, errors.New("auth.keycloak: token missing org_id claim")
+		}
 		orgID = v.defaultOrg
 	}
 

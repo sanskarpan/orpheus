@@ -90,6 +90,41 @@ func TestWebhookCreate_RejectsNonHTTPS(t *testing.T) {
 	}
 }
 
+// TestWebhookCreate_RejectsSSRF verifies internal/metadata targets are
+// rejected at registration. IP literals are used so the test needs no
+// DNS. The delivery-time dialer guard is covered in ssrfguard's tests.
+func TestWebhookCreate_RejectsSSRF(t *testing.T) {
+	t.Parallel()
+	h := &WebhookHandler{}
+	cases := []struct {
+		name string
+		url  string
+	}{
+		{"metadata", "https://169.254.169.254/latest/meta-data/"},
+		{"loopback", "https://127.0.0.1/hook"},
+		{"private-10", "https://10.0.0.5/hook"},
+		{"private-192", "https://192.168.1.10/hook"},
+		{"localhost", "https://localhost/hook"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body, _ := json.Marshal(map[string]any{
+				"url":               tc.url,
+				"subscribed_events": []string{"job.succeeded"},
+			})
+			req := httptest.NewRequest(http.MethodPost, "/v1/webhooks", bytes.NewReader(body))
+			req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+			rec := httptest.NewRecorder()
+			h.Create(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (url=%s)", rec.Code, tc.url)
+			}
+		})
+	}
+}
+
 func TestWebhookCreate_RejectsEmptySubscribedEvents(t *testing.T) {
 	t.Parallel()
 	h := &WebhookHandler{}

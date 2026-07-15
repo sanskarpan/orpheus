@@ -32,6 +32,7 @@ import (
 	"github.com/nats-io/nats.go"
 
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/ssrfguard"
 )
 
 const (
@@ -88,7 +89,11 @@ func New(database *db.DB, logger *slog.Logger, nc *nats.Conn, httpClient *http.C
 		logger = slog.Default()
 	}
 	if httpClient == nil {
-		httpClient = &http.Client{Timeout: deliveryTimeout}
+		// SSRF-safe client: the dialer refuses to connect to private /
+		// link-local / metadata IPs and re-validates every redirect hop,
+		// closing the DNS-rebind window that registration-time checks
+		// alone cannot.
+		httpClient = ssrfguard.SafeHTTPClient(deliveryTimeout)
 	}
 	return &DeliveryService{
 		DB:           database,
