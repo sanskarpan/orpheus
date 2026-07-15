@@ -34,6 +34,7 @@ import (
 
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 const (
@@ -70,17 +71,30 @@ func New(database *db.DB) *Middleware {
 }
 
 // Handler returns the http.Handler middleware.
+//
+// The flow is reserve-then-execute so that two concurrent requests with
+// the same key do NOT both run the handler (which would double-apply the
+// side effect): we atomically INSERT an `in_progress` row before calling
+// the handler. The loser of that race sees the existing row and either
+// replays the completed response, reports a body/endpoint conflict, or
+// (if the winner is still running) returns 409.
+//
+// The request hash covers method + path + body, so reusing one key
+// across two different endpoints is a conflict rather than a wrong-endpoint
+// replay.
+//
+// All DB access runs inside WithTenant: idempotency_keys has FORCE
+// row-level security, so a bare-pool query would see zero rows / be
+// rejected on insert, silently disabling idempotency entirely.
 func (m *Middleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get(HeaderName)
-		if key == "" || len(key) > MaxKeyLen {
+		// No key, key too long, or idempotency disabled (nil DB) → no-op.
+		if key == "" || len(key) > MaxKeyLen || m.DB == nil {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Read and buffer the body so we can hash it. Reset r.Body to
-		// a fresh reader so the downstream handler still sees the
-		// payload.
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "bad request", http.StatusBadRequest)
@@ -89,11 +103,14 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		_ = r.Body.Close()
 		r.Body = io.NopCloser(bytes.NewReader(body))
 
-		sum := sha256.Sum256(body)
-		bodyHash := hex.EncodeToString(sum[:])
+		// Scope the hash to method+path+body so a key reused on a
+		// different endpoint (or with a different body) is a conflict,
+		// not a replay of the wrong response.
+		h := sha256.New()
+		_, _ = io.WriteString(h, r.Method+"\n"+r.URL.Path+"\n")
+		_, _ = h.Write(body)
+		reqHash := hex.EncodeToString(h.Sum(nil))
 
-		// No principal = auth not applied yet. Skip caching; the auth
-		// middleware (mounted after us in the chain) will respond.
 		p, err := auth.PrincipalFromContext(r.Context())
 		if err != nil || p == nil || p.OrgID == "" {
 			next.ServeHTTP(w, r)
@@ -101,39 +118,57 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		}
 		orgID := p.OrgID
 
-		// Cached entry?
-		cached, err := m.getKey(r.Context(), orgID, key)
-		if err == nil && cached != nil {
-			if cached.RequestHash != bodyHash {
-				writeProblem(w, http.StatusConflict,
-					"https://docs.orpheus.dev/errors/idempotency-conflict",
-					"Idempotency conflict",
-					"key reused with different request body",
-				)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.Header().Set(replayHeader, "true")
-			w.WriteHeader(int(cached.ResponseStatus))
-			_, _ = w.Write(cached.ResponseBody)
+		// Reserve the key BEFORE running the handler.
+		var (
+			reserved bool
+			existing *keyRecord
+		)
+		if derr := m.DB.WithTenant(r.Context(), orgID, func(ctx context.Context) error {
+			var rerr error
+			reserved, existing, rerr = m.reserve(ctx, orgID, key, reqHash)
+			return rerr
+		}); derr != nil {
+			// Best-effort: a DB error here shouldn't hard-fail the
+			// request. Proceed without idempotency protection.
+			next.ServeHTTP(w, r)
 			return
 		}
 
-		// Wrap the writer so we can capture status + body for caching.
+		if !reserved {
+			switch {
+			case existing == nil:
+				next.ServeHTTP(w, r)
+			case existing.RequestHash != reqHash:
+				writeProblem(w, http.StatusConflict,
+					"https://docs.orpheus.dev/errors/idempotency-conflict",
+					"Idempotency conflict",
+					"key reused with a different request",
+				)
+			case existing.Status == "completed":
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set(replayHeader, "true")
+				w.WriteHeader(int(existing.ResponseStatus))
+				_, _ = w.Write(existing.ResponseBody)
+			default: // in_progress: the original request is still running
+				writeProblem(w, http.StatusConflict,
+					"https://docs.orpheus.dev/errors/idempotency-in-progress",
+					"Request in progress",
+					"a request with this Idempotency-Key is still being processed",
+				)
+			}
+			return
+		}
+
+		// We own the reservation: run the handler and persist the result.
 		rec := newRecorder(w)
 		next.ServeHTTP(rec, r)
 
-		// Cache the response. status 2xx with a body is the typical
-		// case; 4xx/5xx are also stored so a retry replays the
-		// failure. The (org_id, key) unique constraint collapses
-		// concurrent first-time requests onto one row.
-		_ = m.completeKey(r.Context(), completeParams{
-			ID:             uuid.NewString(),
-			OrgID:          orgID,
-			Key:            key,
-			RequestHash:    bodyHash,
-			ResponseStatus: int32(rec.status),
-			ResponseBody:   rec.body.Bytes(),
+		respBody := rec.body.Bytes()
+		if len(respBody) == 0 {
+			respBody = nil
+		}
+		_ = m.DB.WithTenant(r.Context(), orgID, func(ctx context.Context) error {
+			return m.complete(ctx, orgID, key, int32(rec.status), respBody)
 		})
 	})
 }
@@ -145,71 +180,69 @@ type keyRecord struct {
 	OrgID          string
 	Key            string
 	RequestHash    string
+	Status         string
 	ResponseStatus int32
 	ResponseBody   []byte
 }
 
-// getKey fetches a row by (org_id, key). A missing row is not an error:
-// it returns (nil, nil) so the caller can fall through to the
-// "first-time request" path.
-func (m *Middleware) getKey(ctx context.Context, orgID, key string) (*keyRecord, error) {
+// reserve atomically claims (org_id, key). On the first request it
+// INSERTs an `in_progress` row and returns reserved=true. On a
+// concurrent/repeat request the INSERT hits the unique constraint, does
+// nothing, and reserve returns reserved=false plus the existing row so
+// the caller can replay / conflict / 409-in-progress. Runs on the tx
+// carried by ctx (WithTenant) so RLS is satisfied.
+func (m *Middleware) reserve(ctx context.Context, orgID, key, reqHash string) (reserved bool, existing *keyRecord, err error) {
 	if m.DB == nil {
-		return nil, nil
+		return false, nil, nil
 	}
-	const q = `
-		SELECT id, org_id, key, request_hash,
-		       COALESCE(response_status, 0),
-		       COALESCE(response_body, '{}'::jsonb)
-		FROM idempotency_keys
-		WHERE org_id = $1 AND key = $2
+	const insertQ = `
+		INSERT INTO idempotency_keys (id, org_id, key, request_hash, status, expires_at)
+		VALUES ($1, $2, $3, $4, 'in_progress', now() + ($5::text || ' seconds')::interval)
+		ON CONFLICT (org_id, key) DO NOTHING
+		RETURNING id
 	`
-	row := m.DB.QueryRow(ctx, q, orgID, key)
-	var r keyRecord
-	if err := row.Scan(&r.ID, &r.OrgID, &r.Key, &r.RequestHash, &r.ResponseStatus, &r.ResponseBody); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, nil
+	var id string
+	row := dbtx.QueryRow(ctx, m.DB, insertQ, uuid.NewString(), orgID, key, reqHash, fmt.Sprintf("%d", int(ResponseTTL.Seconds())))
+	switch scanErr := row.Scan(&id); {
+	case scanErr == nil:
+		return true, nil, nil
+	case errors.Is(scanErr, pgx.ErrNoRows):
+		// Conflict: fetch the existing row.
+		const selQ = `
+			SELECT id, org_id, key, request_hash, status::text,
+			       COALESCE(response_status, 0),
+			       COALESCE(response_body, '{}'::jsonb)
+			FROM idempotency_keys
+			WHERE org_id = $1 AND key = $2
+		`
+		var rec keyRecord
+		if err := dbtx.QueryRow(ctx, m.DB, selQ, orgID, key).Scan(
+			&rec.ID, &rec.OrgID, &rec.Key, &rec.RequestHash, &rec.Status,
+			&rec.ResponseStatus, &rec.ResponseBody,
+		); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return false, nil, nil
+			}
+			return false, nil, err
 		}
-		return nil, err
+		return false, &rec, nil
+	default:
+		return false, nil, scanErr
 	}
-	return &r, nil
 }
 
-// completeParams is the input to the upsert. The (org_id, key) UNIQUE
-// constraint means a concurrent first-time request for the same key
-// will lose the race; that's fine, both invocations are equivalent.
-type completeParams struct {
-	ID             string
-	OrgID          string
-	Key            string
-	RequestHash    string
-	ResponseStatus int32
-	ResponseBody   []byte
-}
-
-// completeKey stores the response. We set status='completed' and an
-// expires_at in the future; the table's partial index on
-// response_status IS NULL doesn't help us here, so the cleanup job
-// (Phase 2) should target `expires_at < now()`.
-func (m *Middleware) completeKey(ctx context.Context, p completeParams) error {
+// complete transitions the reserved row to `completed` with the captured
+// response. Runs on the WithTenant tx so RLS accepts the UPDATE.
+func (m *Middleware) complete(ctx context.Context, orgID, key string, status int32, body []byte) error {
 	if m.DB == nil {
 		return nil
 	}
 	const q = `
-		INSERT INTO idempotency_keys (
-			id, org_id, key, request_hash, response_status, response_body,
-			status, expires_at
-		)
-		VALUES (
-			$1, $2, $3, $4, $5, $6,
-			'completed', now() + ($7::text || ' seconds')::interval
-		)
-		ON CONFLICT (org_id, key) DO NOTHING
+		UPDATE idempotency_keys
+		SET status = 'completed', response_status = $3, response_body = $4
+		WHERE org_id = $1 AND key = $2
 	`
-	_, err := m.DB.Exec(ctx, q,
-		p.ID, p.OrgID, p.Key, p.RequestHash,
-		p.ResponseStatus, p.ResponseBody,
-		fmt.Sprintf("%d", int(ResponseTTL.Seconds())),
-	)
+	_, err := dbtx.Exec(ctx, m.DB, q, orgID, key, status, body)
 	return err
 }
 
