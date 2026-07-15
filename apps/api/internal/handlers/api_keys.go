@@ -82,6 +82,23 @@ func (h *APIKeyHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "validation", "name required")
 		return
 	}
+	if len(req.Scopes) == 0 {
+		writeProblem(w, http.StatusBadRequest, "validation", "at least one scope is required")
+		return
+	}
+	for _, s := range req.Scopes {
+		if !auth.IsValidScope(s) {
+			writeProblem(w, http.StatusBadRequest, "validation", "invalid scope: "+s)
+			return
+		}
+		// Prevent privilege escalation: a caller cannot grant a scope it
+		// does not itself hold (JWT/interactive users have full org
+		// authority; a narrow API key cannot mint a broader one).
+		if !p.CanGrantScope(s) {
+			writeProblem(w, http.StatusForbidden, "forbidden", "cannot grant scope not held by the caller: "+s)
+			return
+		}
+	}
 
 	body := make([]byte, 32)
 	if _, err := rand.Read(body); err != nil {

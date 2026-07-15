@@ -160,49 +160,58 @@ func (s *Server) v1Routes() {
 			r.Use(s.opts.Audit.Middleware)
 		}
 
+		// Per-route scope enforcement. JWT principals have full org
+		// authority; API-key principals must hold the listed scope (or
+		// "*"). RequireScope is a no-op for unscoped tokens by design.
+		rs := auth.RequireScope
+
 		uh := &handlers.UploadHandler{DB: s.opts.DB, S3: s.opts.S3, Audit: s.opts.Audit}
-		r.Post("/uploads", uh.Create)
-		r.Post("/uploads/{id}/complete", uh.Complete)
-		r.Get("/uploads", uh.List)
-		r.Get("/uploads/{id}", uh.Get)
+		r.With(rs("uploads:write")).Post("/uploads", uh.Create)
+		r.With(rs("uploads:write")).Post("/uploads/{id}/complete", uh.Complete)
+		r.With(rs("uploads:read")).Get("/uploads", uh.List)
+		r.With(rs("uploads:read")).Get("/uploads/{id}", uh.Get)
 
 		ah := &handlers.ArtifactHandler{DB: s.opts.DB, S3: s.opts.S3}
-		r.Get("/artifacts", ah.List)
-		r.Get("/artifacts/{id}", ah.Get)
-		r.Get("/artifacts/{id}/signed-url", ah.GetSignedURL)
+		r.With(rs("artifacts:read")).Get("/artifacts", ah.List)
+		r.With(rs("artifacts:read")).Get("/artifacts/{id}", ah.Get)
+		r.With(rs("artifacts:read")).Get("/artifacts/{id}/signed-url", ah.GetSignedURL)
 
 		jh := &handlers.JobHandler{DB: s.opts.DB, Audit: s.opts.Audit, Metrics: s.opts.Metrics}
-		r.Post("/jobs", jh.Create)
-		r.Post("/jobs/bulk", jh.BulkCreate)
-		r.Get("/jobs", jh.List)
-		r.Get("/jobs/{id}", jh.Get)
-		r.Delete("/jobs/{id}", jh.Cancel)
+		r.With(rs("jobs:write")).Post("/jobs", jh.Create)
+		r.With(rs("jobs:write")).Post("/jobs/bulk", jh.BulkCreate)
+		r.With(rs("jobs:read")).Get("/jobs", jh.List)
+		r.With(rs("jobs:read")).Get("/jobs/{id}", jh.Get)
+		r.With(rs("jobs:write")).Delete("/jobs/{id}", jh.Cancel)
 
 		ph := &handlers.ProcessorHandler{DB: s.opts.DB}
+		// The processor catalog is public within the org; no scope gate.
 		r.Get("/processors", ph.List)
 		r.Get("/processors/{name}", ph.Get)
 
 		wh := &handlers.WebhookHandler{DB: s.opts.DB, Audit: s.opts.Audit}
-		r.Post("/webhooks", wh.Create)
-		r.Get("/webhooks", wh.List)
-		r.Get("/webhooks/{id}", wh.Get)
-		r.Patch("/webhooks/{id}", wh.Update)
-		r.Delete("/webhooks/{id}", wh.Delete)
-		r.Get("/webhooks/{id}/deliveries", wh.ListDeliveries)
-		r.Post("/webhooks/{id}/deliveries/{delivery_id}/replay", wh.Replay)
+		r.With(rs("webhooks:write")).Post("/webhooks", wh.Create)
+		r.With(rs("webhooks:read")).Get("/webhooks", wh.List)
+		r.With(rs("webhooks:read")).Get("/webhooks/{id}", wh.Get)
+		r.With(rs("webhooks:write")).Patch("/webhooks/{id}", wh.Update)
+		r.With(rs("webhooks:write")).Delete("/webhooks/{id}", wh.Delete)
+		r.With(rs("webhooks:read")).Get("/webhooks/{id}/deliveries", wh.ListDeliveries)
+		r.With(rs("webhooks:write")).Post("/webhooks/{id}/deliveries/{delivery_id}/replay", wh.Replay)
 
+		// API-key management is an admin operation. There is no
+		// api_keys scope in the enum, so require the "*" wildcard: a
+		// scoped API key cannot manage keys, only a full-access token can.
 		kh := &handlers.APIKeyHandler{DB: s.opts.DB, Audit: s.opts.Audit}
-		r.Post("/api-keys", kh.Create)
-		r.Get("/api-keys", kh.List)
-		r.Delete("/api-keys/{id}", kh.Revoke)
+		r.With(rs("*")).Post("/api-keys", kh.Create)
+		r.With(rs("*")).Get("/api-keys", kh.List)
+		r.With(rs("*")).Delete("/api-keys/{id}", kh.Revoke)
 
 		wh2 := &handlers.WorkflowHandler{DB: s.opts.DB, Audit: s.opts.Audit}
-		r.Post("/workflows/transcribe-long", wh2.CreateTranscribeLong)
-		r.Get("/workflows/{id}", wh2.Get)
+		r.With(rs("jobs:write")).Post("/workflows/transcribe-long", wh2.CreateTranscribeLong)
+		r.With(rs("jobs:read")).Get("/workflows/{id}", wh2.Get)
 
 		sh := &handlers.SystemHandler{DB: s.opts.DB}
-		r.Get("/usage", sh.GetUsage)
-		r.Get("/audit-log", sh.ListAuditLog)
+		r.With(rs("usage:read")).Get("/usage", sh.GetUsage)
+		r.With(rs("audit:read")).Get("/audit-log", sh.ListAuditLog)
 	})
 }
 
