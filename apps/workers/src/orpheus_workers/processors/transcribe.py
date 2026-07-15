@@ -10,6 +10,7 @@ import structlog
 from ..ffmpeg import FFmpegError, convert_to_wav_16k_mono
 from ..ffmpeg import slice as ffmpeg_slice
 from ..transcribe import TranscribeError, transcribe
+from ..validation import MAX_CHUNKS, ParamError, parse_chunk_seconds
 from . import register_processor
 
 logger = structlog.get_logger(__name__)
@@ -40,7 +41,10 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
         import json as _json
 
         params = _json.loads(params)
-    chunk_seconds = float(params.get("chunk_seconds", DEFAULT_CHUNK_SECONDS))
+    # Validate chunk_seconds: reject 0 (ZeroDivisionError), negative, NaN/
+    # Inf, and out-of-range values that would explode into millions of
+    # ffmpeg + whisper invocations.
+    chunk_seconds = parse_chunk_seconds(params, default=DEFAULT_CHUNK_SECONDS)
 
     art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s", artifact_id)
     if art is None:
@@ -65,6 +69,10 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
         model_size = os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
         model_dir = os.environ.get("ORPHEUS_WORKER_WHISPER_DIR") or None
         n_chunks = int(duration // chunk_seconds) + (1 if duration % chunk_seconds else 0)
+        if n_chunks > MAX_CHUNKS:
+            raise ParamError(
+                f"chunking would produce {n_chunks} chunks (> {MAX_CHUNKS}); increase chunk_seconds"
+            )
         all_segments: list[dict] = []
         all_text: list[str] = []
         language = "en"

@@ -9,7 +9,12 @@ from typing import Any
 import structlog
 
 from ..ffmpeg import FFmpegError, slice as run_ffmpeg_slice
+from ..validation import parse_time_range
 from . import register_processor
+
+# Deterministic namespace so a redelivered slice job maps to the same
+# artifact id (idempotency — see below).
+_SLICE_NS = uuid.UUID("6f1e5b8a-2c3d-4e5f-8a9b-0c1d2e3f4a5b")
 
 logger = structlog.get_logger(__name__)
 
@@ -35,8 +40,9 @@ async def slice_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     params = job["params"] or {}
     if isinstance(params, str):
         params = json.loads(params)
-    start_seconds = float(params["start_seconds"])
-    end_seconds = float(params["end_seconds"])
+    # Validate untrusted params: reject NaN/Inf/negative/inverted ranges
+    # and spans beyond the safety cap before they reach ffmpeg args.
+    start_seconds, end_seconds = parse_time_range(params)
 
     src = db.fetchrow(
         "SELECT s3_bucket, s3_key, content_type FROM artifacts WHERE id = %s",
@@ -57,7 +63,15 @@ async def slice_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
             raise
 
         size_bytes = os.path.getsize(dst_path)
-        slice_id = str(uuid.uuid4())
+        # ffmpeg -c copy can exit 0 while producing an empty/truncated
+        # file for some container/codec + range combinations; refuse to
+        # register a 0-byte artifact as a successful slice.
+        if size_bytes == 0:
+            raise FFmpegError("slice produced an empty output file")
+        # Deterministic id/key so a redelivered job (worker nak → JetStream
+        # redelivery) re-uses the same artifact instead of inserting a
+        # duplicate; insert_artifact is ON CONFLICT DO NOTHING.
+        slice_id = str(uuid.uuid5(_SLICE_NS, job_id))
         slice_key = f"slices/{org_id}/{src_artifact_id}/{start_seconds}-{end_seconds}{suffix}"
         s3.upload_file(src["s3_bucket"], slice_key, str(dst_path), content_type=src["content_type"])
         db.insert_artifact(
