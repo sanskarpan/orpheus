@@ -131,6 +131,8 @@ func run() error {
 	} else {
 		defer func() { _ = rdb.Close() }()
 		rateMW = ratelimit.NewMiddleware(ratelimit.New(rdb), logger)
+		// In prod, a limiter backend outage must not become a bypass.
+		rateMW.FailClosed = cfg.RateLimitFailClosed || cfg.IsProd()
 	}
 
 	// NATS connection. The outbox publisher drains DB rows to the

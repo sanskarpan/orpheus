@@ -324,6 +324,25 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 	processor := r.URL.Query().Get("processor")
 	artifactID := r.URL.Query().Get("artifact_id")
 
+	// Validate the typed query params up front. Without this an invalid
+	// value is cast in SQL (e.g. $n::job_status, created_at < $n::cursor,
+	// artifact_id::uuid) and surfaces as a 500 leaking a DB error string;
+	// a bad client input should be a clean 400.
+	if status != "" && !validJobStatus(status) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid status")
+		return
+	}
+	if !validCursor(cursor) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid cursor")
+		return
+	}
+	if artifactID != "" {
+		if _, err := uuid.Parse(artifactID); err != nil {
+			writeProblem(w, http.StatusBadRequest, "validation", "invalid artifact_id")
+			return
+		}
+	}
+
 	// Build the WHERE clause incrementally. We pull the job_type
 	// filter through a JSONB predicate so processor names round-trip
 	// correctly even when they contain characters that don't fit the

@@ -334,6 +334,13 @@ func isAuditAction(s string) bool {
 	return ok
 }
 
+// IsValidAction reports whether s is a valid audit_action enum value.
+// Exported so handlers can validate an ?action= filter before it reaches
+// a SQL enum cast (which would 500 on an unknown value).
+func IsValidAction(s string) bool {
+	return isAuditAction(s)
+}
+
 // clientIP returns the first hop from X-Forwarded-For, falling back to
 // req.RemoteAddr. This is best-effort: a hostile client can spoof
 // X-Forwarded-For. Phase 1+ will plug in a vetted real-IP helper once

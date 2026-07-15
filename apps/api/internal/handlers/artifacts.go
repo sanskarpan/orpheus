@@ -146,6 +146,10 @@ func (h *ArtifactHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	cursor := r.URL.Query().Get("cursor")
 	contentType := r.URL.Query().Get("content_type")
+	if !validCursor(cursor) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid cursor")
+		return
+	}
 
 	args := []any{p.OrgID}
 	query := `SELECT id, s3_bucket, s3_key, sha256, size_bytes, content_type, codec, duration_seconds, sample_rate, channels, created_at

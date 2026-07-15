@@ -16,6 +16,12 @@ import (
 type Middleware struct {
 	Limiter *Limiter
 	Logger  *slog.Logger
+
+	// FailClosed controls behaviour when the limiter backend (Redis)
+	// errors. Default false preserves availability (fail open). Set true
+	// in environments where an attacker who can degrade Redis must not be
+	// able to bypass the limiter — the request is then rejected with 503.
+	FailClosed bool
 }
 
 // NewMiddleware constructs a Middleware. logger may be nil (defaults to
@@ -51,14 +57,21 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 		key, plan := bucketFor(p, r.Context())
 		allowed, retry, err := m.Limiter.Allow(r.Context(), key, plan)
 		if err != nil {
-			// Fail open. A working limiter is not load-bearing for
-			// correctness, but a broken one shouldn't black-hole
-			// production traffic.
 			m.Logger.Warn("ratelimit.allow_failed",
 				"err", err,
 				"key", key,
 				"plan", plan,
+				"fail_closed", m.FailClosed,
 			)
+			if m.FailClosed {
+				// Fail closed: don't let a degraded limiter be a bypass.
+				w.Header().Set("Retry-After", "1")
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"type":"https://docs.orpheus.dev/errors/unavailable","title":"Service Unavailable","status":503,"detail":"rate limiter unavailable"}`))
+				return
+			}
+			// Fail open: a broken limiter shouldn't black-hole traffic.
 			next.ServeHTTP(w, r)
 			return
 		}

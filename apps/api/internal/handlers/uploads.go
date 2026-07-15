@@ -345,6 +345,10 @@ func (h *UploadHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	cursor := r.URL.Query().Get("cursor")
 	status := r.URL.Query().Get("status")
+	if !validCursor(cursor) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid cursor")
+		return
+	}
 
 	args := []any{p.OrgID}
 	query := `SELECT id, status, expires_at, created_at FROM upload_sessions WHERE org_id = $1`

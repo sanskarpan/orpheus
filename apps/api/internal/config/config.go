@@ -60,6 +60,11 @@ type Config struct {
 	// live. One bucket per environment; key prefix encodes the org id.
 	S3Bucket string `envconfig:"S3_BUCKET" default:"orpheus-uploads"`
 
+	// RateLimitFailClosed, when true, makes the rate-limit middleware
+	// reject requests with 503 if the Redis backend errors (instead of
+	// failing open). It is forced on in prod regardless of this value.
+	RateLimitFailClosed bool `envconfig:"RATE_LIMIT_FAIL_CLOSED" default:"false"`
+
 	// Keycloak is the OIDC provider. The API validates bearer tokens
 	// against this realm; clients obtain tokens out-of-band.
 	KeycloakURL      string `envconfig:"KEYCLOAK_URL" default:"http://localhost:8088"`
