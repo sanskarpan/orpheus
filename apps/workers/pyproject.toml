@@ -24,6 +24,9 @@ dependencies = [
     "ctranslate2>=3.0.0",
 ]
 
+[project.scripts]
+orpheus-streaming = "orpheus_workers.streaming:main"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0.0",
