@@ -70,6 +70,14 @@ type Config struct {
 	KeycloakURL      string `envconfig:"KEYCLOAK_URL" default:"http://localhost:8088"`
 	KeycloakRealm    string `envconfig:"KEYCLOAK_REALM" default:"orpheus"`
 	KeycloakClientID string `envconfig:"KEYCLOAK_CLIENT_ID" default:"orpheus-api"`
+
+	// Dodo Payments (billing, #11). When DodoAPIKey is empty the billing
+	// checkout endpoint returns 503 and the inbound webhook route is not
+	// mounted; the usage rollup still runs. DodoWebhookSecret is the
+	// Standard Webhooks signing secret used to authenticate inbound events.
+	DodoAPIKey        string `envconfig:"DODO_API_KEY" default:""`
+	DodoWebhookSecret string `envconfig:"DODO_WEBHOOK_SECRET" default:""`
+	DodoBaseURL       string `envconfig:"DODO_BASE_URL" default:""`
 }
 
 // Load reads the configuration from the environment.

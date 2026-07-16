@@ -18,6 +18,7 @@ import (
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
+	"github.com/orpheus/api/internal/billing"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/handlers"
@@ -40,6 +41,7 @@ type Options struct {
 	RateLimit   *ratelimit.Middleware
 	Audit       *audit.Recorder
 	Metrics     *metrics.Metrics
+	Billing     billing.Provider
 }
 
 // Server is the HTTP server for the Orpheus API.
@@ -139,6 +141,14 @@ func (s *Server) routes() {
 		r.Get("/docs", handlers.SwaggerUI)
 		r.Get("/redoc", handlers.ReDocUI)
 	})
+
+	// Inbound payment-provider webhook. It is public at the transport
+	// layer (no API key) but authenticated by the provider's signed
+	// payload inside the handler. Mounted only when billing is configured.
+	if s.opts.DB != nil && s.opts.Billing != nil {
+		bh := &handlers.BillingHandler{DB: s.opts.DB, Audit: s.opts.Audit, Provider: s.opts.Billing}
+		s.mux.Post("/billing/webhooks/dodo", bh.DodoWebhook)
+	}
 }
 
 // v1Routes mounts the authenticated /v1 surface. The order of
@@ -220,6 +230,10 @@ func (s *Server) v1Routes() {
 		sh := &handlers.SystemHandler{DB: s.opts.DB}
 		r.With(rs("usage:read")).Get("/usage", sh.GetUsage)
 		r.With(rs("audit:read")).Get("/audit-log", sh.ListAuditLog)
+
+		bh := &handlers.BillingHandler{DB: s.opts.DB, Audit: s.opts.Audit, Provider: s.opts.Billing}
+		r.With(rs("billing:read")).Get("/billing/invoices", bh.ListInvoices)
+		r.With(rs("billing:write")).Post("/billing/invoices/{id}/checkout", bh.CreateCheckout)
 	})
 }
 

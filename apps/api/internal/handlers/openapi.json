@@ -52,16 +52,26 @@
     {
       "name": "system",
       "description": "Org-scoped operational endpoints: usage, audit log, and platform health."
+    },
+    {
+      "name": "billing",
+      "description": "Usage-based invoices and payment checkout."
     }
   ],
   "security": [
-    {"BearerAuth": []},
-    {"ApiKeyAuth": []}
+    {
+      "BearerAuth": []
+    },
+    {
+      "ApiKeyAuth": []
+    }
   ],
   "paths": {
     "/health": {
       "get": {
-        "tags": ["system"],
+        "tags": [
+          "system"
+        ],
         "summary": "Liveness probe",
         "description": "Returns 200 OK if the process is alive. Container orchestrators (Kubernetes, ECS) use this endpoint to decide whether to restart the container. It must not depend on external services and requires no authentication.",
         "operationId": "getHealth",
@@ -71,7 +81,9 @@
             "description": "Service is alive.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/LivenessResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
               }
             }
           }
@@ -80,7 +92,9 @@
     },
     "/ready": {
       "get": {
-        "tags": ["system"],
+        "tags": [
+          "system"
+        ],
         "summary": "Readiness probe",
         "description": "Returns 200 OK if the service is ready to accept traffic. In Phase 0 this always returns ready; Phase 1+ checks Postgres, Redis, and S3. Requires no authentication.",
         "operationId": "getReady",
@@ -90,7 +104,9 @@
             "description": "Service is ready.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/ReadinessResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
               }
             }
           },
@@ -98,7 +114,9 @@
             "description": "Service is not ready. Returned when a downstream dependency is unhealthy.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/ReadinessResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
               }
             }
           }
@@ -107,7 +125,9 @@
     },
     "/metrics": {
       "get": {
-        "tags": ["system"],
+        "tags": [
+          "system"
+        ],
         "summary": "Prometheus metrics",
         "description": "Prometheus exposition format. Includes Go runtime and process metrics by default. Phase 1+ registers domain-specific counters and histograms (jobs submitted, jobs succeeded, GPU seconds consumed, etc.). Requires no authentication.",
         "operationId": "getMetrics",
@@ -129,18 +149,24 @@
     },
     "/v1/uploads": {
       "post": {
-        "tags": ["uploads"],
+        "tags": [
+          "uploads"
+        ],
         "summary": "Create an upload session and receive presigned S3 multipart URLs",
         "description": "Initiates a multipart upload to S3. The response includes a presigned URL for each part, which the client uses to `PUT` the corresponding byte range directly to S3. Call `POST /v1/uploads/{id}/complete` once all parts have been uploaded.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
         "operationId": "createUpload",
         "parameters": [
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateUploadRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateUploadRequest"
+              }
             }
           }
         },
@@ -148,24 +174,42 @@
           "201": {
             "description": "Upload session created. The `Location` header points to the session resource; `Idempotency-Key` is echoed when present.",
             "headers": {
-              "Location": {"$ref": "#/components/headers/Location"},
-              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Idempotency-Key": {
+                "$ref": "#/components/headers/IdempotencyKey"
+              }
             },
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/UploadSession"}
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSession"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/BadRequestProblem"},
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "409": {"$ref": "#/components/responses/ConflictProblem"},
-          "413": {"$ref": "#/components/responses/PayloadTooLargeProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "400": {
+            "$ref": "#/components/responses/BadRequestProblem"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictProblem"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLargeProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       },
       "get": {
-        "tags": ["uploads"],
+        "tags": [
+          "uploads"
+        ],
         "summary": "List upload sessions for the authenticated org",
         "description": "Returns upload sessions owned by the org, newest first. Supports cursor-based pagination.",
         "operationId": "listUploads",
@@ -174,74 +218,108 @@
             "name": "status",
             "in": "query",
             "description": "Filter by upload session status.",
-            "schema": {"$ref": "#/components/schemas/UploadStatus"}
+            "schema": {
+              "$ref": "#/components/schemas/UploadStatus"
+            }
           },
           {
             "name": "created_after",
             "in": "query",
             "description": "Only return sessions created at or after this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
           {
             "name": "created_before",
             "in": "query",
             "description": "Only return sessions created at or before this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Cursor"}
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
         ],
         "responses": {
           "200": {
             "description": "A page of upload sessions.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/UploadSessionList"}
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSessionList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       }
     },
     "/v1/uploads/{id}": {
       "get": {
-        "tags": ["uploads"],
+        "tags": [
+          "uploads"
+        ],
         "summary": "Get upload session status",
         "description": "Returns the current state of a multipart upload session, including the presigned part URLs (which are regenerated if they have expired).",
         "operationId": "getUpload",
         "parameters": [
-          {"$ref": "#/components/parameters/UploadId"}
+          {
+            "$ref": "#/components/parameters/UploadId"
+          }
         ],
         "responses": {
           "200": {
             "description": "The upload session.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/UploadSession"}
+                "schema": {
+                  "$ref": "#/components/schemas/UploadSession"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/uploads/{id}/complete": {
       "post": {
-        "tags": ["uploads"],
+        "tags": [
+          "uploads"
+        ],
         "summary": "Finalize the upload, verify checksums, and create the artifact",
         "description": "Marks the multipart upload as complete in S3 and verifies the SHA-256 of the assembled object (if provided at creation time). On success, an `Artifact` record is created and returned. The artifact's storage is charged to the org from this moment forward.",
         "operationId": "completeUpload",
         "parameters": [
-          {"$ref": "#/components/parameters/UploadId"}
+          {
+            "$ref": "#/components/parameters/UploadId"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CompleteUploadRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CompleteUploadRequest"
+              }
             }
           }
         },
@@ -250,21 +328,35 @@
             "description": "Upload completed and artifact created.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Artifact"}
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/BadRequestProblem"},
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"},
-          "409": {"$ref": "#/components/responses/ConflictProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "400": {
+            "$ref": "#/components/responses/BadRequestProblem"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       }
     },
     "/v1/artifacts": {
       "get": {
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "summary": "List artifacts",
         "description": "Returns artifacts owned by the org, newest first. Supports cursor-based pagination and filtering by content type and creation timestamp.",
         "operationId": "listArtifacts",
@@ -273,68 +365,100 @@
             "name": "content_type",
             "in": "query",
             "description": "Filter by MIME type (e.g. `audio/wav`, `audio/mpeg`).",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "created_after",
             "in": "query",
             "description": "Only return artifacts created at or after this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
           {
             "name": "created_before",
             "in": "query",
             "description": "Only return artifacts created at or before this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Cursor"}
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
         ],
         "responses": {
           "200": {
             "description": "A page of artifacts.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/ArtifactList"}
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       }
     },
     "/v1/artifacts/{id}": {
       "get": {
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "summary": "Get an artifact",
         "description": "Returns metadata for a single artifact, including codec, duration, sample rate, and channels extracted by the ingestion probe.",
         "operationId": "getArtifact",
         "parameters": [
-          {"$ref": "#/components/parameters/ArtifactId"}
+          {
+            "$ref": "#/components/parameters/ArtifactId"
+          }
         ],
         "responses": {
           "200": {
             "description": "The artifact.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Artifact"}
+                "schema": {
+                  "$ref": "#/components/schemas/Artifact"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/artifacts/{id}/signed-url": {
       "get": {
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "summary": "Get a presigned download URL",
         "description": "Returns a short-lived S3 presigned `GET` URL. Default TTL is 15 minutes; the maximum is 1 hour.",
         "operationId": "getArtifactSignedUrl",
         "parameters": [
-          {"$ref": "#/components/parameters/ArtifactId"},
+          {
+            "$ref": "#/components/parameters/ArtifactId"
+          },
           {
             "name": "expires_in",
             "in": "query",
@@ -352,29 +476,41 @@
             "description": "A presigned download URL.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/SignedURL"}
+                "schema": {
+                  "$ref": "#/components/schemas/SignedURL"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/jobs": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Submit an async processing job",
         "description": "Submits a job that runs a named processor against an existing artifact. Returns immediately with status `queued`; poll the job URL or subscribe to webhooks to learn when it completes.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
         "operationId": "createJob",
         "parameters": [
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateJobRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateJobRequest"
+              }
             }
           }
         },
@@ -382,24 +518,42 @@
           "202": {
             "description": "Job accepted and queued. The `Location` header points to the job resource; `Idempotency-Key` is echoed when present.",
             "headers": {
-              "Location": {"$ref": "#/components/headers/Location"},
-              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Idempotency-Key": {
+                "$ref": "#/components/headers/IdempotencyKey"
+              }
             },
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Job"}
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/BadRequestProblem"},
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"},
-          "409": {"$ref": "#/components/responses/ConflictProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "400": {
+            "$ref": "#/components/responses/BadRequestProblem"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       },
       "get": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "List jobs",
         "description": "Returns jobs owned by the org, newest first. Supports cursor-based pagination and filtering by status, processor, artifact, and creation timestamp.",
         "operationId": "listJobs",
@@ -408,63 +562,92 @@
             "name": "status",
             "in": "query",
             "description": "Filter by job status.",
-            "schema": {"$ref": "#/components/schemas/JobStatus"}
+            "schema": {
+              "$ref": "#/components/schemas/JobStatus"
+            }
           },
           {
             "name": "processor",
             "in": "query",
             "description": "Filter by processor name (e.g. `whisper-transcribe`).",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "artifact_id",
             "in": "query",
             "description": "Filter by source artifact ID.",
-            "schema": {"type": "string", "format": "uuid"}
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           },
           {
             "name": "created_after",
             "in": "query",
             "description": "Only return jobs created at or after this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
           {
             "name": "created_before",
             "in": "query",
             "description": "Only return jobs created at or before this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Cursor"}
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
         ],
         "responses": {
           "200": {
             "description": "A page of jobs.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/JobList"}
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       }
     },
     "/v1/jobs/bulk": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Submit a batch of jobs (async)",
         "description": "Accepts up to 500 jobs in a single request. Per-item validation failures are returned in the `rejected` array; the rest are queued. Use the `Idempotency-Key` header to make the entire batch replayable.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
         "operationId": "bulkCreateJobs",
         "parameters": [
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/BulkCreateJobsRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/BulkCreateJobsRequest"
+              }
             }
           }
         },
@@ -472,82 +655,122 @@
           "202": {
             "description": "Batch accepted. `accepted` is the list of queued job IDs in the same order as the input; `rejected` contains per-item validation errors.",
             "headers": {
-              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+              "Idempotency-Key": {
+                "$ref": "#/components/headers/IdempotencyKey"
+              }
             },
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/BulkJobsResponse"}
+                "schema": {
+                  "$ref": "#/components/schemas/BulkJobsResponse"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/BadRequestProblem"},
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "409": {"$ref": "#/components/responses/ConflictProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "400": {
+            "$ref": "#/components/responses/BadRequestProblem"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       }
     },
     "/v1/jobs/{id}": {
       "get": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Get job status and result",
         "description": "Returns the full job record, including `result` (populated when `status = succeeded`), `error` (populated when `status = failed`), and `cost_usd`.",
         "operationId": "getJob",
         "parameters": [
-          {"$ref": "#/components/parameters/JobId"}
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
         ],
         "responses": {
           "200": {
             "description": "The job.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Job"}
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/jobs/{id}/cancel": {
       "post": {
-        "tags": ["jobs"],
+        "tags": [
+          "jobs"
+        ],
         "summary": "Request cancellation of a queued or running job",
         "description": "Returns `202` with the job in `canceled` (if it had not started) or `canceling` (if a worker has already picked it up; the worker will be asked to stop at the next checkpoint).",
         "operationId": "cancelJob",
         "parameters": [
-          {"$ref": "#/components/parameters/JobId"}
+          {
+            "$ref": "#/components/parameters/JobId"
+          }
         ],
         "responses": {
           "202": {
             "description": "Cancellation requested.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Job"}
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"},
-          "409": {"$ref": "#/components/responses/ConflictProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictProblem"
+          }
         }
       }
     },
     "/v1/webhooks": {
       "post": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Subscribe a URL to events",
         "description": "Registers an HTTPS endpoint to receive Orpheus event deliveries. If `secret` is omitted, Orpheus generates a 32-byte secret and returns it in the response. The same secret is used to sign every delivery (HMAC-SHA256).\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
         "operationId": "createWebhook",
         "parameters": [
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateWebhookRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateWebhookRequest"
+              }
             }
           }
         },
@@ -555,23 +778,39 @@
           "201": {
             "description": "Webhook endpoint created.",
             "headers": {
-              "Location": {"$ref": "#/components/headers/Location"},
-              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Idempotency-Key": {
+                "$ref": "#/components/headers/IdempotencyKey"
+              }
             },
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/WebhookEndpoint"}
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/BadRequestProblem"},
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "409": {"$ref": "#/components/responses/ConflictProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "400": {
+            "$ref": "#/components/responses/BadRequestProblem"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       },
       "get": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "List webhook endpoints",
         "description": "Returns every webhook endpoint registered for the org.",
         "operationId": "listWebhooks",
@@ -580,49 +819,69 @@
             "description": "A list of webhook endpoints.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/WebhookEndpointList"}
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
         }
       }
     },
     "/v1/webhooks/{id}": {
       "get": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Get a webhook endpoint",
         "description": "Returns a single webhook endpoint, including its current `active` flag and the timestamp of the most recent successful delivery.",
         "operationId": "getWebhook",
         "parameters": [
-          {"$ref": "#/components/parameters/WebhookId"}
+          {
+            "$ref": "#/components/parameters/WebhookId"
+          }
         ],
         "responses": {
           "200": {
             "description": "The webhook endpoint.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/WebhookEndpoint"}
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       },
       "patch": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Update a webhook endpoint",
         "description": "Patches one or more of `subscribed_events`, `active`, `description`, or `url`. Only the fields present in the request body are modified.",
         "operationId": "updateWebhook",
         "parameters": [
-          {"$ref": "#/components/parameters/WebhookId"}
+          {
+            "$ref": "#/components/parameters/WebhookId"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/UpdateWebhookRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateWebhookRequest"
+              }
             }
           }
         },
@@ -631,108 +890,162 @@
             "description": "Updated webhook endpoint.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/WebhookEndpoint"}
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/BadRequestProblem"},
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "400": {
+            "$ref": "#/components/responses/BadRequestProblem"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       },
       "delete": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Delete a webhook endpoint",
         "description": "Permanently deletes a webhook endpoint. In-flight deliveries will be allowed to complete; no new deliveries will be enqueued.",
         "operationId": "deleteWebhook",
         "parameters": [
-          {"$ref": "#/components/parameters/WebhookId"}
+          {
+            "$ref": "#/components/parameters/WebhookId"
+          }
         ],
         "responses": {
           "204": {
             "description": "Webhook endpoint deleted."
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/webhooks/{id}/deliveries": {
       "get": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "List recent deliveries",
         "description": "Returns the most recent deliveries (and their attempts) for debugging and replay. Supports cursor-based pagination.",
         "operationId": "listWebhookDeliveries",
         "parameters": [
-          {"$ref": "#/components/parameters/WebhookId"},
+          {
+            "$ref": "#/components/parameters/WebhookId"
+          },
           {
             "name": "event_type",
             "in": "query",
             "description": "Filter by event type (e.g. `job.succeeded`).",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "status",
             "in": "query",
             "description": "Filter by delivery status.",
-            "schema": {"$ref": "#/components/schemas/WebhookDeliveryStatus"}
+            "schema": {
+              "$ref": "#/components/schemas/WebhookDeliveryStatus"
+            }
           },
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Cursor"}
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
         ],
         "responses": {
           "200": {
             "description": "A page of deliveries.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/WebhookDeliveryList"}
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDeliveryList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/webhooks/{id}/deliveries/{delivery_id}/replay": {
       "post": {
-        "tags": ["webhooks"],
+        "tags": [
+          "webhooks"
+        ],
         "summary": "Re-deliver a past event",
         "description": "Enqueues a fresh delivery for a previously sent event. The new delivery is created with `attempt_count = 0` and `status = pending`; the original delivery record is preserved for audit.",
         "operationId": "replayWebhookDelivery",
         "parameters": [
-          {"$ref": "#/components/parameters/WebhookId"},
-          {"$ref": "#/components/parameters/DeliveryId"}
+          {
+            "$ref": "#/components/parameters/WebhookId"
+          },
+          {
+            "$ref": "#/components/parameters/DeliveryId"
+          }
         ],
         "responses": {
           "202": {
             "description": "Replay enqueued.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/WebhookDelivery"}
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       }
     },
     "/v1/api-keys": {
       "post": {
-        "tags": ["api-keys"],
+        "tags": [
+          "api-keys"
+        ],
         "summary": "Create an API key",
         "description": "Mints a new API key for the org. The full `secret` is returned **exactly once** in the response and is never stored in plaintext; subsequent reads return only the prefix and metadata. This endpoint requires a Keycloak JWT (an interactive user must mint the key); API keys cannot mint other API keys.\n\nSupports the `Idempotency-Key` header. Replaying the same key with the same body within 24 hours returns the original response. Replaying with a different body returns `409 Conflict`.",
         "operationId": "createApiKey",
         "parameters": [
-          {"$ref": "#/components/parameters/IdempotencyKey"}
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
         ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": {"$ref": "#/components/schemas/CreateAPIKeyRequest"}
+              "schema": {
+                "$ref": "#/components/schemas/CreateAPIKeyRequest"
+              }
             }
           }
         },
@@ -740,23 +1053,39 @@
           "201": {
             "description": "API key created. The `secret` field contains the full token; capture it now \u2014 it will not be shown again.",
             "headers": {
-              "Location": {"$ref": "#/components/headers/Location"},
-              "Idempotency-Key": {"$ref": "#/components/headers/IdempotencyKey"}
+              "Location": {
+                "$ref": "#/components/headers/Location"
+              },
+              "Idempotency-Key": {
+                "$ref": "#/components/headers/IdempotencyKey"
+              }
             },
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/APIKey"}
+                "schema": {
+                  "$ref": "#/components/schemas/APIKey"
+                }
               }
             }
           },
-          "400": {"$ref": "#/components/responses/BadRequestProblem"},
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "409": {"$ref": "#/components/responses/ConflictProblem"},
-          "429": {"$ref": "#/components/responses/RateLimitedProblem"}
+          "400": {
+            "$ref": "#/components/responses/BadRequestProblem"
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "409": {
+            "$ref": "#/components/responses/ConflictProblem"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimitedProblem"
+          }
         }
       },
       "get": {
-        "tags": ["api-keys"],
+        "tags": [
+          "api-keys"
+        ],
         "summary": "List API keys",
         "description": "Returns metadata for every API key in the org. Secrets are never returned by this endpoint; revoke and reissue if a secret is lost.",
         "operationId": "listApiKeys",
@@ -765,35 +1094,49 @@
             "description": "A list of API keys.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/APIKeyList"}
+                "schema": {
+                  "$ref": "#/components/schemas/APIKeyList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
         }
       }
     },
     "/v1/api-keys/{id}": {
       "delete": {
-        "tags": ["api-keys"],
+        "tags": [
+          "api-keys"
+        ],
         "summary": "Revoke an API key",
         "description": "Immediately invalidates the key. In-flight requests using the key complete normally; subsequent requests return `401`.",
         "operationId": "deleteApiKey",
         "parameters": [
-          {"$ref": "#/components/parameters/ApiKeyId"}
+          {
+            "$ref": "#/components/parameters/ApiKeyId"
+          }
         ],
         "responses": {
           "204": {
             "description": "API key revoked."
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/processors": {
       "get": {
-        "tags": ["processors"],
+        "tags": [
+          "processors"
+        ],
         "summary": "List available processors",
         "description": "Returns a summary of every processor the org is allowed to use, including the latest version and the set of currently active versions.",
         "operationId": "listProcessors",
@@ -802,40 +1145,56 @@
             "description": "A list of processor summaries.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/ProcessorList"}
+                "schema": {
+                  "$ref": "#/components/schemas/ProcessorList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
         }
       }
     },
     "/v1/processors/{name}": {
       "get": {
-        "tags": ["processors"],
+        "tags": [
+          "processors"
+        ],
         "summary": "Describe a processor and its available versions",
         "description": "Returns the full record for a processor, including every published version, its parameter schema, and its per-second cost.",
         "operationId": "getProcessor",
         "parameters": [
-          {"$ref": "#/components/parameters/ProcessorName"}
+          {
+            "$ref": "#/components/parameters/ProcessorName"
+          }
         ],
         "responses": {
           "200": {
             "description": "The processor.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Processor"}
+                "schema": {
+                  "$ref": "#/components/schemas/Processor"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"},
-          "404": {"$ref": "#/components/responses/NotFoundProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFoundProblem"
+          }
         }
       }
     },
     "/v1/usage": {
       "get": {
-        "tags": ["system"],
+        "tags": [
+          "system"
+        ],
         "summary": "Get current billing-period usage for the authenticated org",
         "description": "Returns aggregate usage and dollar cost for the current billing period, with a per-category breakdown.",
         "operationId": "getUsage",
@@ -856,17 +1215,23 @@
             "description": "Usage summary.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/Usage"}
+                "schema": {
+                  "$ref": "#/components/schemas/Usage"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
         }
       }
     },
     "/v1/audit-log": {
       "get": {
-        "tags": ["system"],
+        "tags": [
+          "system"
+        ],
         "summary": "List audit log entries for the authenticated org",
         "description": "Returns the org's audit log, newest first. Each entry records the actor (user or API key), the action, the affected resource, and the source IP / user agent. Supports cursor-based pagination.",
         "operationId": "listAuditLog",
@@ -875,45 +1240,184 @@
             "name": "action",
             "in": "query",
             "description": "Filter by action (e.g. `api_key.create`, `job.cancel`).",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "actor_id",
             "in": "query",
             "description": "Filter by the actor's user or API key ID.",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "resource_type",
             "in": "query",
             "description": "Filter by resource type (e.g. `job`, `artifact`, `webhook`).",
-            "schema": {"type": "string"}
+            "schema": {
+              "type": "string"
+            }
           },
           {
             "name": "created_after",
             "in": "query",
             "description": "Only return entries created at or after this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
           {
             "name": "created_before",
             "in": "query",
             "description": "Only return entries created at or before this timestamp (RFC 3339).",
-            "schema": {"type": "string", "format": "date-time"}
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
           },
-          {"$ref": "#/components/parameters/Limit"},
-          {"$ref": "#/components/parameters/Cursor"}
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          }
         ],
         "responses": {
           "200": {
             "description": "A page of audit log entries.",
             "content": {
               "application/json": {
-                "schema": {"$ref": "#/components/schemas/AuditLogList"}
+                "schema": {
+                  "$ref": "#/components/schemas/AuditLogList"
+                }
               }
             }
           },
-          "401": {"$ref": "#/components/responses/UnauthorizedProblem"}
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
+        }
+      }
+    },
+    "/v1/billing/invoices": {
+      "get": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "List invoices for the authenticated org",
+        "description": "Returns the org's invoices, newest billing period first. Each invoice is a per-period rollup of completed-job cost.",
+        "operationId": "listInvoices",
+        "responses": {
+          "200": {
+            "description": "Invoice list.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InvoiceList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
+        }
+      }
+    },
+    "/v1/billing/invoices/{id}/checkout": {
+      "post": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "Open a hosted checkout for an invoice",
+        "description": "Creates a payment-provider hosted checkout for an open invoice and returns its URL. Returns the existing URL if a checkout was already opened. 503 if billing is not configured.",
+        "operationId": "createInvoiceCheckout",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Invoice id.",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Checkout created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          },
+          "404": {
+            "description": "Invoice not found."
+          },
+          "409": {
+            "description": "Invoice is not payable."
+          },
+          "503": {
+            "description": "Billing is not configured."
+          }
+        }
+      }
+    },
+    "/billing/webhooks/dodo": {
+      "post": {
+        "tags": [
+          "billing"
+        ],
+        "summary": "Inbound Dodo Payments webhook",
+        "description": "Receives payment events from Dodo Payments. Authenticated by the Standard Webhooks signature in the request headers (not an API key). Settles the matching invoice on a successful payment.",
+        "operationId": "dodoWebhook",
+        "security": [],
+        "parameters": [
+          {
+            "name": "webhook-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "webhook-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Event accepted."
+          },
+          "401": {
+            "description": "Invalid webhook signature."
+          },
+          "503": {
+            "description": "Billing is not configured."
+          }
         }
       }
     }
@@ -969,49 +1473,70 @@
         "in": "path",
         "required": true,
         "description": "Upload session ID.",
-        "schema": {"type": "string", "format": "uuid"}
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "ArtifactId": {
         "name": "id",
         "in": "path",
         "required": true,
         "description": "Artifact ID.",
-        "schema": {"type": "string", "format": "uuid"}
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "JobId": {
         "name": "id",
         "in": "path",
         "required": true,
         "description": "Job ID.",
-        "schema": {"type": "string", "format": "uuid"}
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "WebhookId": {
         "name": "id",
         "in": "path",
         "required": true,
         "description": "Webhook endpoint ID.",
-        "schema": {"type": "string", "format": "uuid"}
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "DeliveryId": {
         "name": "delivery_id",
         "in": "path",
         "required": true,
         "description": "Webhook delivery ID.",
-        "schema": {"type": "string", "format": "uuid"}
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "ApiKeyId": {
         "name": "id",
         "in": "path",
         "required": true,
         "description": "API key ID.",
-        "schema": {"type": "string", "format": "uuid"}
+        "schema": {
+          "type": "string",
+          "format": "uuid"
+        }
       },
       "ProcessorName": {
         "name": "name",
         "in": "path",
         "required": true,
         "description": "Processor name (e.g. `whisper-transcribe`).",
-        "schema": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{1,63}$"}
+        "schema": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]{1,63}$"
+        }
       }
     },
     "responses": {
@@ -1019,10 +1544,14 @@
         "description": "Request validation failed. See `errors` for field-level details.",
         "content": {
           "application/problem+json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           },
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           }
         }
       },
@@ -1030,10 +1559,14 @@
         "description": "Missing or invalid credentials.",
         "content": {
           "application/problem+json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           },
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           }
         }
       },
@@ -1041,10 +1574,14 @@
         "description": "The requested resource does not exist or is not visible to the authenticated org.",
         "content": {
           "application/problem+json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           },
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           }
         }
       },
@@ -1052,10 +1589,14 @@
         "description": "The request conflicts with the current state of the target resource (e.g. idempotency-key reuse with a different body, or cancellation of a finished job).",
         "content": {
           "application/problem+json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           },
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           }
         }
       },
@@ -1063,24 +1604,34 @@
         "description": "The requested upload exceeds the org's maximum artifact size.",
         "content": {
           "application/problem+json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           },
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           }
         }
       },
       "RateLimitedProblem": {
         "description": "Rate limit exceeded. See `Retry-After` for when to retry.",
         "headers": {
-          "Retry-After": {"$ref": "#/components/headers/RetryAfter"}
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
         },
         "content": {
           "application/problem+json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           },
           "application/json": {
-            "schema": {"$ref": "#/components/schemas/Problem"}
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
           }
         }
       }
@@ -1088,22 +1639,34 @@
     "headers": {
       "Location": {
         "description": "Canonical URL of the created resource.",
-        "schema": {"type": "string", "format": "uri"}
+        "schema": {
+          "type": "string",
+          "format": "uri"
+        }
       },
       "IdempotencyKey": {
         "description": "Echoes the `Idempotency-Key` request header so clients can confirm which key the server associated with the response.",
-        "schema": {"type": "string"}
+        "schema": {
+          "type": "string"
+        }
       },
       "RetryAfter": {
         "description": "Seconds to wait before retrying. Present on 429 and 503 responses.",
-        "schema": {"type": "integer", "minimum": 1}
+        "schema": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "schemas": {
       "Problem": {
         "type": "object",
         "description": "RFC 7807 problem details.",
-        "required": ["type", "title", "status"],
+        "required": [
+          "type",
+          "title",
+          "status"
+        ],
         "properties": {
           "type": {
             "type": "string",
@@ -1134,14 +1697,20 @@
           "errors": {
             "type": "array",
             "description": "Optional field-level error details, primarily populated for 400 responses.",
-            "items": {"$ref": "#/components/schemas/ErrorField"}
+            "items": {
+              "$ref": "#/components/schemas/ErrorField"
+            }
           }
         }
       },
       "ErrorField": {
         "type": "object",
         "description": "A single field-level validation error, embedded in a `Problem`.",
-        "required": ["field", "code", "message"],
+        "required": [
+          "field",
+          "code",
+          "message"
+        ],
         "properties": {
           "field": {
             "type": "string",
@@ -1163,7 +1732,9 @@
       "LivenessResponse": {
         "type": "object",
         "description": "Response body for `GET /health`.",
-        "required": ["status"],
+        "required": [
+          "status"
+        ],
         "properties": {
           "status": {
             "type": "string",
@@ -1175,7 +1746,10 @@
       "ReadinessResponse": {
         "type": "object",
         "description": "Response body for `GET /ready`.",
-        "required": ["status", "checks"],
+        "required": [
+          "status",
+          "checks"
+        ],
         "properties": {
           "status": {
             "type": "string",
@@ -1185,7 +1759,9 @@
           "checks": {
             "type": "object",
             "description": "Per-dependency readiness results, keyed by dependency name.",
-            "additionalProperties": {"type": "string"},
+            "additionalProperties": {
+              "type": "string"
+            },
             "example": {
               "postgres": "ok",
               "redis": "ok",
@@ -1197,7 +1773,11 @@
       "CreateUploadRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/uploads`.",
-        "required": ["filename", "content_type", "size_bytes"],
+        "required": [
+          "filename",
+          "content_type",
+          "size_bytes"
+        ],
         "properties": {
           "filename": {
             "type": "string",
@@ -1231,7 +1811,14 @@
       "UploadSession": {
         "type": "object",
         "description": "A multipart upload session.",
-        "required": ["id", "status", "part_size", "parts", "expires_at", "created_at"],
+        "required": [
+          "id",
+          "status",
+          "part_size",
+          "parts",
+          "expires_at",
+          "created_at"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -1251,7 +1838,9 @@
           "parts": {
             "type": "array",
             "description": "One entry per part. `part_number` is 1-indexed; `url` is a presigned S3 `PUT` URL valid until `expires_at`.",
-            "items": {"$ref": "#/components/schemas/Part"}
+            "items": {
+              "$ref": "#/components/schemas/Part"
+            }
           },
           "expires_at": {
             "type": "string",
@@ -1267,7 +1856,9 @@
           "fields": {
             "type": "object",
             "description": "Optional extra form fields the client must include with each part `PUT` (currently always empty for S3 multipart).",
-            "additionalProperties": {"type": "string"},
+            "additionalProperties": {
+              "type": "string"
+            },
             "example": {}
           }
         }
@@ -1275,7 +1866,11 @@
       "Part": {
         "type": "object",
         "description": "A single part in a multipart upload session.",
-        "required": ["part_number", "url", "expires_at"],
+        "required": [
+          "part_number",
+          "url",
+          "expires_at"
+        ],
         "properties": {
           "part_number": {
             "type": "integer",
@@ -1301,20 +1896,27 @@
       "CompleteUploadRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/uploads/{id}/complete`.",
-        "required": ["parts"],
+        "required": [
+          "parts"
+        ],
         "properties": {
           "parts": {
             "type": "array",
             "minItems": 1,
             "description": "List of parts in ascending `part_number` order. The S3 `ETag` returned by each part `PUT` must be supplied verbatim.",
-            "items": {"$ref": "#/components/schemas/CompletedPart"}
+            "items": {
+              "$ref": "#/components/schemas/CompletedPart"
+            }
           }
         }
       },
       "CompletedPart": {
         "type": "object",
         "description": "An uploaded part being reported back to the server.",
-        "required": ["part_number", "etag"],
+        "required": [
+          "part_number",
+          "etag"
+        ],
         "properties": {
           "part_number": {
             "type": "integer",
@@ -1334,17 +1936,27 @@
       "UploadStatus": {
         "type": "string",
         "description": "Lifecycle state of an upload session.",
-        "enum": ["pending", "completed", "aborted", "expired"],
+        "enum": [
+          "pending",
+          "completed",
+          "aborted",
+          "expired"
+        ],
         "example": "pending"
       },
       "UploadSessionList": {
         "type": "object",
         "description": "Cursor-paginated list of upload sessions.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/UploadSession"}
+            "items": {
+              "$ref": "#/components/schemas/UploadSession"
+            }
           },
           "has_more": {
             "type": "boolean",
@@ -1352,7 +1964,10 @@
             "example": true
           },
           "next_cursor": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Opaque cursor to pass back as `cursor` to fetch the next page. `null` when `has_more` is `false`.",
             "example": "eyJpZCI6IjY0ZjFi...",
             "nullable": true
@@ -1431,7 +2046,10 @@
       "SignedURL": {
         "type": "object",
         "description": "A presigned S3 `GET` URL for an artifact.",
-        "required": ["url", "expires_at"],
+        "required": [
+          "url",
+          "expires_at"
+        ],
         "properties": {
           "url": {
             "type": "string",
@@ -1449,18 +2067,26 @@
       "ArtifactList": {
         "type": "object",
         "description": "Cursor-paginated list of artifacts.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/Artifact"}
+            "items": {
+              "$ref": "#/components/schemas/Artifact"
+            }
           },
           "has_more": {
             "type": "boolean",
             "example": false
           },
           "next_cursor": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "nullable": true
           }
         }
@@ -1468,7 +2094,10 @@
       "ProcessorRef": {
         "type": "object",
         "description": "A reference to a named processor at a specific version.",
-        "required": ["name", "version"],
+        "required": [
+          "name",
+          "version"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -1485,7 +2114,10 @@
       "CreateJobRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/jobs`.",
-        "required": ["artifact_id", "processor"],
+        "required": [
+          "artifact_id",
+          "processor"
+        ],
         "properties": {
           "artifact_id": {
             "type": "string",
@@ -1499,7 +2131,10 @@
             "type": "object",
             "description": "Processor-specific parameters. Validate against `GET /v1/processors/{name}` for the chosen version.",
             "additionalProperties": true,
-            "example": {"language": "en", "diarize": true}
+            "example": {
+              "language": "en",
+              "diarize": true
+            }
           },
           "priority": {
             "type": "integer",
@@ -1561,8 +2196,14 @@
             "type": "object",
             "description": "Structured error. Populated only when `status = failed`.",
             "properties": {
-              "code": {"type": "string", "example": "processor_timeout"},
-              "message": {"type": "string", "example": "Processor exceeded its 300s budget."}
+              "code": {
+                "type": "string",
+                "example": "processor_timeout"
+              },
+              "message": {
+                "type": "string",
+                "example": "Processor exceeded its 300s budget."
+              }
             },
             "nullable": true
           },
@@ -1612,40 +2253,68 @@
       "JobStatus": {
         "type": "string",
         "description": "Lifecycle state of a job.",
-        "enum": ["queued", "running", "succeeded", "failed", "canceled", "canceling"],
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "canceled",
+          "canceling"
+        ],
         "example": "queued"
       },
       "JobList": {
         "type": "object",
         "description": "Cursor-paginated list of jobs.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/Job"}
+            "items": {
+              "$ref": "#/components/schemas/Job"
+            }
           },
-          "has_more": {"type": "boolean"},
-          "next_cursor": {"type": ["string", "null"], "nullable": true}
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
         }
       },
       "BulkCreateJobsRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/jobs/bulk`.",
-        "required": ["jobs"],
+        "required": [
+          "jobs"
+        ],
         "properties": {
           "jobs": {
             "type": "array",
             "minItems": 1,
             "maxItems": 500,
             "description": "Jobs to submit. Per-item validation failures are surfaced in the `rejected` array of the response; well-formed items are queued regardless.",
-            "items": {"$ref": "#/components/schemas/CreateJobRequest"}
+            "items": {
+              "$ref": "#/components/schemas/CreateJobRequest"
+            }
           }
         }
       },
       "BulkJobsResponse": {
         "type": "object",
         "description": "Response body for `POST /v1/jobs/bulk`.",
-        "required": ["batch_id", "accepted", "rejected"],
+        "required": [
+          "batch_id",
+          "accepted",
+          "rejected"
+        ],
         "properties": {
           "batch_id": {
             "type": "string",
@@ -1655,19 +2324,27 @@
           "accepted": {
             "type": "array",
             "description": "IDs of jobs that were queued, in the same order as the corresponding `jobs` entries.",
-            "items": {"type": "string", "format": "uuid"}
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
           },
           "rejected": {
             "type": "array",
             "description": "Per-item validation errors. `index` references the position in the request `jobs` array.",
-            "items": {"$ref": "#/components/schemas/BulkRejection"}
+            "items": {
+              "$ref": "#/components/schemas/BulkRejection"
+            }
           }
         }
       },
       "BulkRejection": {
         "type": "object",
         "description": "A single per-item rejection from a bulk job submission.",
-        "required": ["index", "reason"],
+        "required": [
+          "index",
+          "reason"
+        ],
         "properties": {
           "index": {
             "type": "integer",
@@ -1706,7 +2383,10 @@
       "CreateWebhookRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/webhooks`.",
-        "required": ["url", "subscribed_events"],
+        "required": [
+          "url",
+          "subscribed_events"
+        ],
         "properties": {
           "url": {
             "type": "string",
@@ -1718,7 +2398,9 @@
             "type": "array",
             "minItems": 1,
             "description": "Event types this endpoint wants to receive. Use `[\"*\"]` to subscribe to every event.",
-            "items": {"$ref": "#/components/schemas/WebhookEvent"}
+            "items": {
+              "$ref": "#/components/schemas/WebhookEvent"
+            }
           },
           "description": {
             "type": "string",
@@ -1745,7 +2427,9 @@
           "subscribed_events": {
             "type": "array",
             "minItems": 1,
-            "items": {"$ref": "#/components/schemas/WebhookEvent"}
+            "items": {
+              "$ref": "#/components/schemas/WebhookEvent"
+            }
           },
           "description": {
             "type": "string",
@@ -1760,7 +2444,13 @@
       "WebhookEndpoint": {
         "type": "object",
         "description": "A registered webhook subscription.",
-        "required": ["id", "url", "subscribed_events", "active", "created_at"],
+        "required": [
+          "id",
+          "url",
+          "subscribed_events",
+          "active",
+          "created_at"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -1772,7 +2462,9 @@
           },
           "subscribed_events": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/WebhookEvent"}
+            "items": {
+              "$ref": "#/components/schemas/WebhookEvent"
+            }
           },
           "description": {
             "type": "string"
@@ -1798,7 +2490,15 @@
       "WebhookDelivery": {
         "type": "object",
         "description": "A record of a single attempt (or replay) at delivering an event to a webhook endpoint.",
-        "required": ["id", "webhook_id", "event_id", "event_type", "status", "attempt_count", "created_at"],
+        "required": [
+          "id",
+          "webhook_id",
+          "event_id",
+          "event_type",
+          "status",
+          "attempt_count",
+          "created_at"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -1857,33 +2557,64 @@
       "WebhookDeliveryStatus": {
         "type": "string",
         "description": "State of a single delivery.",
-        "enum": ["pending", "succeeded", "failed", "retrying"],
+        "enum": [
+          "pending",
+          "succeeded",
+          "failed",
+          "retrying"
+        ],
         "example": "succeeded"
       },
       "WebhookEndpointList": {
         "type": "object",
         "description": "List of webhook endpoints for the org.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/WebhookEndpoint"}
+            "items": {
+              "$ref": "#/components/schemas/WebhookEndpoint"
+            }
           },
-          "has_more": {"type": "boolean"},
-          "next_cursor": {"type": ["string", "null"], "nullable": true}
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
         }
       },
       "WebhookDeliveryList": {
         "type": "object",
         "description": "Cursor-paginated list of webhook deliveries.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/WebhookDelivery"}
+            "items": {
+              "$ref": "#/components/schemas/WebhookDelivery"
+            }
           },
-          "has_more": {"type": "boolean"},
-          "next_cursor": {"type": ["string", "null"], "nullable": true}
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
         }
       },
       "APIKeyScope": {
@@ -1907,7 +2638,10 @@
       "CreateAPIKeyRequest": {
         "type": "object",
         "description": "Request body for `POST /v1/api-keys`.",
-        "required": ["name", "scopes"],
+        "required": [
+          "name",
+          "scopes"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -1920,7 +2654,9 @@
             "type": "array",
             "minItems": 1,
             "description": "Permissions granted to the key. Use `[\"*\"]` for full access.",
-            "items": {"$ref": "#/components/schemas/APIKeyScope"}
+            "items": {
+              "$ref": "#/components/schemas/APIKeyScope"
+            }
           },
           "expires_at": {
             "type": "string",
@@ -1933,7 +2669,13 @@
       "APIKey": {
         "type": "object",
         "description": "An API key. The `secret` field is populated **only** on the response to `POST /v1/api-keys` and is never returned by any other endpoint.",
-        "required": ["id", "name", "prefix", "scopes", "created_at"],
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "scopes",
+          "created_at"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -1955,7 +2697,9 @@
           },
           "scopes": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/APIKeyScope"}
+            "items": {
+              "$ref": "#/components/schemas/APIKeyScope"
+            }
           },
           "expires_at": {
             "type": "string",
@@ -1977,20 +2721,37 @@
       "APIKeyList": {
         "type": "object",
         "description": "List of API keys for the org. Secrets are never included.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/APIKey"}
+            "items": {
+              "$ref": "#/components/schemas/APIKey"
+            }
           },
-          "has_more": {"type": "boolean"},
-          "next_cursor": {"type": ["string", "null"], "nullable": true}
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
         }
       },
       "Processor": {
         "type": "object",
         "description": "A processor and its published versions.",
-        "required": ["name", "display_name", "versions"],
+        "required": [
+          "name",
+          "display_name",
+          "versions"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -2014,14 +2775,20 @@
           "versions": {
             "type": "array",
             "description": "All published versions (including deprecated ones). Newest first.",
-            "items": {"$ref": "#/components/schemas/ProcessorVersion"}
+            "items": {
+              "$ref": "#/components/schemas/ProcessorVersion"
+            }
           }
         }
       },
       "ProcessorVersion": {
         "type": "object",
         "description": "A single published version of a processor.",
-        "required": ["version", "status", "params_schema"],
+        "required": [
+          "version",
+          "status",
+          "params_schema"
+        ],
         "properties": {
           "version": {
             "type": "string",
@@ -2089,18 +2856,36 @@
       "ProcessorVersionStatus": {
         "type": "string",
         "description": "Lifecycle state of a processor version.",
-        "enum": ["active", "beta", "deprecated", "sunset"],
+        "enum": [
+          "active",
+          "beta",
+          "deprecated",
+          "sunset"
+        ],
         "example": "active"
       },
       "ProcessorSummary": {
         "type": "object",
         "description": "Lightweight summary of a processor returned by `GET /v1/processors`.",
-        "required": ["name", "display_name", "latest_version", "active_versions"],
+        "required": [
+          "name",
+          "display_name",
+          "latest_version",
+          "active_versions"
+        ],
         "properties": {
-          "name": {"type": "string"},
-          "display_name": {"type": "string"},
-          "description": {"type": "string"},
-          "category": {"type": "string"},
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
           "latest_version": {
             "type": "string",
             "description": "Highest published version, regardless of status.",
@@ -2109,22 +2894,40 @@
           "active_versions": {
             "type": "array",
             "description": "Versions currently accepting new jobs.",
-            "items": {"type": "string"},
-            "example": ["1.2.0", "1.1.3"]
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "1.2.0",
+              "1.1.3"
+            ]
           }
         }
       },
       "ProcessorList": {
         "type": "object",
         "description": "List of processor summaries for the org.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/ProcessorSummary"}
+            "items": {
+              "$ref": "#/components/schemas/ProcessorSummary"
+            }
           },
-          "has_more": {"type": "boolean"},
-          "next_cursor": {"type": ["string", "null"], "nullable": true}
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
         }
       },
       "Usage": {
@@ -2176,14 +2979,19 @@
           "breakdown": {
             "type": "array",
             "description": "Per-category breakdown of the cost.",
-            "items": {"$ref": "#/components/schemas/UsageBreakdown"}
+            "items": {
+              "$ref": "#/components/schemas/UsageBreakdown"
+            }
           }
         }
       },
       "UsagePeriod": {
         "type": "object",
         "description": "The billing period a `Usage` summary covers.",
-        "required": ["start", "end"],
+        "required": [
+          "start",
+          "end"
+        ],
         "properties": {
           "start": {
             "type": "string",
@@ -2198,12 +3006,21 @@
       "UsageBreakdown": {
         "type": "object",
         "description": "A single line item in a `Usage` summary.",
-        "required": ["category", "amount_usd"],
+        "required": [
+          "category",
+          "amount_usd"
+        ],
         "properties": {
           "category": {
             "type": "string",
             "description": "Line-item category.",
-            "enum": ["compute", "storage", "egress", "ingest", "other"],
+            "enum": [
+              "compute",
+              "storage",
+              "egress",
+              "ingest",
+              "other"
+            ],
             "example": "compute"
           },
           "quantity": {
@@ -2215,7 +3032,13 @@
           "unit": {
             "type": "string",
             "description": "Unit of the `quantity` field.",
-            "enum": ["seconds", "gb_days", "gb", "bytes", "count"],
+            "enum": [
+              "seconds",
+              "gb_days",
+              "gb",
+              "bytes",
+              "count"
+            ],
             "example": "seconds"
           },
           "amount_usd": {
@@ -2229,7 +3052,14 @@
       "AuditLog": {
         "type": "object",
         "description": "A single audit log entry recording an authenticated action.",
-        "required": ["id", "org_id", "actor_type", "action", "resource_type", "created_at"],
+        "required": [
+          "id",
+          "org_id",
+          "actor_type",
+          "action",
+          "resource_type",
+          "created_at"
+        ],
         "properties": {
           "id": {
             "type": "string",
@@ -2247,7 +3077,11 @@
           "actor_type": {
             "type": "string",
             "description": "Whether the actor is a human user, an API key, or a system process.",
-            "enum": ["user", "api_key", "system"],
+            "enum": [
+              "user",
+              "api_key",
+              "system"
+            ],
             "example": "user"
           },
           "action": {
@@ -2299,15 +3133,114 @@
       "AuditLogList": {
         "type": "object",
         "description": "Cursor-paginated list of audit log entries.",
-        "required": ["data", "has_more"],
+        "required": [
+          "data",
+          "has_more"
+        ],
         "properties": {
           "data": {
             "type": "array",
-            "items": {"$ref": "#/components/schemas/AuditLog"}
+            "items": {
+              "$ref": "#/components/schemas/AuditLog"
+            }
           },
-          "has_more": {"type": "boolean"},
-          "next_cursor": {"type": ["string", "null"], "nullable": true}
+          "has_more": {
+            "type": "boolean"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "nullable": true
+          }
         }
+      },
+      "Invoice": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "period_start": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "period_end": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "jobs_count": {
+            "type": "integer"
+          },
+          "compute_seconds": {
+            "type": "number"
+          },
+          "total_usd": {
+            "type": "number"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "draft",
+              "open",
+              "paid",
+              "void",
+              "failed"
+            ]
+          },
+          "provider": {
+            "type": "string"
+          },
+          "checkout_url": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "paid_at": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "period_start",
+          "period_end",
+          "jobs_count",
+          "compute_seconds",
+          "total_usd",
+          "status",
+          "created_at"
+        ]
+      },
+      "InvoiceList": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Invoice"
+            }
+          }
+        },
+        "required": [
+          "data"
+        ]
+      },
+      "CheckoutResponse": {
+        "type": "object",
+        "properties": {
+          "checkout_url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkout_url"
+        ]
       }
     }
   }
