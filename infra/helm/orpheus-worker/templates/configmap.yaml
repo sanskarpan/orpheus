@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "orpheus-worker.configMapName" . }}
+  labels:
+    {{- include "orpheus-worker.labels" . | nindent 4 }}
+data:
+  # Selects the entrypoint process (all | control | grpc | worker).
+  ORPHEUS_WORKERS_PROCESS: {{ .Values.process | quote }}
+  ORPHEUS_WORKER_LOG_LEVEL: {{ .Values.config.logLevel | quote }}
+  ORPHEUS_WORKER_HTTP_PORT: {{ .Values.config.httpPort | quote }}
+  ORPHEUS_WORKER_GRPC_PORT: {{ .Values.config.grpcPort | quote }}
+  ORPHEUS_WORKER_NATS_URL: {{ .Values.config.natsUrl | quote }}
+  {{- if not .Values.secrets.databaseUrlFromSecret }}
+  ORPHEUS_WORKER_DATABASE_URL: {{ .Values.config.databaseUrl | quote }}
+  {{- end }}
+  ORPHEUS_WORKER_REDIS_URL: {{ .Values.config.redisUrl | quote }}
+  ORPHEUS_WORKER_S3_ENDPOINT: {{ .Values.config.s3.endpoint | quote }}
+  ORPHEUS_WORKER_S3_BUCKET: {{ .Values.config.s3.bucket | quote }}
+  ORPHEUS_WORKER_S3_REGION: {{ .Values.config.s3.region | quote }}
+  ORPHEUS_WORKER_WHISPER_MODEL: {{ .Values.config.whisperModel | quote }}

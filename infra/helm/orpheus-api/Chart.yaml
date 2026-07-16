@@ -1,0 +1,18 @@
+apiVersion: v2
+name: orpheus-api
+description: Orpheus HTTP API (Go) — upload orchestration, job submission, and control plane.
+type: application
+# Chart version — bump on template changes.
+version: 0.1.0
+# The default application version installed by this chart. Overridable via
+# image.tag in values.yaml or --set image.tag=<sha>.
+appVersion: "0.1.0"
+keywords:
+  - orpheus
+  - audio
+  - api
+home: https://github.com/orpheus/orpheus
+sources:
+  - https://github.com/orpheus/orpheus/tree/main/apps/api
+maintainers:
+  - name: Orpheus Platform

@@ -1,0 +1,30 @@
+# Dev overrides for orpheus-api.
+env: dev
+
+image:
+  owner: orpheus
+  tag: dev
+
+replicaCount: 1
+
+autoscaling:
+  enabled: false
+
+config:
+  logLevel: DEBUG
+  databaseUrl: "postgres://orpheus:orpheus@orpheus-postgres.orpheus-dev:5432/orpheus?sslmode=disable"
+  redisUrl: "redis://orpheus-redis.orpheus-dev:6379/0"
+  natsUrl: "nats://orpheus-nats.orpheus-dev:4222"
+  s3:
+    endpoint: "http://orpheus-minio.orpheus-dev:9000"
+    bucket: "orpheus-uploads-dev"
+  keycloak:
+    url: "http://orpheus-keycloak.orpheus-dev:8080"
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 128Mi

@@ -1,0 +1,141 @@
+# Default values for the orpheus-worker chart.
+# The worker image bundles the control-plane, gRPC, and worker processes; the
+# ORPHEUS_WORKERS_PROCESS env selects which run in a given Deployment. This
+# chart deploys the "worker" process by default and scales it on queue depth.
+
+replicaCount: 1
+
+image:
+  registry: ghcr.io
+  owner: orpheus
+  repository: orpheus-workers
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+env: dev
+
+# Which entrypoint process to run: all | control | grpc | worker.
+# Deploy separate releases (or subcharts) per process in production; the
+# default here is the job-consuming worker.
+process: worker
+
+# Application configuration surfaced as ORPHEUS_WORKER_* / ORPHEUS_WORKERS_* env.
+config:
+  logLevel: INFO
+  # Ports exposed by the control-plane (HTTP) and gRPC processes.
+  httpPort: 8081
+  grpcPort: 50051
+
+  natsUrl: "nats://orpheus-nats:4222"
+  databaseUrl: "postgres://orpheus:orpheus@orpheus-postgres:5432/orpheus?sslmode=disable"
+  redisUrl: "redis://orpheus-redis:6379/0"
+
+  s3:
+    endpoint: "http://orpheus-minio:9000"
+    bucket: "orpheus-uploads"
+    region: "us-east-1"
+
+  # Whisper model settings consumed by the transcribe stage.
+  whisperModel: "tiny.en"
+
+secrets:
+  name: orpheus-worker-secrets
+  keys:
+    databaseUrl: DATABASE_URL
+    s3AccessKey: S3_ACCESS_KEY
+    s3SecretKey: S3_SECRET_KEY
+  databaseUrlFromSecret: false
+
+# The worker process consumes NATS JetStream; the control-plane/grpc processes
+# also expose an HTTP service. Enable only when running those processes.
+service:
+  enabled: false
+  type: ClusterIP
+  httpPort: 8081
+  grpcPort: 50051
+  annotations: {}
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: "2"
+    memory: 2Gi
+
+# --- Scaling -------------------------------------------------------------
+# KEDA scales the worker Deployment on NATS JetStream pending message count.
+# When keda.enabled is false, a plain HPA (CPU-based) is used instead.
+keda:
+  enabled: true
+  # NATS JetStream monitoring endpoint (the :8222 /jsz HTTP interface).
+  natsMonitoringEndpoint: "http://orpheus-nats:8222"
+  stream: "ORPHEUS_JOBS"
+  consumer: "orpheus-workers"
+  account: "$G"
+  # Scale up when a single replica has this many pending messages.
+  lagThreshold: "30"
+  minReplicaCount: 0
+  maxReplicaCount: 20
+  # Grace window before scaling a busy consumer back to zero.
+  cooldownPeriod: 300
+  pollingInterval: 15
+
+# Fallback HPA (used only when keda.enabled is false).
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 75
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  # Workers write transcode scratch files; root FS stays read-only with a
+  # dedicated writable scratch volume mounted at /scratch.
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 10001
+  capabilities:
+    drop:
+      - ALL
+
+# Probes target the control-plane HTTP server (/health, /ready). Only wired
+# up when the process exposes HTTP (all/control). For the bare worker process
+# they are disabled since it has no HTTP listener.
+probes:
+  enabled: false
+  livenessPath: /health
+  readinessPath: /ready
+
+scratch:
+  # Ephemeral scratch space for audio transcode/slicing.
+  sizeLimit: 20Gi
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8081"
+  prometheus.io/path: "/metrics"
+
+podLabels: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+terminationGracePeriodSeconds: 120

@@ -1,0 +1,66 @@
+# ApplicationSet that fans the two Helm charts across the dev and staging
+# environments. It uses a matrix generator: {chart} x {environment}, producing
+# four Applications (orpheus-api/worker x dev/staging).
+#
+# Apply into the argocd namespace:
+#   kubectl apply -n argocd -f infra/argocd/appset.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: orpheus
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - matrix:
+        generators:
+          - list:
+              elements:
+                - chart: orpheus-api
+                  path: infra/helm/orpheus-api
+                - chart: orpheus-worker
+                  path: infra/helm/orpheus-worker
+          - list:
+              elements:
+                - environment: dev
+                  namespace: orpheus-dev
+                  autosync: "true"
+                - environment: staging
+                  namespace: orpheus-staging
+                  autosync: "true"
+  template:
+    metadata:
+      name: "{{.chart}}-{{.environment}}"
+      labels:
+        app.kubernetes.io/part-of: orpheus
+        orpheus.io/environment: "{{.environment}}"
+      # Delete child resources before the Application itself.
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: orpheus
+      source:
+        repoURL: https://github.com/orpheus/orpheus.git
+        targetRevision: main
+        path: "{{.path}}"
+        helm:
+          releaseName: "{{.chart}}"
+          valueFiles:
+            - "values-{{.environment}}.yaml"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "{{.namespace}}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+        retry:
+          limit: 5
+          backoff:
+            duration: 10s
+            factor: 2
+            maxDuration: 3m

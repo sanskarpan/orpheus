@@ -1,0 +1,23 @@
+# AppProject scoping what the orpheus Applications may deploy.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: orpheus
+  namespace: argocd
+spec:
+  description: Orpheus audio-processing platform
+  sourceRepos:
+    - https://github.com/orpheus/orpheus.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: orpheus-dev
+    - server: https://kubernetes.default.svc
+      namespace: orpheus-staging
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  orphanedResources:
+    warn: true
