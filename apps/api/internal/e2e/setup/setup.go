@@ -454,7 +454,8 @@ func StartWorker(t *testing.T, ctx context.Context, natsURL, dsn, s3Endpoint, s3
 	// The worker has more cold-start work than the noop e2e: `uv
 	// run` spins up the venv, boto3 loads, ffprobe loads, then the
 	// worker subscribes to JetStream. Two seconds is comfortable
-	// on a warm machine; CI isn't running this test anyway.
+	// on a warm machine (the e2e CI job caches the whisper model so a
+	// cold first run isn't paying a download here).
 	time.Sleep(2 * time.Second)
 
 	t.Cleanup(func() {

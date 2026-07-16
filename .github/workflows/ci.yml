@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch: {}
+  schedule:
+    # Weekly load test (Mondays 06:00 UTC).
+    - cron: "0 6 * * 1"
 
 # Cancel in-flight runs for the same branch
 concurrency:
@@ -211,6 +215,18 @@ jobs:
       - name: Sync worker dependencies
         run: uv sync --all-packages --frozen
 
+      # Cache the whisper model so the transcribe e2e doesn't re-download
+      # tiny.en (~75 MB) on every run. ORPHEUS_WORKER_WHISPER_DIR is passed
+      # through to the worker subprocess (StartWorker inherits os.Environ).
+      - name: Configure whisper cache dir
+        run: echo "ORPHEUS_WORKER_WHISPER_DIR=$HOME/.cache/whisper" >> "$GITHUB_ENV"
+
+      - name: Cache whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/whisper
+          key: whisper-models-${{ runner.os }}-tiny-en-v1
+
       - name: Start services (Postgres, Redis, MinIO, NATS)
         run: docker compose up -d postgres redis minio nats
 
@@ -232,6 +248,42 @@ jobs:
       - name: Dump service logs on failure
         if: failure()
         run: docker compose logs --tail=200 postgres nats minio
+
+  # ─────────────────────────────────────────────────────────────────
+  # Load test — on demand (workflow_dispatch) and weekly. Not on PRs.
+  # ─────────────────────────────────────────────────────────────────
+  loadtest:
+    name: Load test (API throughput)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/api/go.sum
+
+      - name: Start services (Postgres, NATS)
+        run: docker compose up -d postgres nats minio
+
+      - name: Provision test DB + non-superuser role + buckets
+        run: ./scripts/ci-db-setup.sh
+
+      - name: Run load test
+        working-directory: apps/api
+        env:
+          ORPHEUS_LOADTEST: "1"
+          ORPHEUS_TEST_DATABASE_URL: postgres://orpheus_app:orpheus_app@localhost:5432/orpheus_test?sslmode=disable
+          ORPHEUS_TEST_NATS_URL: nats://localhost:4222
+          ORPHEUS_LOAD_DURATION: 20s
+          ORPHEUS_LOAD_CONCURRENCY: "50"
+          # CI shared runners are slower/noisier than a dev box; keep the
+          # gate lenient so it flags gross regressions, not jitter.
+          ORPHEUS_LOAD_MAX_P99_MS: "3000"
+          ORPHEUS_LOAD_MAX_ERROR_RATE: "0.02"
+        run: go test ./internal/e2e/ -run '^TestLoad_APIThroughput$' -v -count=1 -timeout 300s
 
   # ─────────────────────────────────────────────────────────────────
   # Protobuf / gRPC contract
