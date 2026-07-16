@@ -1,0 +1,43 @@
+{
+  "name": "@orpheus/sdk",
+  "version": "0.2.0",
+  "description": "Fetch-based TypeScript client for the Orpheus audio-processing API.",
+  "license": "SEE LICENSE IN https://orpheus.dev/license",
+  "author": "Orpheus Engineering <api@orpheus.dev>",
+  "homepage": "https://docs.orpheus.dev",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "orpheus",
+    "audio",
+    "transcription",
+    "sdk",
+    "api",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  },
+  "sideEffects": false
+}
