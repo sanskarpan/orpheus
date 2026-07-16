@@ -125,7 +125,14 @@ func (s *Server) installBaseMiddleware() {
 func (s *Server) routes() {
 	s.mux.Get("/health", handlers.Liveness)
 	s.mux.Get("/ready", handlers.Readiness)
-	s.mux.Get("/metrics", promhttp.Handler().ServeHTTP)
+	// Serve /metrics from the per-instance registry when available (the
+	// collectors are no longer on the global default registry, so
+	// promhttp.Handler() would be empty and New() is now repeatable).
+	if s.opts.Metrics != nil && s.opts.Metrics.Registry != nil {
+		s.mux.Get("/metrics", promhttp.HandlerFor(s.opts.Metrics.Registry, promhttp.HandlerOpts{}).ServeHTTP)
+	} else {
+		s.mux.Get("/metrics", promhttp.Handler().ServeHTTP)
+	}
 
 	s.mux.Route("/api", func(r chi.Router) {
 		r.Get("/openapi.json", handlers.OpenAPISpec)
