@@ -38,6 +38,7 @@ import (
 	"github.com/orpheus/api/internal/observability"
 	"github.com/orpheus/api/internal/outbox"
 	"github.com/orpheus/api/internal/ratelimit"
+	"github.com/orpheus/api/internal/retention"
 	"github.com/orpheus/api/internal/server"
 	"github.com/orpheus/api/internal/storage/s3"
 	"github.com/orpheus/api/internal/version"
@@ -177,10 +178,12 @@ func run() error {
 	mtr := metrics.New()
 	publisher := outbox.New(pgDB, js, mtr, logger)
 	delivery := webhooks.New(pgDB, logger, natsConn, nil)
+	sweeper := retention.New(pgDB, s3c, logger)
 
 	var workers sync.WaitGroup
 	startWorker(ctx, &workers, "outbox.publisher", publisher.Run)
 	startWorker(ctx, &workers, "webhooks.delivery", delivery.Run)
+	startWorker(ctx, &workers, "retention.sweeper", sweeper.Run)
 
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:          pgDB,

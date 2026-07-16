@@ -1,0 +1,38 @@
+# Staging overrides for orpheus-worker. Runs the bare job-consuming worker
+# process scaled on NATS JetStream lag via KEDA.
+env: staging
+process: worker
+
+image:
+  owner: orpheus
+  tag: staging
+
+secrets:
+  databaseUrlFromSecret: true
+
+keda:
+  enabled: true
+  natsMonitoringEndpoint: "http://orpheus-nats.orpheus-staging:8222"
+  stream: "ORPHEUS_JOBS"
+  consumer: "orpheus-workers"
+  lagThreshold: "30"
+  minReplicaCount: 1
+  maxReplicaCount: 15
+
+config:
+  logLevel: INFO
+  natsUrl: "nats://orpheus-nats.orpheus-staging:4222"
+  redisUrl: "rediss://orpheus-staging-redis.abcdef.ng.0001.use1.cache.amazonaws.com:6379/0"
+  s3:
+    endpoint: "https://s3.us-east-1.amazonaws.com"
+    bucket: "orpheus-staging-uploads"
+    region: "us-east-1"
+  whisperModel: "base.en"
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi

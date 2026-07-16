@@ -1,0 +1,22 @@
+# Copy to a per-environment tfvars (e.g. envs/dev.tfvars) and adjust.
+# No secrets belong here — RDS credentials are managed in Secrets Manager.
+
+region      = "us-east-1"
+environment = "dev"
+name_prefix = "orpheus"
+
+vpc_cidr           = "10.0.0.0/16"
+az_count           = 3
+single_nat_gateway = true
+
+kubernetes_version      = "1.30"
+eks_node_instance_types = ["m6i.large"]
+eks_node_min_size       = 2
+eks_node_max_size       = 6
+eks_node_desired_size   = 3
+
+rds_instance_class = "db.t4g.medium"
+rds_multi_az       = false
+
+redis_node_type       = "cache.t4g.small"
+redis_num_cache_nodes = 2

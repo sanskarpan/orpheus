@@ -1,0 +1,15 @@
+apiVersion: v2
+name: orpheus-worker
+description: Orpheus Python workers — audio probe, slice, transcribe, and metadata extraction.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - orpheus
+  - audio
+  - worker
+home: https://github.com/orpheus/orpheus
+sources:
+  - https://github.com/orpheus/orpheus/tree/main/apps/workers
+maintainers:
+  - name: Orpheus Platform

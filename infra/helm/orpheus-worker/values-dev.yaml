@@ -1,0 +1,41 @@
+# Dev overrides for orpheus-worker.
+env: dev
+process: all
+
+image:
+  owner: orpheus
+  tag: dev
+
+replicaCount: 1
+
+# Probe the control-plane HTTP server since we run all processes in-pod.
+probes:
+  enabled: true
+
+service:
+  enabled: true
+
+keda:
+  enabled: false
+
+autoscaling:
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 80
+
+config:
+  logLevel: DEBUG
+  natsUrl: "nats://orpheus-nats.orpheus-dev:4222"
+  databaseUrl: "postgres://orpheus:orpheus@orpheus-postgres.orpheus-dev:5432/orpheus?sslmode=disable"
+  redisUrl: "redis://orpheus-redis.orpheus-dev:6379/0"
+  s3:
+    endpoint: "http://orpheus-minio.orpheus-dev:9000"
+    bucket: "orpheus-uploads-dev"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

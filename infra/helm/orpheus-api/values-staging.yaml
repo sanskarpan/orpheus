@@ -1,0 +1,28 @@
+# Staging overrides for orpheus-api. Points at managed AWS services; secrets
+# (S3 keys, DB URL) are injected from the orpheus-api-secrets Secret.
+env: staging
+
+image:
+  owner: orpheus
+  tag: staging
+
+replicaCount: 2
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+
+secrets:
+  databaseUrlFromSecret: true
+
+config:
+  logLevel: INFO
+  redisUrl: "rediss://orpheus-staging-redis.abcdef.ng.0001.use1.cache.amazonaws.com:6379/0"
+  natsUrl: "nats://orpheus-nats.orpheus-staging:4222"
+  s3:
+    endpoint: "https://s3.us-east-1.amazonaws.com"
+    bucket: "orpheus-staging-uploads"
+    region: "us-east-1"
+  keycloak:
+    url: "https://auth.staging.orpheus.example.com"

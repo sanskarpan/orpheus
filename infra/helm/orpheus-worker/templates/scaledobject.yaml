@@ -1,0 +1,48 @@
+{{- if .Values.keda.enabled -}}
+# KEDA scales the worker on NATS JetStream consumer lag. Requires the KEDA
+# operator (keda.sh) installed cluster-wide.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "orpheus-worker.fullname" . }}
+  labels:
+    {{- include "orpheus-worker.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "orpheus-worker.fullname" . }}
+  minReplicaCount: {{ .Values.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.keda.maxReplicaCount }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  triggers:
+    - type: nats-jetstream
+      metadata:
+        natsServerMonitoringEndpoint: {{ .Values.keda.natsMonitoringEndpoint | quote }}
+        account: {{ .Values.keda.account | quote }}
+        stream: {{ .Values.keda.stream | quote }}
+        consumer: {{ .Values.keda.consumer | quote }}
+        lagThreshold: {{ .Values.keda.lagThreshold | quote }}
+{{- else }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "orpheus-worker.fullname" . }}
+  labels:
+    {{- include "orpheus-worker.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "orpheus-worker.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

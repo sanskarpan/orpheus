@@ -1,0 +1,60 @@
+# Grafana datasource provisioning for the Orpheus observability stack.
+# Prometheus (metrics), Loki (logs), and Tempo (traces), cross-linked so
+# you can jump trace -> logs -> metrics.
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: orpheus-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+      # Link exemplars to traces in Tempo.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: orpheus-tempo
+
+  - name: Loki
+    uid: orpheus-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # Extract a trace_id field from logs and link to Tempo.
+      derivedFields:
+        - name: trace_id
+          matcherType: label
+          matcherRegex: trace_id
+          datasourceUid: orpheus-tempo
+          url: "$${__value.raw}"
+
+  - name: Tempo
+    uid: orpheus-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # trace -> logs (Loki) correlation
+      tracesToLogsV2:
+        datasourceUid: orpheus-loki
+        spanStartTimeShift: -1h
+        spanEndTimeShift: 1h
+        filterByTraceID: true
+        tags:
+          - key: service.name
+            value: service_name
+      # trace -> metrics (Prometheus) correlation
+      tracesToMetrics:
+        datasourceUid: orpheus-prometheus
+        tags:
+          - key: service.name
+            value: service
+      serviceMap:
+        datasourceUid: orpheus-prometheus
+      nodeGraph:
+        enabled: true

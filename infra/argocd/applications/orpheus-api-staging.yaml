@@ -1,0 +1,30 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: orpheus-api-staging
+  namespace: argocd
+  labels:
+    app.kubernetes.io/part-of: orpheus
+    orpheus.io/environment: staging
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: orpheus
+  source:
+    repoURL: https://github.com/orpheus/orpheus.git
+    targetRevision: main
+    path: infra/helm/orpheus-api
+    helm:
+      releaseName: orpheus-api
+      valueFiles:
+        - values-staging.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: orpheus-staging
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

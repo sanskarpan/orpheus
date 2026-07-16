@@ -1,0 +1,274 @@
+# Alerting rules for Orpheus.
+#
+# These reference the real metric names emitted by the Go API
+# (apps/api/internal/metrics/metrics.go) and the Python workers
+# (apps/workers/src/orpheus_workers/metrics.py).
+#
+# Severity convention:
+#   page    - wake someone up (SLO burn, hard outage)
+#   ticket  - investigate during business hours
+#
+# Error budgets and SLO targets are documented in docs/SLOs.md.
+
+groups:
+  # ─────────────────────────────────────────────────────────────────
+  # API availability + latency
+  # ─────────────────────────────────────────────────────────────────
+  - name: orpheus-api
+    rules:
+      # 5xx error ratio over 5m. SLO: 99.9% availability => 0.1% budget.
+      # Page when we sustain >2% 5xx for 5m (well above budget).
+      - alert: ApiHighErrorRate
+        expr: |
+          (
+            sum(rate(orpheus_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum(rate(orpheus_http_requests_total[5m])), 1e-9)
+          ) > 0.02
+        for: 5m
+        labels:
+          severity: page
+          service: orpheus-api
+        annotations:
+          summary: "Orpheus API 5xx error rate > 2% (current {{ $value | humanizePercentage }})"
+          description: >-
+            The API is serving 5xx responses above the 2% threshold for 5
+            minutes. See docs/runbooks/api-5xx-spike.md.
+          runbook: /runbooks/api-5xx-spike.md
+
+      # Per-route error rate — catches a single broken endpoint that a
+      # global ratio would dilute.
+      - alert: ApiRouteHighErrorRate
+        expr: |
+          (
+            sum by (route) (rate(orpheus_http_requests_total{status=~"5.."}[5m]))
+            /
+            clamp_min(sum by (route) (rate(orpheus_http_requests_total[5m])), 1e-9)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: ticket
+          service: orpheus-api
+        annotations:
+          summary: "Route {{ $labels.route }} 5xx rate > 5% (current {{ $value | humanizePercentage }})"
+          description: >-
+            A single route is failing above 5% for 10 minutes even if the
+            global error rate looks healthy. See docs/runbooks/api-5xx-spike.md.
+          runbook: /runbooks/api-5xx-spike.md
+
+      # Fast-burn latency SLO. p99 request latency > 1s for 10m.
+      - alert: ApiHighLatencyP99
+        expr: |
+          histogram_quantile(
+            0.99,
+            sum by (le, route) (rate(orpheus_http_request_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: page
+          service: orpheus-api
+        annotations:
+          summary: "Orpheus API p99 latency > 1s on {{ $labels.route }} ({{ $value | humanizeDuration }})"
+          description: >-
+            p99 request latency exceeds the 1s SLO target for 10 minutes.
+            See docs/runbooks/api-5xx-spike.md for latency triage.
+          runbook: /runbooks/api-5xx-spike.md
+
+      # Multi-window error-budget burn (fast burn): 2% budget consumed in
+      # 1h AND 5m windows both hot. 14.4x burn rate against a 0.1% budget.
+      - alert: ApiErrorBudgetFastBurn
+        expr: |
+          (
+            sum(rate(orpheus_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(orpheus_http_requests_total[5m])), 1e-9)
+          ) > (14.4 * 0.001)
+          and
+          (
+            sum(rate(orpheus_http_requests_total{status=~"5.."}[1h]))
+            / clamp_min(sum(rate(orpheus_http_requests_total[1h])), 1e-9)
+          ) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: page
+          service: orpheus-api
+        annotations:
+          summary: "Orpheus API error budget fast burn (14.4x)"
+          description: >-
+            At the current 5xx rate the 30-day error budget will be
+            exhausted in ~2 days. See docs/SLOs.md and
+            docs/runbooks/api-5xx-spike.md.
+          runbook: /runbooks/api-5xx-spike.md
+
+      - alert: ApiDown
+        expr: up{job="orpheus-api"} == 0
+        for: 2m
+        labels:
+          severity: page
+          service: orpheus-api
+        annotations:
+          summary: "Orpheus API target is down"
+          description: >-
+            Prometheus cannot scrape orpheus-api /metrics for 2 minutes.
+            The process may be crashing or unreachable.
+          runbook: /runbooks/api-5xx-spike.md
+
+  # ─────────────────────────────────────────────────────────────────
+  # Outbox publisher (transactional outbox -> NATS)
+  # ─────────────────────────────────────────────────────────────────
+  - name: orpheus-outbox
+    rules:
+      # Publish errors: any sustained stream of result="error".
+      - alert: OutboxPublishErrors
+        expr: |
+          sum(rate(orpheus_outbox_published_total{result="error"}[5m])) > 0
+        for: 5m
+        labels:
+          severity: page
+          service: orpheus-api
+        annotations:
+          summary: "Outbox is failing to publish to NATS"
+          description: >-
+            orpheus_outbox_published_total{result="error"} is nonzero for 5
+            minutes. Events are not reaching the event bus.
+            See docs/runbooks/outbox-not-draining.md.
+          runbook: /runbooks/outbox-not-draining.md
+
+      # Stall: the outbox is not publishing ANY successful events even
+      # though jobs are being submitted. This catches a wedged publisher
+      # loop that produces neither success nor error.
+      - alert: OutboxStalled
+        expr: |
+          sum(rate(orpheus_jobs_submitted_total[15m])) > 0
+          and
+          sum(rate(orpheus_outbox_published_total{result="success"}[15m])) == 0
+        for: 10m
+        labels:
+          severity: page
+          service: orpheus-api
+        annotations:
+          summary: "Outbox publisher stalled — jobs submitted but nothing published"
+          description: >-
+            Jobs are being submitted but no outbox events have published
+            successfully in the last 15 minutes. The publisher loop is
+            likely wedged or its NATS connection is down.
+            See docs/runbooks/outbox-not-draining.md.
+          runbook: /runbooks/outbox-not-draining.md
+
+      # Publish latency climbing — leading indicator of a draining problem.
+      - alert: OutboxPublishSlow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le) (rate(orpheus_outbox_publish_duration_seconds_bucket[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: ticket
+          service: orpheus-api
+        annotations:
+          summary: "Outbox publish p95 latency > 1s ({{ $value | humanizeDuration }})"
+          description: >-
+            Outbox publish latency p95 is above 1s for 10 minutes. NATS may
+            be slow or the outbox backlog is growing.
+            See docs/runbooks/outbox-not-draining.md.
+          runbook: /runbooks/outbox-not-draining.md
+
+  # ─────────────────────────────────────────────────────────────────
+  # Workers + queue depth
+  # ─────────────────────────────────────────────────────────────────
+  - name: orpheus-workers
+    rules:
+      # Rising nak/term rate indicates jobs failing to process.
+      - alert: WorkerJobFailureRate
+        expr: |
+          (
+            sum(rate(orpheus_jetstream_messages_total{result=~"nak|term|parse_error"}[5m]))
+            /
+            clamp_min(sum(rate(orpheus_jetstream_messages_total[5m])), 1e-9)
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: page
+          service: orpheus-workers
+        annotations:
+          summary: "Worker job failure rate > 10% ({{ $value | humanizePercentage }})"
+          description: >-
+            Over 10% of JetStream messages are being nak'd/term'd/failing to
+            parse for 10 minutes. See docs/runbooks/worker-pod-crashloop.md.
+          runbook: /runbooks/worker-pod-crashloop.md
+
+      # Queue depth proxy: submitted-but-not-processed rate diverging.
+      # When the API keeps submitting jobs but workers process far fewer,
+      # the JetStream backlog grows. (A dedicated queue-depth gauge from the
+      # nats exporter — jetstream consumer num_pending — should replace this
+      # once the exporter is deployed; see prometheus.yml nats job.)
+      - alert: QueueDepthGrowing
+        expr: |
+          (
+            sum(rate(orpheus_jobs_submitted_total[10m]))
+            -
+            sum(rate(orpheus_jobs_processed_total[10m]))
+          ) > 1
+        for: 15m
+        labels:
+          severity: ticket
+          service: orpheus-workers
+        annotations:
+          summary: "Job intake outpacing processing — queue backlog growing"
+          description: >-
+            Jobs are being submitted faster than workers process them for 15
+            minutes. Scale workers or investigate slow processors.
+            See docs/runbooks/worker-pod-crashloop.md.
+          runbook: /runbooks/worker-pod-crashloop.md
+
+      - alert: WorkersDown
+        expr: up{job=~"orpheus-workers.*"} == 0
+        for: 3m
+        labels:
+          severity: page
+          service: orpheus-workers
+        annotations:
+          summary: "Orpheus worker target {{ $labels.instance }} is down"
+          description: >-
+            Prometheus cannot scrape a worker target for 3 minutes. The pod
+            may be crash-looping. See docs/runbooks/worker-pod-crashloop.md.
+          runbook: /runbooks/worker-pod-crashloop.md
+
+      # Processing latency SLO for workers.
+      - alert: WorkerProcessingSlow
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, processor) (rate(orpheus_job_processing_duration_seconds_bucket[10m]))
+          ) > 300
+        for: 15m
+        labels:
+          severity: ticket
+          service: orpheus-workers
+        annotations:
+          summary: "Worker p95 processing time > 5m for {{ $labels.processor }}"
+          description: >-
+            Processor {{ $labels.processor }} p95 job processing time exceeds
+            5 minutes. Backlog risk. See docs/runbooks/worker-pod-crashloop.md.
+          runbook: /runbooks/worker-pod-crashloop.md
+
+  # ─────────────────────────────────────────────────────────────────
+  # Security / RLS
+  # ─────────────────────────────────────────────────────────────────
+  - name: orpheus-security
+    rules:
+      # A spike in RLS denials can mean a tenant-isolation bug OR an attack.
+      - alert: RLSDenialSpike
+        expr: |
+          sum(rate(orpheus_rls_denials_total[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: ticket
+          service: orpheus-api
+        annotations:
+          summary: "Elevated row-level-security denials ({{ $value }}/s over 5m)"
+          description: >-
+            orpheus_rls_denials_total is climbing. Either a tenant-scoping
+            regression or an authorization probe. Break down by the `table`
+            label in Grafana to find the affected table and investigate.
+          runbook: /runbooks/postgres-connection-exhaustion.md
