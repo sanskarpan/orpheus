@@ -516,6 +516,66 @@ func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	h.Get(w, r.WithContext(r.Context()))
 }
 
+// Requeue handles POST /v1/jobs/{id}/requeue. It returns a dead-lettered
+// (or failed) job to the queue with a fresh retry budget and re-emits the
+// job.queued event so a worker picks it up. Jobs in any other state are
+// rejected with 409.
+func (h *JobHandler) Requeue(w http.ResponseWriter, r *http.Request) {
+	p, _ := auth.PrincipalFromContext(r.Context())
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Job not found")
+		return
+	}
+
+	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
+		var cur string
+		var procName *string
+		if err := dbtx.QueryRow(ctx, h.DB,
+			`SELECT status::text, params->'_processor'->>'name' FROM jobs WHERE id = $1`, id,
+		).Scan(&cur, &procName); err != nil {
+			return err
+		}
+		if cur != "dead_letter" && cur != "failed" {
+			return fmt.Errorf("conflict: job is %s; only dead_letter or failed jobs can be requeued", cur)
+		}
+		if _, err := dbtx.Exec(ctx, h.DB, `
+			UPDATE jobs
+			SET status = 'queued'::job_status, attempts = 0, result = NULL,
+			    started_at = NULL, completed_at = NULL, updated_at = now(), version = version + 1
+			WHERE id = $1
+		`, id); err != nil {
+			return err
+		}
+		return outbox.Enqueue(ctx, h.DB, outbox.Event{
+			OrgID:         p.OrgID,
+			AggregateType: "job",
+			AggregateID:   id,
+			EventType:     "job.queued",
+			Payload:       map[string]any{"job_id": id, "job_type": nullStringVal(procName)},
+		})
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeProblem(w, http.StatusNotFound, "not_found", "Job not found")
+			return
+		}
+		if msg := err.Error(); len(msg) >= 9 && msg[:9] == "conflict:" {
+			writeProblem(w, http.StatusConflict, "conflict", msg[len("conflict: "):])
+			return
+		}
+		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to requeue")
+		return
+	}
+
+	_ = h.Audit.Record(r.Context(), audit.Entry{
+		Action:       "job.retry",
+		ResourceType: "job",
+		ResourceID:   id,
+	})
+	h.Get(w, r.WithContext(r.Context()))
+}
+
 // BulkCreate handles POST /v1/jobs/bulk. Per-item validation failures
 // are returned in the `rejected` array; well-formed items are queued
 // individually (no cross-item transaction in Phase 1).

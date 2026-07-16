@@ -189,6 +189,7 @@ func (s *Server) v1Routes() {
 		r.With(rs("jobs:read")).Get("/jobs", jh.List)
 		r.With(rs("jobs:read")).Get("/jobs/{id}", jh.Get)
 		r.With(rs("jobs:write")).Delete("/jobs/{id}", jh.Cancel)
+		r.With(rs("jobs:write")).Post("/jobs/{id}/requeue", jh.Requeue)
 
 		ph := &handlers.ProcessorHandler{DB: s.opts.DB}
 		// The processor catalog is public within the org; no scope gate.

@@ -134,6 +134,7 @@ type WebhookDeliveryList struct {
 // subscription marker.
 var allowedEvents = map[string]struct{}{
 	"job.queued":            {},
+	"job.dead_letter":       {},
 	"job.started":           {},
 	"job.succeeded":         {},
 	"job.failed":            {},
