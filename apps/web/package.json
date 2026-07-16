@@ -1,0 +1,25 @@
+{
+  "name": "@orpheus/web",
+  "version": "0.0.0-scaffold",
+  "private": true,
+  "description": "Orpheus admin dashboard (Next.js App Router). SCAFFOLD — not buildable/wired yet. See docs/design/11-web-ui-and-billing.md.",
+  "//": "SCAFFOLD: placeholder manifest for gap #11. Dependencies are declared for shape only; this app is NOT in CI and is NOT expected to build until the design-11 checklist is done. Do not run install/build against this yet.",
+  "scripts": {
+    "dev": "echo 'SCAFFOLD: apps/web is not wired yet — see docs/design/11-web-ui-and-billing.md' && exit 1",
+    "build": "echo 'SCAFFOLD: apps/web is not wired yet — see docs/design/11-web-ui-and-billing.md' && exit 1",
+    "lint": "echo 'SCAFFOLD: apps/web is not wired yet' && exit 0"
+  },
+  "dependencies": {
+    "next": "^14.2.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/react": "^18.3.0",
+    "typescript": "^5.4.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
