@@ -203,7 +203,12 @@ class Worker:
                     org_id=org_id,
                     aggregate_id=job_id,
                     event_type="job.retry",
-                    payload={"job_id": job_id, "processor": processor_name, "attempt": attempts, "error": str(exc)},
+                    payload={
+                        "job_id": job_id,
+                        "processor": processor_name,
+                        "attempt": attempts,
+                        "error": str(exc),
+                    },
                 )
                 await msg.nak(delay=min(60, 2**attempts))
                 metrics.JETSTREAM_MESSAGES.labels(result="nak").inc()
@@ -216,7 +221,12 @@ class Worker:
                     org_id=org_id,
                     aggregate_id=job_id,
                     event_type="job.dead_letter",
-                    payload={"job_id": job_id, "processor": processor_name, "attempts": attempts, "error": str(exc)},
+                    payload={
+                        "job_id": job_id,
+                        "processor": processor_name,
+                        "attempts": attempts,
+                        "error": str(exc),
+                    },
                 )
                 await msg.term()
                 metrics.JETSTREAM_MESSAGES.labels(result="term").inc()

@@ -52,7 +52,9 @@ class WorkerDB:
         with self.conn() as c, c.cursor() as cur:
             cur.execute(sql, args)
 
-    def mark_job_completed(self, job_id: str, result: dict[str, Any], cost_usd: float = 0.0) -> None:
+    def mark_job_completed(
+        self, job_id: str, result: dict[str, Any], cost_usd: float = 0.0
+    ) -> None:
         self.execute(
             "UPDATE jobs SET status = 'completed'::job_status, result = %s, cost_usd = %s, completed_at = now() WHERE id = %s",
             json.dumps(result),

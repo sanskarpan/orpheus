@@ -87,7 +87,14 @@ async def test_on_message_terms_job_not_found() -> None:
     db.enqueue_outbox.assert_not_called()
 
 
-def _job_db(*, status: str = "queued", params: dict | None = None, running: int = 0, claim: bool = True, retry_state: tuple[int, int] = (0, 3)) -> MagicMock:
+def _job_db(
+    *,
+    status: str = "queued",
+    params: dict | None = None,
+    running: int = 0,
+    claim: bool = True,
+    retry_state: tuple[int, int] = (0, 3),
+) -> MagicMock:
     db = MagicMock()
     db.fetchrow.return_value = {"org_id": "org-1", "params": params or {}, "status": status}
     db.running_jobs_for_org.return_value = running
