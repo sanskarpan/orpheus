@@ -9,6 +9,8 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -143,4 +145,87 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestHandler_ConcurrentReserveRunsOnce is the true-concurrency proof:
+// N goroutines fire the SAME key simultaneously; the atomic reserve
+// (INSERT ... ON CONFLICT DO NOTHING) must let exactly ONE execute the
+// handler while the rest get a replay or an in-progress 409 — never a
+// second side effect.
+func TestHandler_ConcurrentReserveRunsOnce(t *testing.T) {
+	dsn := os.Getenv("ORPHEUS_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("ORPHEUS_TEST_DATABASE_URL not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	pool, err := db.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	svc := servicePool(t, dsn)
+	orgID := uuid.NewString()
+	if _, err := svc.Exec(ctx, `INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $2)`, orgID, "idem-"+orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx, c := context.WithTimeout(context.Background(), 5*time.Second)
+		defer c()
+		_, _ = svc.Exec(cctx, `DELETE FROM idempotency_keys WHERE org_id=$1`, orgID)
+		_, _ = svc.Exec(cctx, `DELETE FROM organizations WHERE id=$1`, orgID)
+	})
+
+	var executions int32
+	h := New(pool).Handler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&executions, 1)
+		time.Sleep(120 * time.Millisecond) // widen the in-progress window
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"ok":true}`)
+	}))
+
+	key := "race-" + uuid.NewString()
+	const n = 10
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start // release all goroutines at once
+			req := httptest.NewRequest(http.MethodPost, "/v1/jobs", strings.NewReader(`{"a":1}`))
+			req.Header.Set(HeaderName, key)
+			req = req.WithContext(auth.WithPrincipal(context.Background(), &auth.Principal{OrgID: orgID}))
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			codes[idx] = rec.Code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&executions); got != 1 {
+		t.Fatalf("handler executed %d times under %d concurrent same-key requests, want exactly 1", got, n)
+	}
+	// Exactly one 201 (the winner); the rest are 409 (in-progress) or
+	// 201 replay — but never a second execution (asserted above).
+	var created, conflict, other int
+	for _, c := range codes {
+		switch c {
+		case http.StatusCreated:
+			created++
+		case http.StatusConflict:
+			conflict++
+		default:
+			other++
+		}
+	}
+	if created < 1 {
+		t.Errorf("expected at least one 201, got codes=%v", codes)
+	}
+	if other != 0 {
+		t.Errorf("unexpected status codes (not 201/409): %v", codes)
+	}
+	t.Logf("codes: created=%d conflict=%d", created, conflict)
 }
