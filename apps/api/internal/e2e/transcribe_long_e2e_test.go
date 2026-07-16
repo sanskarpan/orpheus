@@ -77,6 +77,13 @@ func TestE2E_TranscribeLong(t *testing.T) {
 	if os.Getenv("ORPHEUS_E2E") != "1" {
 		t.Skip("set ORPHEUS_E2E=1 to run")
 	}
+	// CI sets this when the whisper model could not be fetched (e.g. a
+	// HuggingFace outage) and no cached copy exists. A third-party model
+	// host being down must not red the whole pipeline — skip just this
+	// test; the rest of the e2e (extract/probe/slice) still runs.
+	if os.Getenv("WHISPER_UNAVAILABLE") == "1" {
+		t.Skip("whisper model unavailable (HuggingFace outage / cold cache)")
+	}
 	dsn := os.Getenv("ORPHEUS_TEST_DATABASE_URL")
 	natsURL := os.Getenv("ORPHEUS_TEST_NATS_URL")
 	s3Endpoint := os.Getenv("ORPHEUS_TEST_S3_ENDPOINT")

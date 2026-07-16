@@ -227,6 +227,33 @@ jobs:
           path: ~/.cache/whisper
           key: whisper-models-${{ runner.os }}-tiny-en-v1
 
+      # Ensure the model is present with retries so a transient HuggingFace
+      # 5xx doesn't fail the whole pipeline test. On a cache hit this is a
+      # no-op; on a miss it downloads (up to 5 attempts). The test itself
+      # then runs with HF_HUB_OFFLINE=1 so faster-whisper never phones home.
+      - name: Pre-fetch whisper model (offline-first, retries on miss)
+        run: |
+          load='from faster_whisper import WhisperModel; WhisperModel("tiny.en", download_root="'"$HOME"'/.cache/whisper")'
+          # Fast path: a restored cache means the model is already local, so
+          # load it offline and never touch the network.
+          if HF_HUB_OFFLINE=1 uv run --package orpheus-workers python -c "$load"; then
+            echo "whisper model present (offline)"; exit 0
+          fi
+          # Cache miss: download with retries so a transient HuggingFace 5xx
+          # doesn't fail the pipeline.
+          for attempt in 1 2 3 4 5; do
+            if uv run --package orpheus-workers python -c "$load"; then
+              echo "whisper model downloaded"; exit 0
+            fi
+            echo "attempt $attempt failed; retrying in $((attempt*10))s"; sleep $((attempt*10))
+          done
+          # HuggingFace is down AND we have no cached model: don't red the
+          # whole pipeline on a third-party outage. Signal the transcribe
+          # e2e to skip; the rest of the pipeline (extract/probe/slice)
+          # still runs. It downloads-and-caches on the next healthy run.
+          echo "::warning::whisper model unavailable after retries (HuggingFace outage?); transcribe e2e will skip"
+          echo "WHISPER_UNAVAILABLE=1" >> "$GITHUB_ENV"
+
       - name: Start services (Postgres, Redis, MinIO, NATS)
         run: docker compose up -d postgres redis minio nats
 
@@ -237,6 +264,9 @@ jobs:
         working-directory: apps/api
         env:
           ORPHEUS_E2E: "1"
+          # Model is pre-fetched above; run offline so a HuggingFace 5xx
+          # can't fail the pipeline test on the revision-metadata call.
+          HF_HUB_OFFLINE: "1"
           ORPHEUS_TEST_DATABASE_URL: postgres://orpheus_app:orpheus_app@localhost:5432/orpheus_test?sslmode=disable
           ORPHEUS_TEST_NATS_URL: nats://localhost:4222
           ORPHEUS_TEST_S3_ENDPOINT: http://localhost:9000
