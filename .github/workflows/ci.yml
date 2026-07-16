@@ -247,7 +247,12 @@ jobs:
             fi
             echo "attempt $attempt failed; retrying in $((attempt*10))s"; sleep $((attempt*10))
           done
-          echo "::error::could not fetch whisper model after retries"; exit 1
+          # HuggingFace is down AND we have no cached model: don't red the
+          # whole pipeline on a third-party outage. Signal the transcribe
+          # e2e to skip; the rest of the pipeline (extract/probe/slice)
+          # still runs. It downloads-and-caches on the next healthy run.
+          echo "::warning::whisper model unavailable after retries (HuggingFace outage?); transcribe e2e will skip"
+          echo "WHISPER_UNAVAILABLE=1" >> "$GITHUB_ENV"
 
       - name: Start services (Postgres, Redis, MinIO, NATS)
         run: docker compose up -d postgres redis minio nats
