@@ -65,7 +65,5 @@ def parse_chunk_seconds(params: dict[str, Any], default: float = 60.0) -> float:
         return default
     v = _finite_float(params, "chunk_seconds")
     if v < MIN_CHUNK_SECONDS or v > MAX_CHUNK_SECONDS:
-        raise ParamError(
-            f"chunk_seconds must be within [{MIN_CHUNK_SECONDS}, {MAX_CHUNK_SECONDS}]"
-        )
+        raise ParamError(f"chunk_seconds must be within [{MIN_CHUNK_SECONDS}, {MAX_CHUNK_SECONDS}]")
     return v
