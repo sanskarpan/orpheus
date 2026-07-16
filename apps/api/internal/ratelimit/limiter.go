@@ -18,10 +18,42 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
+
+// slidingWindowScript performs the whole sliding-window check atomically
+// in Redis, so concurrent requests cannot interleave between prune / add
+// / count and slip past the cap (the previous pipeline was not atomic).
+// It prunes expired members, adds the current request, counts the window,
+// refreshes the TTL, and returns {count, oldestScoreMs} so the caller can
+// compute Retry-After without a second round-trip.
+//
+// KEYS[1] = sorted-set key
+// ARGV[1] = now (ms), ARGV[2] = windowStart (ms), ARGV[3] = ttl (ms),
+// ARGV[4] = unique member
+var slidingWindowScript = redis.NewScript(`
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local windowStart = tonumber(ARGV[2])
+local ttl = tonumber(ARGV[3])
+local member = ARGV[4]
+redis.call('ZREMRANGEBYSCORE', key, '-inf', windowStart)
+redis.call('ZADD', key, now, member)
+local count = redis.call('ZCARD', key)
+redis.call('PEXPIRE', key, ttl)
+local oldest = redis.call('ZRANGE', key, 0, 0, 'WITHSCORES')
+local oldestScore = now
+if oldest[2] then oldestScore = tonumber(oldest[2]) end
+return {count, oldestScore}
+`)
+
+// memberSeq guarantees unique sorted-set members even when two requests
+// land in the same millisecond, so distinct requests are always counted
+// distinctly (identical members would collapse under ZADD).
+var memberSeq atomic.Uint64
 
 // Quotas for the per-key window. Free plan is intentionally small so
 // abuse is cheap to detect. Paid tiers are sized for the workloads
@@ -68,20 +100,15 @@ func (l *Limiter) LimitFor(plan string) int {
 	}
 }
 
-// Allow checks whether a request from key is allowed under plan's
-// quota. The returned retryAfter is non-zero only when allowed=false.
+// Allow checks whether a request from key is allowed under plan's quota.
+// The returned retryAfter is non-zero only when allowed=false.
 //
-// Implementation:
-//
-//  1. Prune entries older than the window.
-//  2. ZADD a new member with the current timestamp.
-//  3. ZCARD to count entries inside the window.
-//  4. EXPIRE the key to the window+1s so idle keys get cleaned up.
-//
-// All four commands run in a single pipeline to keep round-trips down.
-// We deliberately add the current request *before* checking the count:
-// the worst case is one extra request past the limit, which is
-// tolerable (the cap is soft anyway — see Retry-After below).
+// The prune / add / count / expire steps run as a single atomic Lua
+// script (see slidingWindowScript), so concurrent requests cannot
+// interleave and slip past the cap. Scores are milliseconds (not
+// nanoseconds) to stay within float64's exact-integer range. We add the
+// current request *before* checking the count; the worst case is one
+// extra request past the limit, which is tolerable for a soft cap.
 func (l *Limiter) Allow(ctx context.Context, key, plan string) (bool, time.Duration, error) {
 	if l == nil || l.rdb == nil {
 		return true, 0, nil
@@ -92,34 +119,32 @@ func (l *Limiter) Allow(ctx context.Context, key, plan string) (bool, time.Durat
 	}
 
 	now := time.Now()
-	windowStart := now.Add(-Window).UnixNano()
-	member := strconv.FormatInt(now.UnixNano(), 10)
-	redisKey := redisKey(key)
+	nowMs := now.UnixMilli()
+	windowMs := Window.Milliseconds()
+	windowStartMs := nowMs - windowMs
+	// Unique member: ms timestamp + a process-local sequence so two
+	// requests in the same millisecond are still counted separately.
+	member := strconv.FormatInt(nowMs, 10) + "-" + strconv.FormatUint(memberSeq.Add(1), 10)
+	ttlMs := windowMs + 1000
 
-	pipe := l.rdb.Pipeline()
-	pipe.ZRemRangeByScore(ctx, redisKey, "0", strconv.FormatInt(windowStart, 10))
-	pipe.ZAdd(ctx, redisKey, redis.Z{Score: float64(now.UnixNano()), Member: member})
-	card := pipe.ZCard(ctx, redisKey)
-	pipe.Expire(ctx, redisKey, Window+time.Second)
-
-	if _, err := pipe.Exec(ctx); err != nil {
-		return false, 0, fmt.Errorf("ratelimit.pipeline: %w", err)
+	res, err := slidingWindowScript.Run(ctx, l.rdb, []string{redisKey(key)},
+		nowMs, windowStartMs, ttlMs, member).Result()
+	if err != nil {
+		return false, 0, fmt.Errorf("ratelimit.eval: %w", err)
 	}
-	count := card.Val()
+	vals, ok := res.([]any)
+	if !ok || len(vals) < 2 {
+		return false, 0, fmt.Errorf("ratelimit.eval: unexpected result %v", res)
+	}
+	count, _ := vals[0].(int64)
+	oldestMs, _ := vals[1].(int64)
+
 	if count <= int64(limit) {
 		return true, 0, nil
 	}
 
-	// Over the cap. Compute the time until the oldest entry in the
-	// window falls off — that's the soonest a retry can succeed.
-	oldest, err := l.rdb.ZRangeWithScores(ctx, redisKey, 0, 0).Result()
-	if err != nil || len(oldest) == 0 {
-		// No data point we can use; ask the client to wait the full
-		// window. This is conservative but never undershoots.
-		return false, Window, nil
-	}
-	oldestNs := int64(oldest[0].Score)
-	retry := time.Duration(oldestNs+int64(Window)-now.UnixNano()) * time.Nanosecond
+	// Over the cap. Retry once the oldest in-window entry falls off.
+	retry := time.Duration(oldestMs+windowMs-nowMs) * time.Millisecond
 	if retry < time.Second {
 		retry = time.Second
 	}
