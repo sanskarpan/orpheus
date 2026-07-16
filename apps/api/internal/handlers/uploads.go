@@ -43,11 +43,21 @@ const (
 )
 
 // UploadHandler bundles the dependencies the upload endpoints need.
-// All fields are required; zero values will fail at request time.
+// DB/S3/Audit are required; Scanner is optional (nil = AV scan skipped).
 type UploadHandler struct {
-	DB    *db.DB
-	S3    *s3.Client
-	Audit *audit.Recorder
+	DB      *db.DB
+	S3      *s3.Client
+	Audit   *audit.Recorder
+	Scanner AVScanner
+}
+
+// AVScanner scans an object's bytes for malware at upload completion.
+// Implementations (e.g. a ClamAV/clamd INSTREAM client) are wired via
+// config; a nil Scanner on the handler means the scan is skipped.
+type AVScanner interface {
+	// Scan reads the object stream and returns a non-nil error if the
+	// content is infected or the scan could not be completed.
+	Scan(ctx context.Context, key string) error
 }
 
 // CreateUploadRequest is the request body for POST /v1/uploads.
@@ -137,6 +147,13 @@ func (h *UploadHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Filename == "" || req.ContentType == "" {
 		writeProblem(w, http.StatusBadRequest, "validation", "filename and content_type required")
+		return
+	}
+	// Intake gate: reject non-audio content types before starting an S3
+	// multipart upload. The authoritative magic-byte check runs at
+	// Complete (the client cannot lie about the actual bytes there).
+	if !isAllowedUploadContentType(req.ContentType) {
+		writeProblem(w, http.StatusUnsupportedMediaType, "validation", "content_type must be an audio type")
 		return
 	}
 
@@ -259,6 +276,32 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	if actualSize != sizeBytes {
 		writeProblem(w, http.StatusConflict, "validation", "Uploaded size mismatch")
 		return
+	}
+
+	// Authoritative content validation: sniff the assembled object's
+	// header. This is where the client can no longer lie — the bytes are
+	// in S3. Reject anything that isn't a recognised audio format and
+	// abort/delete the object so we don't retain junk.
+	header, err := h.S3.GetObjectRange(r.Context(), key, 512)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to read uploaded object")
+		return
+	}
+	if _, ok := detectAudioFormat(header); !ok {
+		_ = h.S3.DeleteObject(r.Context(), key)
+		writeProblem(w, http.StatusUnsupportedMediaType, "validation", "uploaded content is not a recognised audio format")
+		return
+	}
+
+	// Optional malware scan (e.g. ClamAV). Skipped when no scanner is
+	// configured. A positive/failed scan rejects the upload and deletes
+	// the object.
+	if h.Scanner != nil {
+		if err := h.Scanner.Scan(r.Context(), key); err != nil {
+			_ = h.S3.DeleteObject(r.Context(), key)
+			writeProblem(w, http.StatusUnprocessableEntity, "validation", "uploaded content failed the malware scan")
+			return
+		}
 	}
 
 	artifactID := uuid.NewString()

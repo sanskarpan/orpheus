@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -190,6 +191,32 @@ func (c *Client) HeadObject(ctx context.Context, key string) (int64, string, err
 		return 0, "", fmt.Errorf("s3.head: %w", err)
 	}
 	return aws.ToInt64(out.ContentLength), aws.ToString(out.ContentType), nil
+}
+
+// GetObjectRange reads up to n leading bytes of an object using a ranged
+// GET, so callers can sniff the file header (magic bytes) without pulling
+// the whole object. Returns fewer than n bytes if the object is smaller.
+func (c *Client) GetObjectRange(ctx context.Context, key string, n int64) ([]byte, error) {
+	if key == "" {
+		return nil, errors.New("s3.get_range: key is required")
+	}
+	if n <= 0 {
+		n = 512
+	}
+	out, err := c.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(fmt.Sprintf("bytes=0-%d", n-1)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("s3.get_range: %w", err)
+	}
+	defer func() { _ = out.Body.Close() }()
+	buf, err := io.ReadAll(io.LimitReader(out.Body, n))
+	if err != nil {
+		return nil, fmt.Errorf("s3.get_range.read: %w", err)
+	}
+	return buf, nil
 }
 
 // DeleteObject removes an object. Used when an upload is aborted
