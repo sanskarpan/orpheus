@@ -117,6 +117,7 @@ class WorkerDB:
                 %s, %s, NULL, %s, %s,
                 '', %s, %s, %s::probe_status, now()
             )
+            ON CONFLICT DO NOTHING
             """,
             artifact_id,
             org_id,

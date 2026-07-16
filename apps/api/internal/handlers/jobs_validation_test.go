@@ -156,3 +156,42 @@ func TestJobListLimitClamp(t *testing.T) {
 		})
 	}
 }
+
+// TestJobList_RejectsInvalidTypedParams verifies bad ?status / ?cursor /
+// ?artifact_id are 400s (validated before any DB access), not 500s from
+// a raw SQL enum/uuid/timestamp cast error.
+func TestJobList_RejectsInvalidTypedParams(t *testing.T) {
+	cases := []struct{ name, query string }{
+		{"bad status", "/v1/jobs?status=bogus"},
+		{"bad cursor", "/v1/jobs?cursor=notatimestamp"},
+		{"bad artifact_id", "/v1/jobs?artifact_id=not-a-uuid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &JobHandler{} // nil DB: validation must reject before any DB use
+			req := httptest.NewRequest(http.MethodGet, tc.query, nil)
+			req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+			rec := httptest.NewRecorder()
+			h.List(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (query=%s, body=%s)", rec.Code, tc.query, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestJobList_ValidStatusPasses ensures a valid status is not rejected by
+// validation (it would panic on the nil DB, proving it got past the 400).
+func TestJobList_ValidStatusPasses(t *testing.T) {
+	h := &JobHandler{}
+	req := httptest.NewRequest(http.MethodGet, "/v1/jobs?status=completed", nil)
+	req = withPrincipal(req, &auth.Principal{OrgID: "00000000-0000-0000-0000-000000000001"})
+	rec := httptest.NewRecorder()
+	func() {
+		defer func() { _ = recover() }() // nil DB panics after validation passes
+		h.List(rec, req)
+	}()
+	if rec.Code == http.StatusBadRequest {
+		t.Fatal("valid status=completed was rejected as 400")
+	}
+}

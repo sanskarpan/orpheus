@@ -14,6 +14,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
+
+	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/dbtx"
@@ -121,6 +124,23 @@ func (h *SystemHandler) ListAuditLog(w http.ResponseWriter, r *http.Request) {
 	resourceType := r.URL.Query().Get("resource_type")
 	createdAfter := r.URL.Query().Get("created_after")
 	createdBefore := r.URL.Query().Get("created_before")
+
+	// Validate typed params before they hit SQL enum/uuid/timestamp casts
+	// so bad client input is a 400, not a 500 leaking a DB error.
+	if !validCursor(cursor) || !validCursor(createdAfter) || !validCursor(createdBefore) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid timestamp/cursor")
+		return
+	}
+	if action != "" && !audit.IsValidAction(action) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid action")
+		return
+	}
+	if actorID != "" {
+		if _, err := uuid.Parse(actorID); err != nil {
+			writeProblem(w, http.StatusBadRequest, "validation", "invalid actor_id")
+			return
+		}
+	}
 
 	args := []any{p.OrgID}
 	where := "WHERE org_id = $1"

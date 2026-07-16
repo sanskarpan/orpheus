@@ -97,6 +97,14 @@ func run() error {
 	}
 	defer pgDB.Close()
 
+	// In prod, refuse to run as a role that bypasses RLS — that would
+	// silently defeat tenant isolation regardless of FORCE policies.
+	if cfg.IsProd() {
+		if err := pgDB.AssertTenantSafeRole(ctx); err != nil {
+			return fmt.Errorf("orpheus_api.db_role_unsafe: %w", err)
+		}
+	}
+
 	// S3 client. Used by uploads to mint presigned URLs and by
 	// webhook delivery to fetch the object body (when the worker
 	// starts pulling payloads from S3 in Phase 2).
@@ -131,6 +139,8 @@ func run() error {
 	} else {
 		defer func() { _ = rdb.Close() }()
 		rateMW = ratelimit.NewMiddleware(ratelimit.New(rdb), logger)
+		// In prod, a limiter backend outage must not become a bypass.
+		rateMW.FailClosed = cfg.RateLimitFailClosed || cfg.IsProd()
 	}
 
 	// NATS connection. The outbox publisher drains DB rows to the

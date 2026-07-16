@@ -2,12 +2,65 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/alexedwards/argon2id"
 )
+
+// verifyCacheTTL is how long a successful Argon2id verification is
+// remembered. Argon2id is deliberately CPU/memory-hard (~tens of ms and
+// 64 MiB per call), so running it on EVERY request caps throughput at a
+// few dozen req/s and is a CPU-exhaustion DoS vector. We cache the
+// *successful* verification (never failures) for a short window; the
+// fast, indexed prefix lookup still runs every request, so revocation
+// takes effect within one lookup regardless of the cache.
+const (
+	verifyCacheTTL     = 5 * time.Minute
+	verifyCacheMaxSize = 10000
+)
+
+// verifyCache is a tiny TTL cache of proven (presented-key, stored-hash)
+// pairs. The key is a SHA-256 of the full key + stored hash, so the
+// plaintext is never stored and rotating the key (new hash) misses.
+type verifyCache struct {
+	mu  sync.RWMutex
+	m   map[string]time.Time // cacheKey -> expiry
+	ttl time.Duration
+	max int
+}
+
+func newVerifyCache() *verifyCache {
+	return &verifyCache{m: make(map[string]time.Time), ttl: verifyCacheTTL, max: verifyCacheMaxSize}
+}
+
+func (c *verifyCache) valid(key string) bool {
+	c.mu.RLock()
+	exp, ok := c.m[key]
+	c.mu.RUnlock()
+	return ok && time.Now().Before(exp)
+}
+
+func (c *verifyCache) store(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// Crude bound: flush wholesale when full. Simpler than an LRU and
+	// fine for a short-TTL positive cache — entries expire quickly anyway.
+	if len(c.m) >= c.max {
+		c.m = make(map[string]time.Time, c.max)
+	}
+	c.m[key] = time.Now().Add(c.ttl)
+}
+
+func verifyCacheKey(fullKey, hashedSecret string) string {
+	sum := sha256.Sum256([]byte(fullKey + "\x00" + hashedSecret))
+	return hex.EncodeToString(sum[:])
+}
 
 // API key shape
 //
@@ -53,11 +106,12 @@ type APIKeyLookup interface {
 // table. The validator is safe for concurrent use by many goroutines.
 type APIKeyValidator struct {
 	lookup APIKeyLookup
+	cache  *verifyCache
 }
 
 // NewAPIKeyValidator returns a validator backed by lookup.
 func NewAPIKeyValidator(lookup APIKeyLookup) *APIKeyValidator {
-	return &APIKeyValidator{lookup: lookup}
+	return &APIKeyValidator{lookup: lookup, cache: newVerifyCache()}
 }
 
 // Verify looks up fullKey by its prefix, then verifies the full
@@ -82,12 +136,28 @@ func (v *APIKeyValidator) Verify(ctx context.Context, fullKey string) (*Principa
 		return nil, errors.New("auth.apikey: revoked")
 	}
 
+	// Fast path: this exact (key, stored-hash) pair verified recently, so
+	// skip the expensive Argon2id compare. Revocation is already handled
+	// above by the fresh lookup, so a cache hit is still a live key.
+	cacheKey := ""
+	if v.cache != nil {
+		cacheKey = verifyCacheKey(fullKey, key.HashedSecret)
+		if v.cache.valid(cacheKey) {
+			return &Principal{OrgID: key.OrgID, APIKeyID: key.ID, Roles: key.Scopes}, nil
+		}
+	}
+
 	ok, err := argon2id.ComparePasswordAndHash(fullKey, key.HashedSecret)
 	if err != nil {
 		return nil, fmt.Errorf("auth.apikey.verify_hash: %w", err)
 	}
 	if !ok {
+		// Never cache failures — a wrong secret must always pay the cost.
 		return nil, errors.New("auth.apikey: invalid")
+	}
+
+	if v.cache != nil {
+		v.cache.store(cacheKey)
 	}
 
 	return &Principal{

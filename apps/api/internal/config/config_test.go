@@ -117,3 +117,30 @@ func TestLoadMissingConfigIsFatal(t *testing.T) {
 		t.Fatalf("Load() with empty env returned error: %v", err)
 	}
 }
+
+// TestLoadProdRejectsDevSecrets verifies that a prod deploy which leaves
+// the dev-default S3 secret or sslmode=disable in place fails to load.
+func TestLoadProdRejectsDevSecrets(t *testing.T) {
+	// "production" must normalise to prod so hardening actually applies.
+	t.Setenv("ORPHEUS_PORT", "8080")
+	t.Setenv("ORPHEUS_ENV", "production")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() in prod with dev-default S3 secret should error, got nil")
+	}
+}
+
+// TestLoadProdWithRealSecrets verifies a properly-configured prod env loads.
+func TestLoadProdWithRealSecrets(t *testing.T) {
+	t.Setenv("ORPHEUS_PORT", "8080")
+	t.Setenv("ORPHEUS_ENV", "prod")
+	t.Setenv("ORPHEUS_S3_ACCESS_KEY", "AKIAREAL")
+	t.Setenv("ORPHEUS_S3_SECRET_KEY", "a-real-rotated-secret")
+	t.Setenv("ORPHEUS_DATABASE_URL", "postgres://u:p@db:5432/orpheus?sslmode=verify-full")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() with real prod secrets errored: %v", err)
+	}
+	if !cfg.IsProd() {
+		t.Errorf("IsProd() = false for ORPHEUS_ENV=prod")
+	}
+}

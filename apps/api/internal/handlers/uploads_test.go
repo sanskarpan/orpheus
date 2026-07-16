@@ -2,12 +2,14 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/orpheus/api/internal/auth"
 )
 
@@ -87,6 +89,22 @@ func TestNullStringVal(t *testing.T) {
 // only used by handlers that get past validation.
 func withPrincipal(r *http.Request, p *auth.Principal) *http.Request {
 	return r.WithContext(auth.WithPrincipal(r.Context(), p))
+}
+
+// withURLParam injects a chi URL parameter into the request, matching
+// what the chi router would populate in production. Handlers call
+// chi.URLParam(r, name); when a handler is invoked directly in a test
+// (no router), that returns "" unless we seed the RouteContext here.
+func withURLParam(r *http.Request, key, value string) *http.Request {
+	// Reuse an existing RouteContext if one is already attached so
+	// callers can add multiple params (e.g. id + delivery_id) across
+	// successive calls without clobbering earlier ones.
+	rctx, ok := r.Context().Value(chi.RouteCtxKey).(*chi.Context)
+	if !ok || rctx == nil {
+		rctx = chi.NewRouteContext()
+	}
+	rctx.URLParams.Add(key, value)
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
 }
 
 func TestUploadCreate_RejectsMissingFilename(t *testing.T) {

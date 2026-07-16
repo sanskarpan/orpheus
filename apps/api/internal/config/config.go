@@ -5,8 +5,16 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/kelseyhightower/envconfig"
+)
+
+// Dev-only default credentials. In production these must be overridden;
+// Load() refuses to start if any survive into a prod environment.
+const (
+	devS3AccessKey = "orpheus"
+	devS3SecretKey = "orpheus-dev-secret"
 )
 
 // Config holds the runtime configuration of the API binary.
@@ -52,6 +60,11 @@ type Config struct {
 	// live. One bucket per environment; key prefix encodes the org id.
 	S3Bucket string `envconfig:"S3_BUCKET" default:"orpheus-uploads"`
 
+	// RateLimitFailClosed, when true, makes the rate-limit middleware
+	// reject requests with 503 if the Redis backend errors (instead of
+	// failing open). It is forced on in prod regardless of this value.
+	RateLimitFailClosed bool `envconfig:"RATE_LIMIT_FAIL_CLOSED" default:"false"`
+
 	// Keycloak is the OIDC provider. The API validates bearer tokens
 	// against this realm; clients obtain tokens out-of-band.
 	KeycloakURL      string `envconfig:"KEYCLOAK_URL" default:"http://localhost:8088"`
@@ -67,7 +80,49 @@ func Load() (*Config, error) {
 	if err := envconfig.Process("ORPHEUS", &c); err != nil {
 		return nil, fmt.Errorf("orpheus_api.config.load: %w", err)
 	}
+	c.Env = normalizeEnv(c.Env)
+	if err := c.validate(); err != nil {
+		return nil, fmt.Errorf("orpheus_api.config.validate: %w", err)
+	}
 	return &c, nil
+}
+
+// normalizeEnv lowercases the environment and folds "production" into
+// "prod" so security-relevant branches (see IsProd) are not silently
+// disabled by a spelling difference.
+func normalizeEnv(env string) string {
+	switch strings.ToLower(strings.TrimSpace(env)) {
+	case "prod", "production":
+		return "prod"
+	case "staging", "stage":
+		return "staging"
+	default:
+		return "dev"
+	}
+}
+
+// validate rejects insecure configurations. In production it refuses the
+// dev-default S3 credentials and a TLS-disabled database connection so a
+// deploy that forgets to set a secret fails loudly instead of silently
+// running with a well-known key over an unencrypted link.
+func (c *Config) validate() error {
+	if !c.IsProd() {
+		return nil
+	}
+	var problems []string
+	if c.S3AccessKey == devS3AccessKey {
+		problems = append(problems, "ORPHEUS_S3_ACCESS_KEY is the dev default")
+	}
+	if c.S3SecretKey == devS3SecretKey {
+		problems = append(problems, "ORPHEUS_S3_SECRET_KEY is the dev default")
+	}
+	if strings.Contains(c.DatabaseURL, "sslmode=disable") {
+		problems = append(problems, "ORPHEUS_DATABASE_URL has sslmode=disable")
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("insecure prod config: %s", strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 // Addr returns the host:port string for the HTTP server.

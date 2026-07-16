@@ -115,7 +115,36 @@ func (p *Publisher) tick(ctx context.Context) {
 		return
 	}
 
-	rows, err := p.DB.Query(ctx, `
+	// The claim, publish, and mark-published all run inside ONE
+	// transaction. This is load-bearing for two reasons:
+	//
+	//   1. FOR UPDATE SKIP LOCKED only prevents a concurrent publisher
+	//      from grabbing the same rows while the locks are HELD — i.e.
+	//      until this transaction commits. Claiming on the bare pool
+	//      (implicit auto-commit) released the locks immediately, so two
+	//      publishers could double-publish the same event.
+	//   2. outbox has FORCE row-level security; a plain connection with
+	//      no tenant/service context sees ZERO rows. We set the service
+	//      GUC transaction-locally so the drain can read every org's
+	//      rows (and reset is implicit at commit/rollback).
+	tx, err := p.DB.Begin(ctx)
+	if err != nil {
+		p.Logger.Error("outbox.begin_failed", "err", err)
+		return
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.is_service', 'true', true)"); err != nil {
+		p.Logger.Error("outbox.set_service_failed", "err", err)
+		return
+	}
+
+	rows, err := tx.Query(ctx, `
 		SELECT id, event_type, org_id, aggregate_id, payload, headers
 		FROM outbox
 		WHERE published_at IS NULL
@@ -127,7 +156,6 @@ func (p *Publisher) tick(ctx context.Context) {
 		p.Logger.Error("outbox.claim_failed", "err", err)
 		return
 	}
-	defer rows.Close()
 
 	var batch []claimed
 	for rows.Next() {
@@ -138,11 +166,17 @@ func (p *Publisher) tick(ctx context.Context) {
 		}
 		batch = append(batch, c)
 	}
-	if err := rows.Err(); err != nil {
-		p.Logger.Error("outbox.rows_iter", "err", err)
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		p.Logger.Error("outbox.rows_iter", "err", rowsErr)
 		return
 	}
 	if len(batch) == 0 {
+		// Commit to release the (empty) transaction promptly.
+		if err := tx.Commit(ctx); err == nil {
+			committed = true
+		}
 		return
 	}
 
@@ -202,7 +236,7 @@ func (p *Publisher) tick(ctx context.Context) {
 			if pubErr != nil {
 				return
 			}
-			if _, err := p.DB.Exec(ctx,
+			if _, err := tx.Exec(ctx,
 				`UPDATE outbox SET published_at = now() WHERE id = $1`, c.id,
 			); err != nil {
 				p.Logger.Error("outbox.mark_published_failed",
@@ -212,6 +246,16 @@ func (p *Publisher) tick(ctx context.Context) {
 			}
 		}()
 	}
+
+	// Commit persists every mark-published done above and releases the
+	// row locks. A commit failure rolls the whole batch back (via the
+	// deferred Rollback): those events stay unpublished and are retried
+	// next tick — at-least-once, never lost.
+	if err := tx.Commit(ctx); err != nil {
+		p.Logger.Error("outbox.commit_failed", "err", err)
+		return
+	}
+	committed = true
 }
 
 // envelope is the JSON body the outbox publisher puts on the wire.

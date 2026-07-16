@@ -227,3 +227,51 @@ func strconvI(n int) string {
 	}
 	return string(b[i:])
 }
+
+// TestMiddleware_FailClosedOnRedisError verifies the configurable
+// behaviour when the limiter backend errors: FailClosed=true → 503,
+// FailClosed=false (default) → pass through. A Redis client pointed at a
+// closed port makes Limiter.Allow return an error without needing a live
+// Redis.
+func TestMiddleware_FailClosedOnRedisError(t *testing.T) {
+	deadRDB := redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1", // nothing listens here → dial error
+		DialTimeout: 200_000_000,   // 200ms
+	})
+	t.Cleanup(func() { _ = deadRDB.Close() })
+	lim := New(deadRDB)
+
+	nextCalled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	newReq := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/v1/jobs", nil)
+		return req.WithContext(auth.WithPrincipal(req.Context(), &auth.Principal{OrgID: "org-1"}))
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Fail closed → 503, handler not reached.
+	nextCalled = false
+	mClosed := NewMiddleware(lim, logger)
+	mClosed.FailClosed = true
+	recC := httptest.NewRecorder()
+	mClosed.Handler(next).ServeHTTP(recC, newReq())
+	if recC.Code != http.StatusServiceUnavailable {
+		t.Errorf("FailClosed: status = %d, want 503", recC.Code)
+	}
+	if nextCalled {
+		t.Error("FailClosed: handler should not be reached")
+	}
+
+	// Fail open (default) → request passes through.
+	nextCalled = false
+	mOpen := NewMiddleware(lim, logger)
+	recO := httptest.NewRecorder()
+	mOpen.Handler(next).ServeHTTP(recO, newReq())
+	if !nextCalled || recO.Code != http.StatusOK {
+		t.Errorf("FailOpen: code=%d nextCalled=%v, want 200/true", recO.Code, nextCalled)
+	}
+}

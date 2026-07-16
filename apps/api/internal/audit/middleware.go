@@ -13,6 +13,7 @@ import (
 
 	"github.com/orpheus/api/internal/auth"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 )
 
 // Recorder writes audit log entries to the audit_log table. It is safe
@@ -108,19 +109,28 @@ func (r *Recorder) Record(ctx context.Context, e Entry) error {
 			$9, $10, $11
 		)
 	`
-	_, err = r.DB.Exec(ctx, q,
-		uuid.NewString(),
-		e.OrgID,
-		nullableString(e.ActorID),
-		e.ActorType,
-		e.Action,
-		e.ResourceType,
-		e.ResourceID,
-		nullableString(e.IP),
-		nullableString(e.UserAgent),
-		nullableString(e.RequestID),
-		metaJSON,
-	)
+	// audit_log has FORCE row-level security with an insert policy of
+	// `is_service_role() OR org_id = current_org_id()`. Record is called
+	// outside any WithTenant scope (from handlers after their own tx, and
+	// from the middleware after the handler returns), so we must set the
+	// tenant GUC ourselves — a bare pool Exec would be rejected by RLS
+	// and every audit row would be silently dropped.
+	err = r.DB.WithTenant(ctx, e.OrgID, func(tctx context.Context) error {
+		_, execErr := dbtx.Exec(tctx, r.DB, q,
+			uuid.NewString(),
+			e.OrgID,
+			nullableString(e.ActorID),
+			e.ActorType,
+			e.Action,
+			e.ResourceType,
+			e.ResourceID,
+			nullableString(e.IP),
+			nullableString(e.UserAgent),
+			nullableString(e.RequestID),
+			metaJSON,
+		)
+		return execErr
+	})
 	if err != nil {
 		return fmt.Errorf("audit.record.insert: %w", err)
 	}
@@ -190,6 +200,15 @@ func (r *Recorder) Middleware(next http.Handler) http.Handler {
 			return
 		}
 		action = buildAction(action, resourceType)
+		// Generic path→action derivation is lossy: sub-action routes
+		// (e.g. .../deliveries/{id}/replay) and verbs the enum does not
+		// model (a DELETE on /jobs is a "cancel", not a "delete") yield
+		// non-enum shapes. Skip those here — the handler layer audits
+		// them with the precise action — rather than issuing an INSERT
+		// the DB will reject.
+		if !isAuditAction(action) {
+			return
+		}
 
 		// Best-effort: the request has already been served. If audit
 		// fails, log and move on.
@@ -263,54 +282,63 @@ func deriveResource(path string) (resourceType, resourceID string) {
 	return resourceType, resourceID
 }
 
-// buildAction composes a dotted `verb.resource` action. It tries the
-// schema's audit_action enum first; if the action isn't a member, it
-// emits the bare verb so the row is still recorded. Truly unknown
-// values will be rejected by the DB — that is intentional: audit
-// failures should be loud, not silent.
+// buildAction composes a dotted `resource.verb` action to match the
+// audit_action enum in 0001_init.sql (e.g. `upload.create`, not
+// `create.upload`). The resource segment is normalised — hyphens
+// stripped and the trailing plural 's' dropped — so `api-keys` becomes
+// `apikey`. The result is only meaningful if it is a valid enum member;
+// callers must gate on [isAuditAction] and skip the row otherwise
+// (many generic routes, e.g. `/webhooks/{id}/deliveries/{id}/replay`,
+// derive shapes that are not enum members and are audited by the
+// handler layer instead).
 func buildAction(verb, resource string) string {
-	candidate := verb + "." + singularise(resource)
-	if enumContains(candidate) {
-		return candidate
-	}
-	return verb + "." + resource
+	return normaliseResource(resource) + "." + verb
 }
 
-// singularise drops a trailing 's' so "uploads" becomes "upload". It is
-// a heuristic — good enough for the common cases. Irregular plurals
-// ("people" -> "person") are not handled; if the API grows any, swap
-// this for a lookup table.
-func singularise(s string) string {
+// normaliseResource turns a URL resource segment into its enum noun:
+// strips hyphens (`api-keys` -> `apikeys`) then drops a trailing plural
+// 's' (`apikeys` -> `apikey`, `uploads` -> `upload`). Irregular plurals
+// are not handled; the API does not currently have any.
+func normaliseResource(s string) string {
+	s = strings.ReplaceAll(s, "-", "")
 	if strings.HasSuffix(s, "s") && len(s) > 1 {
-		return strings.TrimSuffix(s, "s")
+		s = strings.TrimSuffix(s, "s")
 	}
 	return s
 }
 
-// auditActions is the source of truth for valid audit actions. The
-// format is `<verb>.<singular_resource>`, matching what [buildAction]
-// emits. Keep this list in sync with the audit_action enum in
-// 0001_init.sql.
+// auditActions is the set of valid audit_action enum members, in the
+// enum's own `resource.verb` order. Keep this in sync with the
+// audit_action enum in the migrations.
 var auditActions = map[string]struct{}{
-	"create.org": {}, "update.org": {}, "delete.org": {},
-	"invite.user": {}, "join.user": {}, "leave.user": {},
-	"update.user": {}, "remove.user": {},
-	"create.apikey": {}, "update.apikey": {}, "revoke.apikey": {},
-	"create.upload": {}, "complete.upload": {},
-	"abort.upload": {}, "expire.upload": {},
-	"create.artifact": {}, "update.artifact": {}, "delete.artifact": {},
-	"create.job": {}, "cancel.job": {}, "retry.job": {}, "update.job": {},
-	"create.webhook": {}, "update.webhook": {}, "delete.webhook": {},
-	"deliver.webhook": {}, "delivery_fail.webhook": {}, "delivery_exhausted.webhook": {},
-	"plan_change.billing": {}, "payment.billing": {}, "refund.billing": {},
-	"login.auth": {}, "logout.auth": {}, "token_refresh.auth": {},
-	"role_grant.rbac": {}, "role_revoke.rbac": {},
-	"update.settings": {},
+	"org.create": {}, "org.update": {}, "org.delete": {},
+	"user.invite": {}, "user.join": {}, "user.leave": {},
+	"user.update": {}, "user.remove": {},
+	"apikey.create": {}, "apikey.update": {}, "apikey.revoke": {},
+	"upload.create": {}, "upload.complete": {},
+	"upload.abort": {}, "upload.expire": {},
+	"artifact.create": {}, "artifact.update": {}, "artifact.delete": {},
+	"job.create": {}, "job.cancel": {}, "job.retry": {}, "job.update": {},
+	"webhook.create": {}, "webhook.update": {}, "webhook.delete": {},
+	"webhook.deliver": {}, "webhook.delivery_fail": {}, "webhook.delivery_exhausted": {},
+	"workflow.create": {}, "workflow.update": {}, "workflow.cancel": {},
+	"billing.plan_change": {}, "billing.payment": {}, "billing.refund": {},
+	"auth.login": {}, "auth.logout": {}, "auth.token_refresh": {},
+	"rbac.role_grant": {}, "rbac.role_revoke": {},
+	"settings.update": {},
 }
 
-func enumContains(s string) bool {
+// isAuditAction reports whether s is a valid audit_action enum member.
+func isAuditAction(s string) bool {
 	_, ok := auditActions[s]
 	return ok
+}
+
+// IsValidAction reports whether s is a valid audit_action enum value.
+// Exported so handlers can validate an ?action= filter before it reaches
+// a SQL enum cast (which would 500 on an unknown value).
+func IsValidAction(s string) bool {
+	return isAuditAction(s)
 }
 
 // clientIP returns the first hop from X-Forwarded-For, falling back to

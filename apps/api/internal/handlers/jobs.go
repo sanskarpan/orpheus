@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -232,7 +231,11 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 // org; rows from other orgs (or unknown ids) come back as ErrNoRows.
 func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Job not found")
+		return
+	}
 
 	var (
 		j                      Job
@@ -320,6 +323,25 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	processor := r.URL.Query().Get("processor")
 	artifactID := r.URL.Query().Get("artifact_id")
+
+	// Validate the typed query params up front. Without this an invalid
+	// value is cast in SQL (e.g. $n::job_status, created_at < $n::cursor,
+	// artifact_id::uuid) and surfaces as a 500 leaking a DB error string;
+	// a bad client input should be a clean 400.
+	if status != "" && !validJobStatus(status) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid status")
+		return
+	}
+	if !validCursor(cursor) {
+		writeProblem(w, http.StatusBadRequest, "validation", "invalid cursor")
+		return
+	}
+	if artifactID != "" {
+		if _, err := uuid.Parse(artifactID); err != nil {
+			writeProblem(w, http.StatusBadRequest, "validation", "invalid artifact_id")
+			return
+		}
+	}
 
 	// Build the WHERE clause incrementally. We pull the job_type
 	// filter through a JSONB predicate so processor names round-trip
@@ -439,7 +461,11 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 // is returned with 202 Accepted.
 func (h *JobHandler) Cancel(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Job not found")
+		return
+	}
 
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		var cur string

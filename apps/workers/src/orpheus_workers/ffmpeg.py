@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -22,6 +23,12 @@ def slice(src: str | Path, dst: str | Path, start_seconds: float, end_seconds: f
     Uses -c copy (no re-encode) for speed. Raises FFmpegError on
     ffmpeg non-zero exit.
     """
+    # Reject non-finite values explicitly: NaN slips past the < guard
+    # below (every NaN comparison is False) and would reach ffmpeg args.
+    if not (math.isfinite(start_seconds) and math.isfinite(end_seconds)):
+        raise FFmpegError("start_seconds and end_seconds must be finite")
+    if start_seconds < 0:
+        raise FFmpegError(f"start_seconds ({start_seconds}) must be >= 0")
     if end_seconds <= start_seconds:
         raise FFmpegError(f"end_seconds ({end_seconds}) must be > start_seconds ({start_seconds})")
     bin = find_ffmpeg()
