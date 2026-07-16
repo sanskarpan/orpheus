@@ -483,3 +483,94 @@ func (s *stubLookup) GetAPIKeyByPrefix(_ context.Context, prefix string) (auth.A
 	}
 	return r, nil
 }
+
+// ─────────────────────────────────────────────────────────────────────
+// API-key verification cache (perf + correctness)
+// ─────────────────────────────────────────────────────────────────────
+
+func newCachedValidator(t *testing.T, secret string, scopes []string) (*auth.APIKeyValidator, *stubLookup) {
+	t.Helper()
+	hash, err := argon2id.CreateHash(secret, argon2id.DefaultParams)
+	if err != nil {
+		t.Fatalf("CreateHash: %v", err)
+	}
+	lk := &stubLookup{records: map[string]auth.APIKeyRecord{
+		secret[:9]: {ID: "k", OrgID: "o", HashedSecret: hash, Prefix: secret[:9], Scopes: scopes},
+	}}
+	return auth.NewAPIKeyValidator(lk), lk
+}
+
+func TestAPIKeyValidator_CacheHitReturnsSamePrincipal(t *testing.T) {
+	secret := "ak_live_cachehitsecret"
+	v, _ := newCachedValidator(t, secret, []string{"jobs:read"})
+	p1, err := v.Verify(context.Background(), secret)
+	if err != nil {
+		t.Fatalf("first verify: %v", err)
+	}
+	p2, err := v.Verify(context.Background(), secret) // cache hit (skips argon2id)
+	if err != nil {
+		t.Fatalf("second verify: %v", err)
+	}
+	if p1.OrgID != p2.OrgID || p1.APIKeyID != p2.APIKeyID || len(p2.Roles) != 1 || p2.Roles[0] != "jobs:read" {
+		t.Errorf("cache-hit principal mismatch: %+v vs %+v", p1, p2)
+	}
+}
+
+// TestAPIKeyValidator_RevocationBeatsCache: a key cached as valid must be
+// rejected immediately once revoked, because the fresh prefix lookup runs
+// on every request even on a cache hit.
+func TestAPIKeyValidator_RevocationBeatsCache(t *testing.T) {
+	secret := "ak_live_revokemesecret"
+	v, lk := newCachedValidator(t, secret, nil)
+	if _, err := v.Verify(context.Background(), secret); err != nil {
+		t.Fatalf("prime cache: %v", err)
+	}
+	// Revoke in the store.
+	rec := lk.records[secret[:9]]
+	revoked := "2024-01-01T00:00:00Z"
+	rec.RevokedAt = &revoked
+	lk.records[secret[:9]] = rec
+
+	if _, err := v.Verify(context.Background(), secret); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Errorf("err = %v, want revoked despite prior cache", err)
+	}
+}
+
+// TestAPIKeyValidator_RotationMissesCache: rotating the stored hash must
+// invalidate the cache entry (the cache key binds to the stored hash), so
+// the old presented key no longer verifies against the new hash.
+func TestAPIKeyValidator_RotationMissesCache(t *testing.T) {
+	secret := "ak_live_rotatemesecret"
+	v, lk := newCachedValidator(t, secret, nil)
+	if _, err := v.Verify(context.Background(), secret); err != nil {
+		t.Fatalf("prime cache: %v", err)
+	}
+	// Rotate: store a hash for a DIFFERENT secret under the same prefix.
+	newHash, _ := argon2id.CreateHash("ak_live_rotatemesecret_NEW", argon2id.DefaultParams)
+	rec := lk.records[secret[:9]]
+	rec.HashedSecret = newHash
+	lk.records[secret[:9]] = rec
+
+	if _, err := v.Verify(context.Background(), secret); err == nil {
+		t.Error("old key verified against rotated hash; cache should have missed")
+	}
+}
+
+// BenchmarkVerify_CacheHit measures the hot path (repeat verification of
+// the same key). Compare against the argon2id cost implicit in the first
+// call — the cached path should be orders of magnitude faster.
+func BenchmarkVerify_CacheHit(b *testing.B) {
+	secret := "ak_live_benchsecret"
+	hash, _ := argon2id.CreateHash(secret, argon2id.DefaultParams)
+	lk := &stubLookup{records: map[string]auth.APIKeyRecord{
+		secret[:9]: {ID: "k", OrgID: "o", HashedSecret: hash, Prefix: secret[:9]},
+	}}
+	v := auth.NewAPIKeyValidator(lk)
+	_, _ = v.Verify(context.Background(), secret) // warm the cache
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if _, err := v.Verify(context.Background(), secret); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
