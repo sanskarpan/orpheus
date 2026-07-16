@@ -134,7 +134,7 @@ func TestDelivery_EnqueueAndDeliverWithSignature(t *testing.T) {
 		var sig string
 		for _, part := range strings.Split(hdr, ",") {
 			if strings.HasPrefix(part, "t=") {
-				fmt.Sscanf(part, "t=%d", &ts)
+				_, _ = fmt.Sscanf(part, "t=%d", &ts)
 			}
 			if strings.HasPrefix(part, "v1=") {
 				sig = strings.TrimPrefix(part, "v1=")

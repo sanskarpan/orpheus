@@ -113,7 +113,7 @@ func TestUploadCreateComplete_RoundTrip(t *testing.T) {
 		t.Fatalf("PUT part: %v", err)
 	}
 	body, _ := io.ReadAll(putResp.Body)
-	putResp.Body.Close()
+	_ = putResp.Body.Close()
 	if putResp.StatusCode != http.StatusOK {
 		t.Fatalf("PUT part status = %d; body=%s", putResp.StatusCode, string(body))
 	}

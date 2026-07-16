@@ -11,19 +11,19 @@ func TestIsDisallowedIP(t *testing.T) {
 		ip   string
 		want bool
 	}{
-		{"127.0.0.1", true},        // loopback
-		{"::1", true},              // loopback v6
-		{"10.0.0.5", true},         // RFC1918
-		{"172.16.9.9", true},       // RFC1918
-		{"192.168.1.1", true},      // RFC1918
-		{"169.254.169.254", true},  // link-local / cloud metadata
-		{"fe80::1", true},          // link-local v6
-		{"fc00::1", true},          // ULA
-		{"0.0.0.0", true},          // unspecified
-		{"224.0.0.1", true},        // multicast
-		{"8.8.8.8", false},         // public
-		{"1.1.1.1", false},         // public
-		{"93.184.216.34", false},   // public (example.com)
+		{"127.0.0.1", true},           // loopback
+		{"::1", true},                 // loopback v6
+		{"10.0.0.5", true},            // RFC1918
+		{"172.16.9.9", true},          // RFC1918
+		{"192.168.1.1", true},         // RFC1918
+		{"169.254.169.254", true},     // link-local / cloud metadata
+		{"fe80::1", true},             // link-local v6
+		{"fc00::1", true},             // ULA
+		{"0.0.0.0", true},             // unspecified
+		{"224.0.0.1", true},           // multicast
+		{"8.8.8.8", false},            // public
+		{"1.1.1.1", false},            // public
+		{"93.184.216.34", false},      // public (example.com)
 		{"2606:2800:220:1::1", false}, // public v6
 	}
 	for _, tc := range cases {
@@ -51,8 +51,8 @@ func (s stubResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr
 
 func TestValidateURL(t *testing.T) {
 	res := stubResolver{
-		"evil.example.com": {{IP: net.ParseIP("10.1.2.3")}},   // resolves internal
-		"ok.example.com":   {{IP: net.ParseIP("93.184.216.34")}}, // resolves public
+		"evil.example.com": {{IP: net.ParseIP("10.1.2.3")}},                                // resolves internal
+		"ok.example.com":   {{IP: net.ParseIP("93.184.216.34")}},                           // resolves public
 		"rebind.example":   {{IP: net.ParseIP("8.8.8.8")}, {IP: net.ParseIP("127.0.0.1")}}, // mixed → reject
 	}
 	cases := []struct {
