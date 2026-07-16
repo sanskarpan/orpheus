@@ -1,0 +1,150 @@
+{
+  "annotations": { "list": [ { "builtIn": 1, "datasource": { "type": "grafana", "uid": "-- Grafana --" }, "enable": true, "hide": true, "iconColor": "rgba(0, 211, 255, 1)", "name": "Annotations & Alerts", "type": "dashboard" } ] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["orpheus", "cost", "usage"],
+  "templating": { "list": [] },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Orpheus — Cost & Usage",
+  "uid": "orpheus-cost-usage",
+  "version": 1,
+  "panels": [
+    {
+      "title": "Jobs submitted (24h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum(increase(orpheus_jobs_submitted_total[$__range]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Jobs completed (24h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum(increase(orpheus_jobs_processed_total{status=\"completed\"}[$__range]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Total HTTP requests (24h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "purple", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum(increase(orpheus_http_requests_total[$__range]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "S3 operations (24h)",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "description": "S3 GET/PUT count is a direct driver of object-storage request + egress cost.",
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "orange", "value": null } ] } }, "overrides": [] },
+      "options": { "colorMode": "value", "graphMode": "area", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum(increase(orpheus_s3_operations_total[$__range]))",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Job volume by processor (cumulative over range)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "description": "Per-processor throughput. Use this to attribute compute cost to tenants/workloads and to spot which processor drives spend.",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum by (processor) (rate(orpheus_jobs_submitted_total[$__rate_interval]))",
+          "legendFormat": "{{processor}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Compute-seconds by processor (proxy for cost)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "description": "Sum of processing-duration observations per processor = worker CPU-seconds consumed. The strongest available proxy for compute cost.",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum by (processor) (rate(orpheus_job_processing_duration_seconds_sum[$__rate_interval]))",
+          "legendFormat": "{{processor}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Events published to bus (event/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "description": "Outbox publish volume by event type — usage signal for downstream consumers and any per-event billing.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "ops", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum by (event_type) (rate(orpheus_outbox_published_total{result=\"success\"}[$__rate_interval]))",
+          "legendFormat": "{{event_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "API traffic by route (req/s)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+      "description": "Which endpoints drive API load — informs rate-limit tiering and capacity/cost planning.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "reqps", "custom": { "drawStyle": "line", "fillOpacity": 10, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["mean", "lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "datasource": { "type": "prometheus", "uid": "orpheus-prometheus" },
+          "expr": "sum by (route) (rate(orpheus_http_requests_total[$__rate_interval]))",
+          "legendFormat": "{{route}}",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}

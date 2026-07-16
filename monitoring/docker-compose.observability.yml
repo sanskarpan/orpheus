@@ -1,0 +1,178 @@
+# Orpheus observability stack (gap #6).
+#
+# Prometheus + Grafana + Loki + Tempo + OpenTelemetry Collector.
+#
+# This is a SEPARATE compose file from the app stack (../docker-compose.yml)
+# so you can run it independently and keep the two lifecycles decoupled.
+# It joins the app's default network so Prometheus can scrape orpheus-api
+# and orpheus-nats by container name, and so the API/workers can push OTLP
+# to the collector.
+#
+# Usage (from the repo root):
+#   # 1. start the app stack first (creates the shared network):
+#   docker compose up -d
+#   # 2. start the observability stack:
+#   docker compose -f monitoring/docker-compose.observability.yml up -d
+#
+#   # tear down:
+#   docker compose -f monitoring/docker-compose.observability.yml down
+#   docker compose -f monitoring/docker-compose.observability.yml down -v  # + wipe TSDB/volumes
+#
+# UIs:
+#   Grafana      http://localhost:3000   (admin / admin — dev only)
+#   Prometheus   http://localhost:9090
+#   Tempo        (queried via Grafana; OTLP in on 4317/4318 inside the net)
+#   Loki         (queried via Grafana; push on 3100 inside the net)
+#
+# Wiring the app to emit OTLP:
+#   Point the API + workers at the collector's OTLP endpoint. Inside the
+#   docker network:
+#     OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317   # gRPC
+#     OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318   # HTTP
+#   From the host (e.g. running the API locally): use localhost:4317/4318.
+#
+# Default credentials are dev-only. NEVER use these in production.
+
+networks:
+  # Join the network created by the root docker-compose.yml. Compose names
+  # the default network "<project>_default"; the project dir is "orpheus",
+  # so the network is "orpheus_default". Override with COMPOSE_PROJECT_NAME
+  # if you run the app stack under a different project name.
+  default:
+    name: ${ORPHEUS_APP_NETWORK:-orpheus_default}
+    external: true
+
+services:
+  # ─────────────────────────────────────────────────────────────────
+  # Prometheus — metrics TSDB + scraper.
+  # Scrapes orpheus-api /metrics, NATS monitoring (8222), the OTel
+  # collector's own telemetry, and app metrics re-exported by the
+  # collector. Evaluates alert rules from alerts.yml.
+  # ─────────────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: orpheus-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"          # allows POST /-/reload
+      - "--web.enable-remote-write-receiver"  # collector -> Prometheus remote_write
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────────────────────────
+  # Loki — log aggregation. Receives logs from the OTel collector's
+  # loki exporter; queried from Grafana via the Loki datasource.
+  # ─────────────────────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.1.1
+    container_name: orpheus-loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/config.yaml"]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────
+  # Tempo — distributed tracing backend. Receives OTLP traces from the
+  # collector (tempo:4317/4318 inside the net) and serves them to Grafana.
+  # ─────────────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:2.6.1
+    container_name: orpheus-tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    ports:
+      - "3200:3200"    # Tempo HTTP API (Grafana queries this)
+    volumes:
+      - ./tempo/config.yaml:/etc/tempo/config.yaml:ro
+      - tempo_data:/var/tempo
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  # ─────────────────────────────────────────────────────────────────
+  # OpenTelemetry Collector — single OTLP ingress for the API + workers.
+  #   - Receives OTLP over gRPC (4317) and HTTP (4318).
+  #   - Traces  -> Tempo (OTLP)
+  #   - Metrics -> Prometheus (remote_write)
+  #   - Logs    -> Loki (OTLP/HTTP)
+  # Its own /metrics (8888) and a scrape-friendly Prometheus exporter
+  # (8889) are scraped by Prometheus.
+  # ─────────────────────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.109.0
+    container_name: orpheus-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel/config.yaml"]
+    ports:
+      - "4317:4317"    # OTLP gRPC
+      - "4318:4318"    # OTLP HTTP
+      - "8888:8888"    # collector self-telemetry
+      - "8889:8889"    # collector prometheus exporter (app metrics)
+    volumes:
+      - ./otel-collector/config.yaml:/etc/otel/config.yaml:ro
+    depends_on:
+      - tempo
+      - loki
+      - prometheus
+
+  # ─────────────────────────────────────────────────────────────────
+  # Grafana — dashboards. Datasources + dashboards are provisioned from
+  # files (no manual clicking). Loads the JSON dashboards under
+  # ./grafana/dashboards.
+  # ─────────────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: orpheus-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      # Enable the Tempo->Loki/Prometheus trace correlation features.
+      GF_FEATURE_TOGGLES_ENABLE: "traceqlEditor"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+volumes:
+  prometheus_data:
+  loki_data:
+  tempo_data:
+  grafana_data:

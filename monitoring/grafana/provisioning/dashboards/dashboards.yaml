@@ -1,0 +1,18 @@
+# Grafana dashboard provisioning. Loads every dashboard JSON under
+# /var/lib/grafana/dashboards (mounted from monitoring/grafana/dashboards)
+# into an "Orpheus" folder. Editable in the UI, but file is source of truth.
+
+apiVersion: 1
+
+providers:
+  - name: orpheus
+    orgId: 1
+    folder: Orpheus
+    type: file
+    disableDeletion: false
+    editable: true
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

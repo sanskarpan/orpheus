@@ -1,0 +1,96 @@
+# OpenTelemetry Collector config for Orpheus.
+#
+# Single OTLP ingress for the Go API and the Python workers. Point both
+# services at this collector:
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317   (gRPC)
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4318   (HTTP)
+#
+# Pipelines:
+#   traces  : OTLP  -> (batch, resource) -> Tempo (OTLP gRPC)
+#   metrics : OTLP  -> (batch, resource) -> Prometheus (remote_write) + prometheus exporter
+#   logs    : OTLP  -> (batch, resource) -> Loki (OTLP/HTTP)
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Bound memory before it becomes a problem.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 80
+    spike_limit_percentage: 25
+
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+    send_batch_max_size: 2048
+
+  # Tag everything with a consistent deployment environment. service.name
+  # is expected to come from each app's OTEL_SERVICE_NAME / resource attrs
+  # (orpheus-api, orpheus-workers).
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: dev
+        action: upsert
+
+exporters:
+  # Traces -> Tempo. Tempo listens for OTLP on 4317 inside the network.
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Metrics -> Prometheus via remote_write (Prometheus is started with
+  # --web.enable-remote-write-receiver).
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+    tls:
+      insecure: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Metrics also exposed in Prometheus text format for direct scraping
+  # (job "otel-collector-app-metrics" in prometheus.yml scrapes :8889).
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    send_timestamps: true
+    resource_to_telemetry_conversion:
+      enabled: true
+
+  # Logs -> Loki via OTLP/HTTP (Loki 3.x accepts OTLP on /otlp/v1/logs).
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    tls:
+      insecure: true
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    metrics:
+      # Collector self-telemetry scraped by the "otel-collector" job (:8888).
+      address: 0.0.0.0:8888
+    logs:
+      level: info
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [prometheusremotewrite, prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlphttp/loki]

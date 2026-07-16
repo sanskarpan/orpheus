@@ -1,0 +1,119 @@
+# Prometheus scrape + rule config for the Orpheus observability stack.
+#
+# Targets are addressed by their docker-compose service/container names on
+# the shared "orpheus_default" network. If you run Prometheus outside the
+# compose network, replace the hostnames with localhost + published ports.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: orpheus-dev
+    monitor: orpheus-observability
+
+# Alerting rules (error rate, latency burn, queue depth, outbox stall).
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# Alertmanager is not shipped in this stack by default. Point Prometheus
+# at one here when you deploy it.
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # - alertmanager:9093
+
+scrape_configs:
+  # ─────────────────────────────────────────────────────────────────
+  # Prometheus scraping itself.
+  # ─────────────────────────────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # ─────────────────────────────────────────────────────────────────
+  # Orpheus API — the Go service exposes the domain metrics defined in
+  # apps/api/internal/metrics/metrics.go on /metrics (default port 8080).
+  #   orpheus_http_requests_total
+  #   orpheus_http_request_duration_seconds
+  #   orpheus_jobs_submitted_total
+  #   orpheus_outbox_published_total
+  #   orpheus_outbox_publish_duration_seconds
+  #   orpheus_rls_denials_total
+  # The container name is "orpheus-api"; when running the API on the host,
+  # add a "host.docker.internal:8080" target instead.
+  # ─────────────────────────────────────────────────────────────────
+  - job_name: orpheus-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orpheus-api:8080"]
+        labels:
+          service: orpheus-api
+          component: api
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+
+  # ─────────────────────────────────────────────────────────────────
+  # Orpheus workers — the Python worker exposes its Prometheus metrics
+  # (orpheus_jobs_processed_total, orpheus_job_processing_duration_seconds,
+  # orpheus_jetstream_messages_total, orpheus_s3_operations_total) on the
+  # worker metrics port (8082) and the control plane exposes /metrics on
+  # 8081. In the single-image dev container both run under
+  # "orpheus-workers-all".
+  # ─────────────────────────────────────────────────────────────────
+  - job_name: orpheus-workers-control
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orpheus-workers-all:8081"]
+        labels:
+          service: orpheus-workers
+          component: control-plane
+
+  - job_name: orpheus-workers
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orpheus-workers-all:8082"]
+        labels:
+          service: orpheus-workers
+          component: worker
+
+  # ─────────────────────────────────────────────────────────────────
+  # NATS JetStream monitoring endpoint. The nats container is started with
+  # --http_port 8222 (see root docker-compose.yml). This exposes varz,
+  # jsz, connz, etc. as JSON — NOT Prometheus format. We scrape the
+  # nats-prometheus-exporter path if present; the raw JSON endpoints are
+  # listed here so queue-depth alerts can be wired once the exporter is
+  # deployed. For now we scrape /varz-style metrics via the prometheus
+  # exporter sidecar when available.
+  # ─────────────────────────────────────────────────────────────────
+  - job_name: nats
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["nats:8222"]
+        labels:
+          service: nats
+          component: event-bus
+    # The bare nats server serves JSON on 8222, not Prometheus text. Deploy
+    # prometheus-nats-exporter (natsio/prometheus-nats-exporter) pointed at
+    # http://nats:8222 and repoint this target at the exporter's :7777.
+    # Kept here so the target is documented and queue-depth alerts have a
+    # home the moment the exporter lands.
+
+  # ─────────────────────────────────────────────────────────────────
+  # OpenTelemetry Collector — self-telemetry (8888) and the app metrics
+  # it re-exports via its prometheus exporter (8889).
+  # ─────────────────────────────────────────────────────────────────
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8888"]
+        labels:
+          service: otel-collector
+
+  - job_name: otel-collector-app-metrics
+    static_configs:
+      - targets: ["otel-collector:8889"]
+        labels:
+          service: otel-collector
+          component: app-metrics-export
