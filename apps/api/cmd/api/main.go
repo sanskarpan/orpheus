@@ -29,6 +29,7 @@ import (
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
+	"github.com/orpheus/api/internal/billing"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/idempotency"
@@ -179,11 +180,25 @@ func run() error {
 	publisher := outbox.New(pgDB, js, mtr, logger)
 	delivery := webhooks.New(pgDB, logger, natsConn, nil)
 	sweeper := retention.New(pgDB, s3c, logger)
+	rollup := billing.NewRollup(pgDB, logger)
+
+	// Payment provider. Real Dodo integration when an API key is present;
+	// otherwise nil so the checkout endpoint reports "not configured" and
+	// the inbound webhook route is not mounted. The usage rollup runs
+	// regardless so invoices accrue even before payments are wired up.
+	var billingProvider billing.Provider
+	if cfg.DodoAPIKey != "" {
+		billingProvider = billing.NewDodoProvider(cfg.DodoAPIKey, cfg.DodoWebhookSecret, cfg.DodoBaseURL)
+		logger.Info("orpheus_api.billing.provider", "provider", billingProvider.Name())
+	} else {
+		logger.Warn("orpheus_api.billing.provider_unset", "note", "checkout disabled; set ORPHEUS_DODO_API_KEY to enable")
+	}
 
 	var workers sync.WaitGroup
 	startWorker(ctx, &workers, "outbox.publisher", publisher.Run)
 	startWorker(ctx, &workers, "webhooks.delivery", delivery.Run)
 	startWorker(ctx, &workers, "retention.sweeper", sweeper.Run)
+	startWorker(ctx, &workers, "billing.rollup", rollup.Run)
 
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:          pgDB,
@@ -193,6 +208,7 @@ func run() error {
 		RateLimit:   rateMW,
 		Audit:       auditRec,
 		Metrics:     mtr,
+		Billing:     billingProvider,
 	})
 
 	logger.Info("orpheus_api.ready", "addr", cfg.Addr())
