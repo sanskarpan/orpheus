@@ -109,11 +109,32 @@ class Worker:
             "s3": self._s3,
             "work_dir": self._settings.work_dir,
         }
-        row = self._db.fetchrow("SELECT org_id, params FROM jobs WHERE id = %s", job_id)
+        row = self._db.fetchrow("SELECT org_id, params, status FROM jobs WHERE id = %s", job_id)
         if row is None:
             logger.error("worker.job_not_found", job_id=job_id)
             await msg.term()
             metrics.JETSTREAM_MESSAGES.labels(result="term").inc()
+            return
+        # Terminal jobs must not be reprocessed on a stray redelivery.
+        if row["status"] in ("completed", "canceled", "dead_letter"):
+            logger.info("worker.job_terminal_skip", job_id=job_id, status=row["status"])
+            await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
+            return
+        org_id = str(row["org_id"])
+        # Per-tenant concurrency: if this org is already at its running cap,
+        # defer (redeliver later) so one tenant can't starve the pool.
+        if self._db.running_jobs_for_org(org_id) >= self._settings.per_org_concurrency:
+            logger.info("worker.org_at_capacity", job_id=job_id, org_id=org_id)
+            await msg.nak(delay=5)
+            metrics.JETSTREAM_MESSAGES.labels(result="nak").inc()
+            return
+        # Atomically claim (queued → running, attempts++). If we lose the
+        # claim, another worker/redelivery has it; ack and move on.
+        if not self._db.claim_job(job_id):
+            logger.info("worker.claim_lost", job_id=job_id)
+            await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
         params = row["params"] or {}
         if isinstance(params, str):
@@ -148,17 +169,20 @@ class Worker:
                     span.set_status(Status(StatusCode.ERROR, str(exc)))
                     raise
                 span.set_status(Status(StatusCode.OK))
+            duration = time.monotonic() - start
+            cost = duration * self._settings.cost_usd_per_second
             metrics.JOBS_PROCESSED.labels(processor=processor_name, status="completed").inc()
-            self._db.mark_job_completed(job_id, result or {})
+            self._db.mark_job_completed(job_id, result or {}, cost_usd=cost)
             self._sync_workflow_status(job_id, params, completed=True, result=result or {})
             self._db.enqueue_outbox(
-                org_id=str(row["org_id"]),
+                org_id=org_id,
                 aggregate_id=job_id,
                 event_type="job.completed",
                 payload={
                     "job_id": job_id,
                     "processor": processor_name,
                     "duration_seconds": (result or {}).get("duration_seconds"),
+                    "cost_usd": cost,
                 },
             )
             await msg.ack()
@@ -170,20 +194,42 @@ class Worker:
                 job_id=job_id,
                 processor=processor_name,
             )
-            self._db.mark_job_failed(job_id, str(exc))
-            self._sync_workflow_status(job_id, params, completed=False, error=str(exc))
-            self._db.enqueue_outbox(
-                org_id=str(row["org_id"]),
-                aggregate_id=job_id,
-                event_type="job.failed",
-                payload={
-                    "job_id": job_id,
-                    "processor": processor_name,
-                    "error": str(exc),
-                },
-            )
-            await msg.nak()
-            metrics.JETSTREAM_MESSAGES.labels(result="nak").inc()
+            attempts, max_retries = self._db.job_retry_state(job_id)
+            if attempts < max_retries:
+                # Transient failure with retries left: return to the queue
+                # and redeliver after a capped exponential backoff.
+                self._db.requeue_job_for_retry(job_id)
+                self._db.enqueue_outbox(
+                    org_id=org_id,
+                    aggregate_id=job_id,
+                    event_type="job.retry",
+                    payload={
+                        "job_id": job_id,
+                        "processor": processor_name,
+                        "attempt": attempts,
+                        "error": str(exc),
+                    },
+                )
+                await msg.nak(delay=min(60, 2**attempts))
+                metrics.JETSTREAM_MESSAGES.labels(result="nak").inc()
+            else:
+                # Retries exhausted: move to the dead-letter queue and stop
+                # redelivery. Operators requeue via POST /v1/jobs/{id}/requeue.
+                self._db.mark_job_dead_letter(job_id, str(exc))
+                self._sync_workflow_status(job_id, params, completed=False, error=str(exc))
+                self._db.enqueue_outbox(
+                    org_id=org_id,
+                    aggregate_id=job_id,
+                    event_type="job.dead_letter",
+                    payload={
+                        "job_id": job_id,
+                        "processor": processor_name,
+                        "attempts": attempts,
+                        "error": str(exc),
+                    },
+                )
+                await msg.term()
+                metrics.JETSTREAM_MESSAGES.labels(result="term").inc()
         finally:
             metrics.JOB_PROCESSING_DURATION.labels(processor=processor_name).observe(
                 time.monotonic() - start

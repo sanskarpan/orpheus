@@ -14,6 +14,12 @@ class WorkerSettings(BaseSettings):
     nats_url: str = "nats://localhost:4222"
     log_level: str = "INFO"
     worker_concurrency: int = 4
+    # Max jobs a single org may have running at once; excess are deferred
+    # (redelivered later) so one tenant can't monopolise the worker pool.
+    per_org_concurrency: int = 8
+    # Cost rate applied to job wall-clock seconds to populate jobs.cost_usd
+    # (a coarse CPU-second price; GPU tiers override later). 0 disables it.
+    cost_usd_per_second: float = 0.00005
     worker_version: str = __version__
     database_url: str = "postgres://orpheus:orpheus@localhost:5432/orpheus?sslmode=disable"
     s3_endpoint: str = "http://localhost:9000"

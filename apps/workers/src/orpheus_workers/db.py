@@ -52,10 +52,13 @@ class WorkerDB:
         with self.conn() as c, c.cursor() as cur:
             cur.execute(sql, args)
 
-    def mark_job_completed(self, job_id: str, result: dict[str, Any]) -> None:
+    def mark_job_completed(
+        self, job_id: str, result: dict[str, Any], cost_usd: float = 0.0
+    ) -> None:
         self.execute(
-            "UPDATE jobs SET status = 'completed'::job_status, result = %s, completed_at = now() WHERE id = %s",
+            "UPDATE jobs SET status = 'completed'::job_status, result = %s, cost_usd = %s, completed_at = now() WHERE id = %s",
             json.dumps(result),
+            cost_usd,
             job_id,
         )
 
@@ -63,6 +66,52 @@ class WorkerDB:
         self.execute(
             "UPDATE jobs SET status = 'failed'::job_status, result = %s, completed_at = now() WHERE id = %s",
             json.dumps({"error": error}),
+            job_id,
+        )
+
+    # ── job-lifecycle orchestration (concurrency, retry, dead-letter) ──
+
+    def claim_job(self, job_id: str) -> bool:
+        """Atomically move a queued job to 'running', stamp started_at, and
+        bump attempts. Returns True if this worker won the claim; False if
+        the job was not 'queued' (already claimed/terminal), so a redelivery
+        can't double-process."""
+        row = self.fetchrow(
+            """
+            UPDATE jobs
+            SET status = 'running'::job_status, started_at = now(), attempts = attempts + 1
+            WHERE id = %s AND status = 'queued'::job_status
+            RETURNING id
+            """,
+            job_id,
+        )
+        return row is not None
+
+    def running_jobs_for_org(self, org_id: str) -> int:
+        row = self.fetchrow(
+            "SELECT count(*) AS n FROM jobs WHERE org_id = %s AND status = 'running'::job_status",
+            org_id,
+        )
+        return int(row["n"]) if row else 0
+
+    def job_retry_state(self, job_id: str) -> tuple[int, int]:
+        """Return (attempts, max_retries) for a job."""
+        row = self.fetchrow("SELECT attempts, max_retries FROM jobs WHERE id = %s", job_id)
+        if row is None:
+            return (0, 0)
+        return (int(row["attempts"]), int(row["max_retries"]))
+
+    def requeue_job_for_retry(self, job_id: str) -> None:
+        """Return a running job to the queue so a redelivery can re-claim it."""
+        self.execute(
+            "UPDATE jobs SET status = 'queued'::job_status WHERE id = %s AND status = 'running'::job_status",
+            job_id,
+        )
+
+    def mark_job_dead_letter(self, job_id: str, error: str) -> None:
+        self.execute(
+            "UPDATE jobs SET status = 'dead_letter'::job_status, result = %s, completed_at = now() WHERE id = %s",
+            json.dumps({"error": error, "dead_letter": True}),
             job_id,
         )
 
