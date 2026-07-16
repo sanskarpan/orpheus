@@ -22,9 +22,15 @@ All planned issues (1–15) are fixed. Fixing them surfaced **7 more real bugs**
 | 21 | **Outbox drain saw zero rows** (publisher had no service context) → pipeline dead | Crit |
 | 22 | **Idempotency cached nothing** (middleware ran on bare pool vs FORCE-RLS) | High |
 
-Recurring root cause (20/21/22): code touching a FORCE-RLS table on the bare pool
-with no tenant/service GUC → silently sees zero rows / rejected inserts. Fixed by
-running those paths under `WithTenant` or a transaction-local service GUC.
+| 23 | **Webhook delivery loop drained zero rows** (no service context on FORCE-RLS `webhook_deliveries`) + non-transactional claim (double-delivery) | Crit |
+| 24 | **`Enqueue` created zero delivery rows** — used `s.DB.Query/Exec` inside `WithTenant` instead of `dbtx` helpers, so inserts ran with no org GUC and RLS rejected them | Crit |
+
+Recurring root cause (20/21/22/23/24): code touching a FORCE-RLS table on the bare
+pool with no tenant/service GUC → silently sees zero rows / rejected inserts. Fixed by
+running those paths under `WithTenant` (via the `dbtx` helpers) or a transaction-local
+service GUC. **The entire webhook subsystem was doubly dead** (nothing enqueued,
+nothing delivered) — now verified end-to-end (enqueue→deliver→HMAC→delivered, retry/
+backoff, SSRF-blocked, concurrent exactly-once) against the live stack.
 
 Verification: full Go suite green under `go test -race ./...` against the live
 Postgres/NATS/MinIO/Redis stack; 42 Python worker tests pass. Each fix has a

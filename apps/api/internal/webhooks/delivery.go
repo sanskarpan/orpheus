@@ -29,11 +29,19 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/nats-io/nats.go"
 
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/dbtx"
 	"github.com/orpheus/api/internal/ssrfguard"
 )
+
+// claimVisibilityTimeout is how long a claimed ('delivering') row is
+// hidden from other claimers before it can be re-claimed. It bounds the
+// re-delivery window if the worker crashes between claim and terminal
+// update.
+const claimVisibilityTimeout = 60 * time.Second
 
 const (
 	defaultPollInterval = time.Second
@@ -159,40 +167,91 @@ func (s *DeliveryService) tick(ctx context.Context) {
 	if s.DB == nil {
 		return
 	}
-	rows, err := s.DB.Query(ctx, `
-		SELECT id, org_id::text, endpoint_id::text, event_type, event_id::text, payload, attempt_count
-		FROM webhook_deliveries
-		WHERE status IN ('pending','delivering') AND next_retry_at <= now()
-		ORDER BY next_retry_at ASC
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED
-	`, s.Batch)
+	batch, err := s.claim(ctx)
 	if err != nil {
 		s.Logger.Error("webhooks.delivery.claim_failed", "err", err)
 		return
 	}
-	defer rows.Close()
-
-	var batch []claimed
-	for rows.Next() {
-		var c claimed
-		if err := rows.Scan(&c.ID, &c.OrgID, &c.EndpointID, &c.EventType, &c.EventID, &c.Payload, &c.AttemptCount); err != nil {
-			s.Logger.Error("webhooks.delivery.scan_failed", "err", err)
-			continue
-		}
-		batch = append(batch, c)
-	}
-	if err := rows.Err(); err != nil {
-		s.Logger.Error("webhooks.delivery.rows_iter", "err", err)
-		return
-	}
-	if len(batch) == 0 {
-		return
-	}
-
 	for _, d := range batch {
 		s.deliverOne(ctx, d)
 	}
+}
+
+// claim atomically grabs a batch of due deliveries. It runs in a single
+// service-role transaction (webhook_deliveries has FORCE row-level
+// security, so a bare-pool query sees zero rows) and marks the claimed
+// rows 'delivering', bumps attempt_count, and pushes next_retry_at out by
+// the visibility timeout — all in one UPDATE ... RETURNING. Holding the
+// FOR UPDATE SKIP LOCKED rows inside the same tx that flips their status
+// is what prevents a second delivery worker from double-sending: the
+// commit both releases the locks and leaves the rows hidden (status
+// 'delivering', next_retry_at in the future) until they are done or the
+// visibility timeout lapses. The returned attempt_count is the new,
+// authoritative value.
+func (s *DeliveryService) claim(ctx context.Context) ([]claimed, error) {
+	var batch []claimed
+	err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, `
+			UPDATE webhook_deliveries
+			SET status = 'delivering',
+			    attempt_count = attempt_count + 1,
+			    next_retry_at = now() + make_interval(secs => $2)
+			WHERE id IN (
+				SELECT id FROM webhook_deliveries
+				WHERE status IN ('pending','delivering') AND next_retry_at <= now()
+				ORDER BY next_retry_at ASC
+				LIMIT $1
+				FOR UPDATE SKIP LOCKED
+			)
+			RETURNING id, org_id::text, endpoint_id::text, event_type, event_id::text, payload, attempt_count
+		`, s.Batch, claimVisibilityTimeout.Seconds())
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var c claimed
+			if err := rows.Scan(&c.ID, &c.OrgID, &c.EndpointID, &c.EventType, &c.EventID, &c.Payload, &c.AttemptCount); err != nil {
+				return err
+			}
+			batch = append(batch, c)
+		}
+		return rows.Err()
+	})
+	return batch, err
+}
+
+// withServiceTx runs fn inside a transaction with app.is_service set
+// transaction-locally. The delivery worker is a system component with no
+// request principal, so it must present as the service role to read and
+// write the FORCE-RLS webhook / audit tables across every org.
+func (s *DeliveryService) withServiceTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	conn, err := s.DB.Acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.is_service','true',true)"); err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 type endpointInfo struct {
@@ -202,130 +261,116 @@ type endpointInfo struct {
 
 func (s *DeliveryService) loadEndpoint(ctx context.Context, orgID, endpointID string) (endpointInfo, error) {
 	var info endpointInfo
-	err := s.DB.QueryRow(ctx, `
-		SELECT url, secret FROM webhook_endpoints
-		WHERE id = $1 AND org_id = $2 AND active = true
-	`, endpointID, orgID).Scan(&info.URL, &info.Secret)
+	err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT url, secret FROM webhook_endpoints
+			WHERE id = $1 AND org_id = $2 AND active = true
+		`, endpointID, orgID).Scan(&info.URL, &info.Secret)
+	})
 	return info, err
 }
 
+// deliverOne performs one delivery attempt. The row was already marked
+// 'delivering' with attempt_count incremented at claim time, so
+// d.AttemptCount is the authoritative attempt number. All state writes
+// run through service-role transactions (FORCE-RLS tables).
 func (s *DeliveryService) deliverOne(ctx context.Context, d claimed) {
-	if _, err := s.DB.Exec(ctx, `
-		UPDATE webhook_deliveries
-		SET status = 'delivering', attempt_count = attempt_count + 1
-		WHERE id = $1
-	`, d.ID); err != nil {
-		s.Logger.Error("webhooks.delivery.mark_delivering_failed",
-			"err", err, "delivery_id", d.ID,
-		)
-		return
-	}
-
-	newAttempt := d.AttemptCount + 1
+	attempt := d.AttemptCount
 
 	info, err := s.loadEndpoint(ctx, d.OrgID, d.EndpointID)
 	if err != nil {
-		// Endpoint is missing, deleted, or deactivated. Treat as a
-		// terminal failure: no point retrying.
-		s.markFailed(ctx, d, newAttempt, 0, "endpoint unavailable: "+err.Error())
-		_ = recordAudit(ctx, s.DB, d.OrgID, d.EndpointID, "webhook.delivery_fail", map[string]any{
-			"delivery_id": d.ID,
-			"event_type":  d.EventType,
-			"reason":      "endpoint_unavailable",
+		// Endpoint is missing, deleted, or deactivated. Terminal.
+		_ = s.finishDelivery(ctx, d, "failed", 0, "endpoint unavailable: "+err.Error(), time.Time{})
+		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.delivery_fail", map[string]any{
+			"delivery_id": d.ID, "event_type": d.EventType, "reason": "endpoint_unavailable",
 		})
 		return
 	}
 
 	statusCode, respBody, postErr := s.post(ctx, info, d)
 
-	success := postErr == nil && statusCode >= 200 && statusCode < 300
-	if success {
-		_, err := s.DB.Exec(ctx, `
-			UPDATE webhook_deliveries
-			SET status = 'delivered',
-			    response_status = $1,
-			    response_body = $2,
-			    delivered_at = now()
-			WHERE id = $3
-		`, statusCode, truncateBody(respBody), d.ID)
-		if err != nil {
-			s.Logger.Error("webhooks.delivery.mark_delivered_failed",
-				"err", err, "delivery_id", d.ID,
-			)
+	if postErr == nil && statusCode >= 200 && statusCode < 300 {
+		if err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `
+				UPDATE webhook_deliveries
+				SET status = 'delivered', response_status = $1, response_body = $2, delivered_at = now()
+				WHERE id = $3
+			`, statusCode, truncateBody(respBody), d.ID)
+			return err
+		}); err != nil {
+			s.Logger.Error("webhooks.delivery.mark_delivered_failed", "err", err, "delivery_id", d.ID)
 		}
-		_ = recordAudit(ctx, s.DB, d.OrgID, d.EndpointID, "webhook.deliver", map[string]any{
-			"delivery_id": d.ID,
-			"event_type":  d.EventType,
-			"status_code": statusCode,
-			"attempt":     newAttempt,
+		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.deliver", map[string]any{
+			"delivery_id": d.ID, "event_type": d.EventType, "status_code": statusCode, "attempt": attempt,
 		})
 		return
 	}
 
 	reason := failureReason(statusCode, postErr)
-	s.markFailed(ctx, d, newAttempt, statusCode, reason)
-
 	switch {
-	case newAttempt >= s.MaxAttempts:
-		_, _ = s.DB.Exec(ctx, `
-			UPDATE webhook_deliveries SET status = 'exhausted' WHERE id = $1
-		`, d.ID)
-		_ = recordAudit(ctx, s.DB, d.OrgID, d.EndpointID, "webhook.delivery_exhausted", map[string]any{
-			"delivery_id": d.ID,
-			"event_type":  d.EventType,
-			"attempts":    newAttempt,
+	case attempt >= s.MaxAttempts:
+		_ = s.finishDelivery(ctx, d, "exhausted", statusCode, reason, time.Time{})
+		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.delivery_exhausted", map[string]any{
+			"delivery_id": d.ID, "event_type": d.EventType, "attempts": attempt,
 		})
 	case shouldRetryStatus(statusCode):
-		nextAt := time.Now().Add(jitter(computeNextRetry(newAttempt, s.Backoff)))
-		_, err := s.DB.Exec(ctx, `
-			UPDATE webhook_deliveries
-			SET status = 'pending', next_retry_at = $1
-			WHERE id = $2
-		`, nextAt, d.ID)
-		if err != nil {
-			s.Logger.Error("webhooks.delivery.schedule_retry_failed",
-				"err", err, "delivery_id", d.ID,
-			)
-		}
+		nextAt := time.Now().Add(jitter(computeNextRetry(attempt, s.Backoff)))
+		_ = s.finishDelivery(ctx, d, "pending", statusCode, reason, nextAt)
+		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.delivery_fail", map[string]any{
+			"delivery_id": d.ID, "event_type": d.EventType, "status_code": statusCode, "attempt": attempt, "reason": reason,
+		})
 	default:
-		_, _ = s.DB.Exec(ctx, `
-			UPDATE webhook_deliveries SET status = 'failed' WHERE id = $1
-		`, d.ID)
+		_ = s.finishDelivery(ctx, d, "failed", statusCode, reason, time.Time{})
+		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.delivery_fail", map[string]any{
+			"delivery_id": d.ID, "event_type": d.EventType, "status_code": statusCode, "attempt": attempt, "reason": reason,
+		})
 	}
+}
 
-	_ = recordAudit(ctx, s.DB, d.OrgID, d.EndpointID, "webhook.delivery_fail", map[string]any{
-		"delivery_id": d.ID,
-		"event_type":  d.EventType,
-		"status_code": statusCode,
-		"attempt":     newAttempt,
-		"reason":      reason,
+// finishDelivery writes the terminal (or retry-scheduled) state plus the
+// failure detail in one service-role transaction. For status 'pending'
+// nextRetry sets the next attempt time; for terminal states it is zero
+// and left untouched.
+func (s *DeliveryService) finishDelivery(ctx context.Context, d claimed, status string, statusCode int, reason string, nextRetry time.Time) error {
+	return s.withServiceTx(ctx, func(tx pgx.Tx) error {
+		if status == "pending" {
+			_, err := tx.Exec(ctx, `
+				UPDATE webhook_deliveries
+				SET status = 'pending', next_retry_at = $1,
+				    response_status = NULLIF($2, 0), response_body = $3
+				WHERE id = $4
+			`, nextRetry, statusCode, reason, d.ID)
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE webhook_deliveries
+			SET status = $1::webhook_status,
+			    response_status = NULLIF($2, 0), response_body = $3
+			WHERE id = $4
+		`, status, statusCode, reason, d.ID)
+		return err
 	})
 }
 
-// recordAudit inserts an audit_log row tagged as a system actor.
-// The DeliveryService runs in the background with no request principal,
-// so all deliveries are attributed to the system actor type.
-func recordAudit(ctx context.Context, db *db.DB, orgID, resourceID, action string, metadata map[string]any) error {
-	if db == nil {
+// recordAudit inserts an audit_log row tagged as a system actor. The
+// DeliveryService runs in the background with no request principal, so
+// deliveries are attributed to the system actor type. audit_log is
+// FORCE-RLS, hence the service-role transaction.
+func (s *DeliveryService) recordAudit(ctx context.Context, orgID, resourceID, action string, metadata map[string]any) error {
+	if s.DB == nil {
 		return nil
 	}
 	metaJSON, err := json.Marshal(metadata)
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(ctx, `
-		INSERT INTO audit_log (id, org_id, user_id, actor_type, action, resource_type, resource_id, metadata, created_at)
-		VALUES ($1, $2::uuid, NULL, 'system'::actor_type, $3::audit_action, 'webhook', $4, $5::jsonb, now())
-	`, uuid.NewString(), orgID, action, resourceID, metaJSON)
-	return err
-}
-
-func (s *DeliveryService) markFailed(ctx context.Context, d claimed, attempt, statusCode int, reason string) {
-	_, _ = s.DB.Exec(ctx, `
-		UPDATE webhook_deliveries
-		SET response_status = NULLIF($1, 0), response_body = $2
-		WHERE id = $3
-	`, statusCode, reason, d.ID)
+	return s.withServiceTx(ctx, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO audit_log (id, org_id, user_id, actor_type, action, resource_type, resource_id, metadata, created_at)
+			VALUES ($1, $2::uuid, NULL, 'system'::actor_type, $3::audit_action, 'webhook', $4, $5::jsonb, now())
+		`, uuid.NewString(), orgID, action, resourceID, metaJSON)
+		return err
+	})
 }
 
 func (s *DeliveryService) post(ctx context.Context, info endpointInfo, d claimed) (int, []byte, error) {
@@ -368,10 +413,12 @@ func (s *DeliveryService) Enqueue(ctx context.Context, orgID, eventType, eventID
 	}
 
 	return s.DB.WithTenant(ctx, orgID, func(ctx context.Context) error {
-		// Select active endpoints whose subscribed_events contains
-		// either the concrete event type or the wildcard '*'. The
-		// text[] operator $1 = ANY(...) handles both cases.
-		rows, err := s.DB.Query(ctx, `
+		// Use the dbtx helpers (not s.DB.Query/Exec): inside WithTenant
+		// the org GUC lives on the transaction connection, and a bare
+		// pool call would acquire a *different* connection with no tenant
+		// context — RLS would then hide every endpoint and reject every
+		// insert, so no delivery rows would ever be created.
+		rows, err := dbtx.Query(ctx, s.DB, `
 			SELECT id::text FROM webhook_endpoints
 			WHERE org_id = $1 AND active = true
 			  AND ($2 = ANY(subscribed_events) OR '*' = ANY(subscribed_events))
@@ -394,7 +441,7 @@ func (s *DeliveryService) Enqueue(ctx context.Context, orgID, eventType, eventID
 		}
 
 		for _, id := range endpointIDs {
-			if _, err := s.DB.Exec(ctx, `
+			if _, err := dbtx.Exec(ctx, s.DB, `
 				INSERT INTO webhook_deliveries
 				  (id, org_id, endpoint_id, event_type, event_id, payload, status, next_retry_at, attempt_count, max_attempts, created_at)
 				VALUES
