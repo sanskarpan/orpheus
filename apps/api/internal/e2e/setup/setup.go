@@ -49,6 +49,7 @@ import (
 	"github.com/orpheus/api/internal/metrics"
 	"github.com/orpheus/api/internal/outbox"
 	"github.com/orpheus/api/internal/server"
+	"github.com/orpheus/api/internal/storage/s3"
 	"github.com/orpheus/api/internal/webhooks"
 )
 
@@ -389,8 +390,27 @@ func StartAPI(t *testing.T, ctx context.Context, pool *db.DB, natsURL string, po
 		Port:                 port,
 		ShutdownGraceSeconds: 5,
 	}
+
+	// Wire an S3 client from the test env when present so S3-backed
+	// endpoints (artifact signed-url, bundle download) are exercisable in
+	// e2e. Absent env → nil, and those endpoints simply aren't driven.
+	var s3c *s3.Client
+	if ep := os.Getenv("ORPHEUS_TEST_S3_ENDPOINT"); ep != "" {
+		if c, err := s3.New(bgCtx, &config.Config{
+			S3Endpoint:  ep,
+			S3AccessKey: os.Getenv("ORPHEUS_TEST_S3_ACCESS_KEY"),
+			S3SecretKey: os.Getenv("ORPHEUS_TEST_S3_SECRET_KEY"),
+			S3Bucket:    os.Getenv("ORPHEUS_TEST_S3_BUCKET"),
+		}); err == nil {
+			s3c = c
+		} else {
+			t.Logf("e2e: s3 client unavailable: %v", err)
+		}
+	}
+
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:      pool,
+		S3:      s3c,
 		Authn:   authn,
 		Audit:   auditRec,
 		Metrics: mtr,
