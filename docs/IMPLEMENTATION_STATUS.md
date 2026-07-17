@@ -22,7 +22,7 @@ Legend: ✅ done · 🟡 partial · ❌ not started.
 Monorepo (uv + pnpm), docker-compose stack, golangci-lint/ruff/pyright, CI,
 ADRs, distroless API image. Done.
 
-## Phase 1 — Core API & Auth ✅ (~95%)
+## Phase 1 — Core API & Auth ✅ (100%)
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -31,7 +31,7 @@ ADRs, distroless API image. Done.
 | Keycloak JWT validation | ✅ | Verifier + middleware; Keycloak itself is docker-compose only (no HA deploy — that's Phase 5). |
 | Upload endpoints + S3 presigned multipart | ✅ | Create/Complete/List/Get; 1 GB cap enforced at Create (`uploads.go:144`). |
 | **Synchronous** upload validation | ✅ | Content-type allow-list at Create (415) **and** authoritative magic-byte sniff at Complete (`audiosniff.go`), which deletes the object on mismatch. Async probe job still runs after. |
-| AV / malware scan | ❌ | `AVScanner` interface is wired into upload-complete but the scanner is `nil` (no active scan). Only real remaining Phase 1 gap. |
+| AV / malware scan | ✅ | Always-on built-in EICAR `SignatureScanner` + optional `clamd` (INSTREAM) behind `CLAMAV_ADDR`, chained; wired into upload-complete (infected → 422 + object deleted). `avscan` package. |
 | Idempotency key middleware | ✅ | Reserve-before-execute; method+path+body scoped; true-concurrency test. |
 | Per-tenant rate limit | ✅ | Redis sliding window, atomic Lua, fail-closed option. |
 | Audit log + middleware | ✅ | Writes under RLS; middleware + handler-level records. |
@@ -46,14 +46,14 @@ ADRs, distroless API image. Done.
 | Helm charts (API + worker) | ✅ | `infra/helm/orpheus-api` + `orpheus-worker` — real templates (deployment/service/hpa/configmap/scaledobject). |
 | ArgoCD dev/staging sync | ✅ | `infra/argocd/` ApplicationSet + per-env Applications + project. |
 
-## Phase 2 — Jobs & async processing ✅ (~90%)
+## Phase 2 — Jobs & async processing ✅ (~98%)
 
 | Item | Status | Notes |
 |------|--------|-------|
 | Async workers | ✅ | NATS JetStream consumer (not Arq). |
 | Processor registry | 🟡 | `register_processor` decorator + registry; per-processor metadata (timeout, max_retries, cost, tier, i/o schema) lives in the DB `processors` catalog rather than an in-code manifest. No hot-reload. |
 | `extract-metadata` / `probe` / `slice` processors | ✅ | Implemented + tested. |
-| `convert-to-wav` | 🟡 | Exists as an inline ffmpeg helper used by transcribe/diarize; the `convert-to-wav` job-type enum value is unused (no standalone processor). |
+| `convert-to-wav` | ✅ | Standalone processor: transcodes a source artifact to 16 kHz mono WAV, writes a new `audio/wav` artifact (deterministic id); catalog-seeded (0017) so it's API-submittable. |
 | Job state machine (queued→running→completed/failed) | ✅ | Plus `dead_letter` and `canceled`. |
 | `POST /v1/jobs`, `GET /v1/jobs/{id}`, cancel | ✅ | Cancel is `DELETE /v1/jobs/{id}` (spec says `POST .../cancel`). |
 | Bulk create | ✅ | `POST /v1/jobs/bulk`. |
@@ -63,7 +63,7 @@ ADRs, distroless API image. Done.
 | Cost attribution per job | ✅ | Computed from wall-clock × `cost_usd_per_second` at completion; aggregated into `usage_rollup_hourly` (PRD 07). Per-processor `cost_per_job_usd` column still unused. |
 | Cleanup / retention job | ✅ | See Phase 1 retention sweeper. |
 | Grafana dashboards | ✅ | `monitoring/grafana/dashboards/workers-queue.json` (+ 3 others). |
-| Direct queue-depth metric | 🟡 | Dashboards infer backlog from `rate(submitted) - rate(processed)`; no direct NATS `num_pending` gauge. |
+| Direct queue-depth metric | ✅ | `orpheus_jetstream_pending_messages` gauge (stream, consumer), polled from `consumer_info().num_pending` every `queue_depth_poll_seconds`. |
 | Worker Helm chart | ✅ | `infra/helm/orpheus-worker` with KEDA `scaledobject`. |
 
 ## Phase 3 — Observability & SRE 🟡 (~40%)
@@ -174,9 +174,12 @@ federated cost reporting, moderation queue all not started.
 Verified 2026-07-17. Most of the roadmap's *core capabilities* exist; the gaps are
 now specific.
 
-- **Phase 1 (~95%)** — only: **active AV/malware scan** (interface is `nil`).
-- **Phase 2 (~90%)** — **`convert-to-wav` standalone processor**; **direct
-  queue-depth gauge**; (optional) in-code processor manifest/hot-reload.
+- **Phase 1 (100%)** — complete. AV/malware scan now active (built-in EICAR +
+  optional clamd).
+- **Phase 2 (~98%)** — complete for the roadmap's capabilities (DLQ+requeue,
+  retry/backoff, per-tenant concurrency, computed cost, `convert-to-wav`,
+  direct queue-depth gauge). Only nicety left: an in-code processor
+  manifest/hot-reload (metadata currently lives in the DB catalog).
 - **Phase 3 (~40%)** — Alertmanager→PagerDuty/Slack wiring; synthetic canary;
   Pyroscope; more dashboards/runbooks; chaos/DR.
 - **Phase 4 (~60%)** — GPU pool + gVisor; model registry + checksums; wire the Go
