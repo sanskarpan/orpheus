@@ -1420,6 +1420,62 @@
           }
         }
       }
+    },
+    "/v1/cache/stats": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Content-cache statistics",
+        "description": "Cache hit/miss counts, hit rate, and estimated savings for the current billing period (PRD 01).",
+        "operationId": "getCacheStats",
+        "responses": {
+          "200": {
+            "description": "Cache stats.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CacheStats"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
+        }
+      }
+    },
+    "/v1/cache": {
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Invalidate cache entries for a model version",
+        "description": "Purge content-cache entries produced by a given model_version_id (admin). Org-scoped.",
+        "operationId": "invalidateCache",
+        "parameters": [
+          {
+            "name": "model_version_id",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Number of entries deleted."
+          },
+          "400": {
+            "description": "model_version_id required."
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2148,6 +2204,16 @@
             "minLength": 1,
             "maxLength": 255,
             "description": "Optional inline alternative to the `Idempotency-Key` header. If both are supplied they must be equal; otherwise the request is rejected with `400`."
+          },
+          "cache": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "bypass",
+              "only"
+            ],
+            "default": "auto",
+            "description": "Content-cache mode (PRD 01)."
           }
         }
       },
@@ -2247,6 +2313,18 @@
             "type": "string",
             "format": "uri",
             "description": "Convenience URL to `GET /v1/jobs/{id}`. Returned on creation responses; not stored long-term."
+          },
+          "cache": {
+            "type": "string",
+            "enum": [
+              "hit",
+              "miss"
+            ],
+            "description": "Whether the result was served from cache."
+          },
+          "cached_from_job_id": {
+            "type": "string",
+            "format": "uuid"
           }
         }
       },
@@ -3241,6 +3319,29 @@
         "required": [
           "checkout_url"
         ]
+      },
+      "CacheStats": {
+        "type": "object",
+        "properties": {
+          "entries": {
+            "type": "integer"
+          },
+          "hits": {
+            "type": "integer"
+          },
+          "misses": {
+            "type": "integer"
+          },
+          "hit_rate": {
+            "type": "number"
+          },
+          "est_savings_usd": {
+            "type": "number"
+          },
+          "period": {
+            "type": "string"
+          }
+        }
       }
     }
   }

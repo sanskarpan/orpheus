@@ -173,6 +173,9 @@ class Worker:
             cost = duration * self._settings.cost_usd_per_second
             metrics.JOBS_PROCESSED.labels(processor=processor_name, status="completed").inc()
             self._db.mark_job_completed(job_id, result or {}, cost_usd=cost)
+            # Content-addressed cache (PRD 01): populate from the completed
+            # job when it carries cache_meta (no-op otherwise).
+            self._db.populate_result_cache(job_id, result or {})
             self._sync_workflow_status(job_id, params, completed=True, result=result or {})
             self._db.enqueue_outbox(
                 org_id=org_id,
