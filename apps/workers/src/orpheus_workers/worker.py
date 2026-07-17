@@ -24,6 +24,7 @@ from .observability.tracing import init as init_tracing
 from .processors import get_processor
 from .processors import (  # noqa: F401  (registers handlers)
     audio_ops,
+    convert_to_wav,
     export_bundle,
     extract_metadata,
     ingest_url,
