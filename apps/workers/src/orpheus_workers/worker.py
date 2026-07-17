@@ -27,6 +27,7 @@ from .processors import (  # noqa: F401  (registers handlers)
     extract_metadata,
     probe,
     slice,
+    text_ops,
     transcribe,
 )
 from .s3 import WorkerS3
