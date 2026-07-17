@@ -29,6 +29,8 @@ dependencies = [
 # Real CPU speaker diarization (PRD 05). Heavy (torch); installed on demand.
 # Without it, audio.diarize falls back to the deterministic stub.
 diarize = ["pyannote.audio>=3.1"]
+# ML NER for PII (PRD 08). Without it, redaction uses the regex detector.
+pii = ["presidio-analyzer>=2.2"]
 
 [project.scripts]
 orpheus-streaming = "orpheus_workers.streaming:main"

@@ -112,9 +112,9 @@ func (h *ArtifactHandler) GetSignedURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var s3Bucket, s3Key string
+	var s3Bucket, s3Key, sensitivity string
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return dbtx.QueryRow(ctx, h.DB, `SELECT s3_bucket, s3_key FROM artifacts WHERE id = $1`, id).Scan(&s3Bucket, &s3Key)
+		return dbtx.QueryRow(ctx, h.DB, `SELECT s3_bucket, s3_key, COALESCE(sensitivity,'normal') FROM artifacts WHERE id = $1`, id).Scan(&s3Bucket, &s3Key, &sensitivity)
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -122,6 +122,11 @@ func (h *ArtifactHandler) GetSignedURL(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to get artifact")
+		return
+	}
+	// PRD 08: an un-redact PII mapping requires the elevated pii:unmask scope.
+	if sensitivity == "pii_mapping" && !p.HasScope("pii:unmask") {
+		writeProblem(w, http.StatusForbidden, "forbidden", "pii:unmask scope required")
 		return
 	}
 

@@ -3411,7 +3411,8 @@
           "webhooks:write",
           "usage:read",
           "audit:read",
-          "*"
+          "*",
+          "pii:unmask"
         ],
         "example": "jobs:read"
       },

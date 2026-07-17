@@ -9,6 +9,7 @@ import structlog
 
 from ..ffmpeg import FFmpegError, convert_to_wav_16k_mono
 from ..ffmpeg import slice as ffmpeg_slice
+from ..redact import maybe_redact
 from ..transcribe import TranscribeError, transcribe
 from ..validation import MAX_CHUNKS, ParamError, parse_chunk_seconds
 from . import register_processor
@@ -65,7 +66,11 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
 
         duration = _wav_duration(wav_path)
         if duration <= chunk_seconds:
-            return _transcribe_one(wav_path, offset=0.0, word_timestamps=word_timestamps)
+            res = _transcribe_one(wav_path, offset=0.0, word_timestamps=word_timestamps)
+            redactions = maybe_redact(res, params)
+            if redactions:
+                res["redactions"] = redactions
+            return res
 
         model_size = os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
         model_dir = os.environ.get("ORPHEUS_WORKER_WHISPER_DIR") or None
@@ -119,12 +124,16 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 all_text.append(text)
             if i == 0 and result.get("language"):
                 language = result["language"]
-        return {
+        chunked = {
             "text": " ".join(all_text).strip(),
             "segments": all_segments,
             "language": language,
             "duration_seconds": duration,
         }
+        redactions = maybe_redact(chunked, params)
+        if redactions:
+            chunked["redactions"] = redactions
+        return chunked
     finally:
         for p in (src_path, wav_path):
             try:
