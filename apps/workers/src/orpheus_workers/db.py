@@ -62,6 +62,39 @@ class WorkerDB:
             job_id,
         )
 
+    def populate_result_cache(self, job_id: str, result: dict[str, Any]) -> None:
+        """Populate the content-addressed cache (PRD 01) from a completed job.
+
+        The cache key + hashes were computed once in the API and stored on the
+        job as ``cache_meta`` (``{ck,ih,ph,mv}``), so the worker copies them
+        verbatim — read and write can never disagree on the key. A no-op when
+        the job carries no ``cache_meta``. Runs with the service role, so RLS
+        is satisfied and ``org_id`` comes from the job row.
+        """
+        self.execute(
+            """
+            INSERT INTO job_result_cache (
+                org_id, cache_key, input_hash, params_hash, model_version_id,
+                source_job_id, result
+            )
+            SELECT
+                org_id,
+                decode(cache_meta->>'ck', 'hex'),
+                cache_meta->>'ih',
+                cache_meta->>'ph',
+                cache_meta->>'mv',
+                id,
+                %s::jsonb
+            FROM jobs
+            WHERE id = %s AND cache_meta IS NOT NULL
+            ON CONFLICT (org_id, cache_key) DO UPDATE
+                SET result = EXCLUDED.result,
+                    source_job_id = EXCLUDED.source_job_id
+            """,
+            json.dumps(result),
+            job_id,
+        )
+
     def mark_job_failed(self, job_id: str, error: str) -> None:
         self.execute(
             "UPDATE jobs SET status = 'failed'::job_status, result = %s, completed_at = now() WHERE id = %s",

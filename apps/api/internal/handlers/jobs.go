@@ -17,6 +17,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -57,6 +58,10 @@ type CreateJobRequest struct {
 	Processor  ProcessorRef    `json:"processor"`
 	Params     json.RawMessage `json:"params,omitempty"`
 	Priority   int             `json:"priority,omitempty"`
+	// Cache controls the content-addressed result cache (PRD 01):
+	// auto (default) = return a prior result on hit; bypass = force
+	// recompute but still populate; only = 409 if not already cached.
+	Cache string `json:"cache,omitempty"`
 }
 
 // Job is the response shape for POST /v1/jobs and GET /v1/jobs/{id}.
@@ -72,10 +77,14 @@ type Job struct {
 	Attempts    int             `json:"attempts"`
 	MaxAttempts int             `json:"max_retries"`
 	CostUSD     float64         `json:"cost_usd,omitempty"`
-	CreatedAt   time.Time       `json:"created_at"`
-	UpdatedAt   time.Time       `json:"updated_at"`
-	StartedAt   *time.Time      `json:"started_at,omitempty"`
-	CompletedAt *time.Time      `json:"completed_at,omitempty"`
+	// Cache is "hit" when this job's result was served from the cache,
+	// "miss" when it was newly enqueued (omitted when caching didn't apply).
+	Cache           string     `json:"cache,omitempty"`
+	CachedFromJobID string     `json:"cached_from_job_id,omitempty"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	StartedAt       *time.Time `json:"started_at,omitempty"`
+	CompletedAt     *time.Time `json:"completed_at,omitempty"`
 }
 
 // JobList is a cursor-paginated list of jobs.
@@ -134,14 +143,24 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheMode := req.Cache
+	if cacheMode == "" {
+		cacheMode = "auto"
+	}
+	if cacheMode != "auto" && cacheMode != "bypass" && cacheMode != "only" {
+		writeProblem(w, http.StatusBadRequest, "validation", "cache must be auto, bypass, or only")
+		return
+	}
+
 	// Look up the processor + version in the public catalog.
-	var processorID, versionID string
+	var processorID, versionID, modelVersionID string
+	var cacheable bool
 	err = h.DB.QueryRow(r.Context(), `
-		SELECT p.id::text, pv.id::text
+		SELECT p.id::text, pv.id::text, pv.model_version_id, pv.cacheable
 		FROM processors p
 		JOIN processor_versions pv ON pv.processor_id = p.id
 		WHERE p.name = $1 AND pv.version = $2 AND pv.deprecated_at IS NULL
-	`, req.Processor.Name, req.Processor.Version).Scan(&processorID, &versionID)
+	`, req.Processor.Name, req.Processor.Version).Scan(&processorID, &versionID, &modelVersionID, &cacheable)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeProblem(w, http.StatusBadRequest, "validation", "Unknown or deprecated processor/version")
@@ -151,15 +170,50 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the artifact belongs to this org. RLS scopes the read to
-	// the caller's org automatically.
-	var artifactOK bool
+	// Verify the artifact belongs to this org and get its content hash.
+	// RLS scopes the read to the caller's org automatically.
+	var inputHash string
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
-		return dbtx.QueryRow(ctx, h.DB, `SELECT EXISTS(SELECT 1 FROM artifacts WHERE id = $1)`, req.ArtifactID).Scan(&artifactOK)
+		return dbtx.QueryRow(ctx, h.DB, `SELECT sha256 FROM artifacts WHERE id = $1`, req.ArtifactID).Scan(&inputHash)
 	})
-	if err != nil || !artifactOK {
+	if err != nil {
 		writeProblem(w, http.StatusNotFound, "not_found", "Artifact not found")
 		return
+	}
+
+	// Content-addressed cache (PRD 01). Compute the key when the processor
+	// is cacheable; read it unless the caller asked to bypass.
+	var cacheMetaArg any // nil unless we want the worker to populate the cache
+	if cacheable {
+		paramsHash, herr := canonicalParamsHash(req.Params)
+		if herr != nil {
+			writeProblem(w, http.StatusBadRequest, "validation", "Invalid params JSON")
+			return
+		}
+		cacheKey := computeCacheKey(inputHash, paramsHash, modelVersionID)
+
+		if cacheMode != "bypass" {
+			hit, err := h.serveCacheHit(w, r, p.OrgID, req, cacheKey)
+			if err != nil {
+				writeProblem(w, http.StatusInternalServerError, "internal", "Cache lookup failed")
+				return
+			}
+			if hit {
+				return // response already written
+			}
+			if cacheMode == "only" {
+				writeProblem(w, http.StatusConflict, "cache-miss", "No cached result for this input")
+				return
+			}
+		}
+		// auto-miss or bypass → populate the cache when the worker finishes.
+		meta, _ := json.Marshal(map[string]string{
+			"ck": hex.EncodeToString(cacheKey),
+			"ih": inputHash,
+			"ph": paramsHash,
+			"mv": modelVersionID,
+		})
+		cacheMetaArg = meta
 	}
 
 	id := uuid.NewString()
@@ -177,13 +231,15 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		_, err := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO jobs (
 				id, org_id, user_id, artifact_id, job_type, params,
-				status, priority, max_retries, attempts, version, created_at, updated_at
+				status, priority, max_retries, attempts, version, created_at, updated_at,
+				cache_meta
 			)
 			VALUES (
 				$1, $2, NULLIF($3, '')::uuid, $4, 'custom'::job_type, $5::jsonb,
-				'queued'::job_status, $6, 3, 0, 1, $7, $7
+				'queued'::job_status, $6, 3, 0, 1, $7, $7,
+				$8::jsonb
 			)
-		`, id, p.OrgID, p.UserID, req.ArtifactID, paramsArg, req.Priority, now)
+		`, id, p.OrgID, p.UserID, req.ArtifactID, paramsArg, req.Priority, now, cacheMetaArg)
 		if err != nil {
 			return err
 		}
@@ -214,6 +270,10 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Metadata:     map[string]any{"processor": req.Processor.Name, "version": req.Processor.Version},
 	})
 
+	cacheField := ""
+	if cacheable {
+		cacheField = "miss"
+	}
 	w.Header().Set("Location", "/v1/jobs/"+id)
 	writeJSON(w, http.StatusAccepted, Job{
 		ID:          id,
@@ -222,9 +282,106 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Status:      "queued",
 		Params:      req.Params,
 		MaxAttempts: 3,
+		Cache:       cacheField,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	})
+}
+
+// serveCacheHit looks up a cached result for the given key; on a hit it
+// creates a completed job row (cost 0, cache_hit=true), bumps the cache
+// entry, emits a job.completed event, writes the 200 response, and returns
+// true. On a miss it returns false with the response untouched.
+func (h *JobHandler) serveCacheHit(w http.ResponseWriter, r *http.Request, orgID string, req CreateJobRequest, cacheKey []byte) (bool, error) {
+	id := uuid.NewString()
+	now := time.Now()
+	storedParams := mergeProcessorIntoParams(req.Params, req.Processor)
+	paramsArg := []byte(`{}`)
+	if len(storedParams) > 0 {
+		paramsArg = storedParams
+	}
+
+	var (
+		cachedResult json.RawMessage
+		sourceJobID  string
+		found        bool
+	)
+	err := h.DB.WithTenant(r.Context(), orgID, func(ctx context.Context) error {
+		res, src, ok, lerr := cacheLookup(ctx, h.DB, cacheKey)
+		if lerr != nil || !ok {
+			found = ok
+			return lerr
+		}
+		found, cachedResult, sourceJobID = true, res, src
+
+		if _, e := dbtx.Exec(ctx, h.DB, `
+			INSERT INTO jobs (
+				id, org_id, user_id, artifact_id, job_type, params,
+				status, priority, max_retries, attempts, version,
+				cache_hit, cached_from_job_id, cost_usd,
+				created_at, updated_at, started_at, completed_at
+			)
+			VALUES (
+				$1, $2, NULLIF($3, '')::uuid, $4, 'custom'::job_type, $5::jsonb,
+				'completed'::job_status, $6, 3, 0, 1,
+				true, $7::uuid, 0,
+				$8, $8, $8, $8
+			)
+		`, id, orgID, "", req.ArtifactID, paramsArg, req.Priority, sourceJobID, now); e != nil {
+			return e
+		}
+		if _, e := dbtx.Exec(ctx, h.DB, `
+			UPDATE job_result_cache SET hit_count = hit_count + 1, last_hit_at = now()
+			WHERE cache_key = $1
+		`, cacheKey); e != nil {
+			return e
+		}
+		return outbox.Enqueue(ctx, h.DB, outbox.Event{
+			OrgID:         orgID,
+			AggregateType: "job",
+			AggregateID:   id,
+			EventType:     "job.completed",
+			Payload: map[string]any{
+				"job_id":             id,
+				"job_type":           req.Processor.Name,
+				"cache":              "hit",
+				"cost_usd":           0,
+				"cached_from_job_id": sourceJobID,
+			},
+		})
+	})
+	if err != nil || !found {
+		return false, err
+	}
+
+	if h.Metrics != nil {
+		h.Metrics.JobsSubmitted.WithLabelValues(req.Processor.Name).Inc()
+	}
+	_ = h.Audit.Record(r.Context(), audit.Entry{
+		Action:       "job.create",
+		ResourceType: "job",
+		ResourceID:   id,
+		Metadata:     map[string]any{"processor": req.Processor.Name, "cache": "hit", "cached_from_job_id": sourceJobID},
+	})
+
+	w.Header().Set("Location", "/v1/jobs/"+id)
+	writeJSON(w, http.StatusOK, Job{
+		ID:              id,
+		ArtifactID:      req.ArtifactID,
+		Processor:       req.Processor,
+		Status:          "completed",
+		Params:          req.Params,
+		Result:          cachedResult,
+		MaxAttempts:     3,
+		Cache:           "hit",
+		CachedFromJobID: sourceJobID,
+		CostUSD:         0,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		StartedAt:       &now,
+		CompletedAt:     &now,
+	})
+	return true, nil
 }
 
 // Get handles GET /v1/jobs/{id}. RLS scopes the read to the caller's
@@ -241,6 +398,8 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 		j                      Job
 		paramsJSON, resultJSON []byte
 		startedAt, completedAt *time.Time
+		cacheHit               bool
+		cachedFromJobID        *string
 	)
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		return dbtx.QueryRow(ctx, h.DB, `
@@ -257,7 +416,9 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 				created_at,
 				updated_at,
 				started_at,
-				completed_at
+				completed_at,
+				cache_hit,
+				cached_from_job_id::text
 			FROM jobs WHERE id = $1
 		`, id).Scan(
 			&j.ID,
@@ -273,6 +434,8 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 			&j.UpdatedAt,
 			&startedAt,
 			&completedAt,
+			&cacheHit,
+			&cachedFromJobID,
 		)
 	})
 	if err != nil {
@@ -304,6 +467,12 @@ func (h *JobHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	j.StartedAt = startedAt
 	j.CompletedAt = completedAt
+	if cacheHit {
+		j.Cache = "hit"
+	}
+	if cachedFromJobID != nil {
+		j.CachedFromJobID = *cachedFromJobID
+	}
 
 	writeJSON(w, http.StatusOK, j)
 }
