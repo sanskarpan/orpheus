@@ -23,6 +23,7 @@ from .db import WorkerDB
 from .observability.tracing import init as init_tracing
 from .processors import get_processor
 from .processors import (  # noqa: F401  (registers handlers)
+    audio_ops,
     export_bundle,
     extract_metadata,
     probe,

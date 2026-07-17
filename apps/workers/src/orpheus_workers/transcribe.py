@@ -32,13 +32,15 @@ def transcribe(
     wav_path: str | Path,
     model_size: str = "tiny.en",
     model_dir: str | None = None,
+    word_timestamps: bool = False,
 ) -> dict:
     """Transcribe a 16kHz mono wav file.
 
     Returns ``{text, segments, language, duration_seconds}`` where
     ``segments`` is a list of ``{start, end, text}`` dicts, ``text``
     is the full transcript, and ``language`` is the detected
-    language code.
+    language code. When ``word_timestamps`` is set, each segment also
+    carries ``words = [{start, end, word, confidence}]`` (PRD 05).
     """
     model = _load_model(model_size, model_dir)
     try:
@@ -46,10 +48,23 @@ def transcribe(
             str(wav_path),
             beam_size=5,
             language="en",
+            word_timestamps=word_timestamps,
         )
-        segments = [
-            {"start": seg.start, "end": seg.end, "text": seg.text.strip()} for seg in segments_iter
-        ]
+        segments = []
+        for seg in segments_iter:
+            entry = {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
+            words = getattr(seg, "words", None) if word_timestamps else None
+            if words:
+                entry["words"] = [
+                    {
+                        "start": w.start,
+                        "end": w.end,
+                        "word": w.word.strip(),
+                        "confidence": float(getattr(w, "probability", 0.0) or 0.0),
+                    }
+                    for w in words
+                ]
+            segments.append(entry)
         text = " ".join(s["text"] for s in segments).strip()
         return {
             "text": text,
