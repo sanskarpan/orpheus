@@ -75,11 +75,36 @@ ADRs, distroless API image. Done.
 | Temporal + saga compensation | ❌ | |
 | GPU worker pool + gVisor sandbox | ❌ | CPU only today. |
 | Model registry (S3, checksums) | ❌ | Model is downloaded by faster-whisper. |
-| `diarize` processor + alignment | ❌ | |
+| `diarize` processor + alignment | ✅ | PRD 05 (#187): pyannote `diarize` + transcript/word alignment + word-level timestamps + SRT/VTT subtitle export. |
 
-## Phases 5–8 — ❌ not started
+## PRD wave (2026-07) — feature expansion ✅
+
+A wave of tenant-facing feature PRDs (`docs/prd/`) shipped on top of the existing
+system. Each is org-scoped + RLS-forced, wired into the API and OpenAPI, emits
+subscribable webhook events, and was verified end-to-end against real
+Postgres + MinIO + NATS. Tracked as issues #195–#204.
+
+| PRD | Feature | PR | Touches roadmap |
+|-----|---------|----|-----------------|
+| 01 | Content-addressed job result cache | #183 | Phase 6 "Result cache (content-addressed)" ✅ |
+| 02 | Signed, expiring artifact download bundles / zip export | #184 | new |
+| 03 | Webhook endpoint tester + delivery replay | #185 | Phase 1 webhook delivery ↑ |
+| 04 | Language detect + translate + LLM summarize | #186 | new |
+| 05 | Diarization + word timestamps + SRT/VTT export | #187 | Phase 4 diarize/alignment ✅ |
+| 06 | Batch/callback API + presigned push to tenant S3 | #189 | new |
+| 07 | Per-tenant usage analytics + budgets + cost rollup | #190 | Phase 6 "usage-based billing rollup" ✅; Phase 2 cost attribution ↑ |
+| 08 | PII redaction in transcripts + logs | #191 | new |
+| 09 | Resumable multipart uploads + SSRF-safe URL ingest | #192 | Phase 1 uploads ↑ |
+| 10 | GDPR erasure (hard delete + verifiable S3 purge) | #193 | Phase 5 data-lifecycle compliance ↑ |
+
+Comprehensive cross-feature e2e: #188 (PRD 01–05) and #194 (PRD 06–10).
+
+## Phases 5–8 — ❌ not started (unchanged by the PRD wave)
 Production hardening (multi-region/HA/SOC2), scale/polish (Ray Serve, web UI,
 billing rollup, SDK releases), marketplace / BYO model, streaming/realtime.
+The PRD wave delivered a few Phase 6 line items (result cache, usage rollup) and
+a Phase 5 compliance path (GDPR erasure), but the infrastructure bulk of 5–8
+remains not started.
 
 ---
 
@@ -91,7 +116,9 @@ Highest-value gaps, roughly in priority order:
    validation is async.
 2. **Dead-letter queue** with a requeue path + alerting (only `exhausted`/`failed`
    statuses exist).
-3. **Cost attribution** (compute `cost_usd` from CPU/GPU-seconds) and a usage rollup.
+3. **Cost attribution** (compute `cost_usd` from CPU/GPU-seconds) — a per-tenant
+   **usage rollup + budgets + cost analytics** now exists (PRD 07 / #190); computing
+   `cost_usd` from actual CPU/GPU-seconds is still open.
 4. **Per-tenant concurrency limits** and per-processor retry orchestration.
 5. **Cleanup / retention job** (expire old uploads/artifacts/idempotency keys).
 6. **Observability stack** — dashboards, SLOs, alerting, runbooks (OTel/metrics
@@ -99,6 +126,7 @@ Highest-value gaps, roughly in priority order:
 7. **Client SDKs** (Python/TypeScript) generated from OpenAPI/proto.
 8. **Deploy tooling** — Helm charts, Terraform, ArgoCD (infra/ is a placeholder).
 9. **Workflow engine** (Temporal) + saga compensation for multi-step flows.
-10. **GPU inference** + model registry + `diarize`/alignment processors.
+10. **GPU inference** + model registry. (`diarize` + alignment now shipped on CPU —
+    PRD 05 / #187.)
 11. **Web UI** (admin dashboard, docs site) and **billing**.
 12. **Streaming / realtime** transcription (WebRTC + WebSocket).
