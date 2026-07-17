@@ -44,6 +44,7 @@ type Options struct {
 	Metrics     *metrics.Metrics
 	Billing     billing.Provider
 	Deliverer   *delivery.Deliverer
+	Scanner     handlers.AVScanner
 }
 
 // Server is the HTTP server for the Orpheus API.
@@ -184,7 +185,7 @@ func (s *Server) v1Routes() {
 		// "*"). RequireScope is a no-op for unscoped tokens by design.
 		rs := auth.RequireScope
 
-		uh := &handlers.UploadHandler{DB: s.opts.DB, S3: s.opts.S3, Audit: s.opts.Audit}
+		uh := &handlers.UploadHandler{DB: s.opts.DB, S3: s.opts.S3, Audit: s.opts.Audit, Scanner: s.opts.Scanner}
 		r.With(rs("uploads:write")).Post("/uploads", uh.Create)
 		r.With(rs("uploads:write")).Post("/uploads/url", uh.CreateURLIngest)
 		r.With(rs("uploads:write")).Post("/uploads/{id}/complete", uh.Complete)

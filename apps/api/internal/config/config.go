@@ -60,6 +60,13 @@ type Config struct {
 	// live. One bucket per environment; key prefix encodes the org id.
 	S3Bucket string `envconfig:"S3_BUCKET" default:"orpheus-uploads"`
 
+	// AVScanEnabled turns on the always-on built-in signature scanner
+	// (EICAR) at upload completion. ClamAVAddr, when set (host:port),
+	// additionally routes each completed upload through a clamd daemon via
+	// INSTREAM; when empty only the built-in scanner runs.
+	AVScanEnabled bool   `envconfig:"AV_SCAN_ENABLED" default:"true"`
+	ClamAVAddr    string `envconfig:"CLAMAV_ADDR" default:""`
+
 	// RateLimitFailClosed, when true, makes the rate-limit middleware
 	// reject requests with 503 if the Redis backend errors (instead of
 	// failing open). It is forced on in prod regardless of this value.

@@ -29,12 +29,14 @@ import (
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
+	"github.com/orpheus/api/internal/avscan"
 	batchingpkg "github.com/orpheus/api/internal/batching"
 	"github.com/orpheus/api/internal/billing"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
 	deliverypkg "github.com/orpheus/api/internal/delivery"
 	erasurepkg "github.com/orpheus/api/internal/erasure"
+	"github.com/orpheus/api/internal/handlers"
 	"github.com/orpheus/api/internal/idempotency"
 	"github.com/orpheus/api/internal/jobs"
 	"github.com/orpheus/api/internal/logging"
@@ -117,6 +119,21 @@ func run() error {
 	s3c, err := s3.New(ctx, cfg)
 	if err != nil {
 		return fmt.Errorf("orpheus_api.s3_open: %w", err)
+	}
+
+	// Upload malware scanning. The built-in EICAR signature scanner is
+	// always on (unless AV_SCAN_ENABLED=false); a clamd daemon, when
+	// configured via CLAMAV_ADDR, is chained after it for real scanning.
+	var avScanner handlers.AVScanner
+	if cfg.AVScanEnabled {
+		sig := &avscan.SignatureScanner{Reader: s3c}
+		if cfg.ClamAVAddr != "" {
+			avScanner = avscan.Chain{sig, &avscan.Clamd{Addr: cfg.ClamAVAddr, Reader: s3c}}
+			logger.Info("av_scan.enabled", "clamd", cfg.ClamAVAddr)
+		} else {
+			avScanner = sig
+			logger.Info("av_scan.enabled", "clamd", "none (built-in signature only)")
+		}
 	}
 
 	// Auth stack. Both verifiers share the same pool; either may be
@@ -229,6 +246,7 @@ func run() error {
 		Metrics:     mtr,
 		Billing:     billingProvider,
 		Deliverer:   deliverer,
+		Scanner:     avScanner,
 	})
 
 	logger.Info("orpheus_api.ready", "addr", cfg.Addr())

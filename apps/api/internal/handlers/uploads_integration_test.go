@@ -16,6 +16,7 @@ import (
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
+	"github.com/orpheus/api/internal/avscan"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/dbtx"
@@ -252,5 +253,101 @@ func TestUploadComplete_RejectsNonAudio(t *testing.T) {
 	h.Complete(crec, creq)
 	if crec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("Complete = %d, want 415 (non-audio should be rejected); body=%s", crec.Code, crec.Body.String())
+	}
+}
+
+// eicarWAV returns a file with a valid WAV header (so it passes the
+// magic-byte gate) whose data chunk carries the EICAR test signature (so the
+// AV scanner must reject it). Assembled from fragments to keep the contiguous
+// EICAR string out of source.
+func eicarWAV() []byte {
+	eicar := []byte(`X5O!P%@AP[4\PZX54(P^)7CC)7}` + `$EICAR-STANDARD-ANTIVIRUS-` + `TEST-FILE!$H+H*`)
+	buf := new(bytes.Buffer)
+	buf.WriteString("RIFF")
+	writeLE32(buf, uint32(36+len(eicar)))
+	buf.WriteString("WAVE")
+	buf.WriteString("fmt ")
+	writeLE32(buf, 16)
+	writeLE16(buf, 1)
+	writeLE16(buf, 1)
+	writeLE32(buf, 8000)
+	writeLE32(buf, 8000)
+	writeLE16(buf, 1)
+	writeLE16(buf, 8)
+	buf.WriteString("data")
+	writeLE32(buf, uint32(len(eicar)))
+	buf.Write(eicar)
+	return buf.Bytes()
+}
+
+// TestUploadComplete_RejectsEICAR proves the AV scan gate: a file that passes
+// the audio magic-byte gate but carries the EICAR signature in its body is
+// rejected with 422 at Complete and the object is deleted. A clean WAV with
+// the same scanner still completes.
+func TestUploadComplete_RejectsEICAR(t *testing.T) {
+	if os.Getenv("ORPHEUS_TEST_S3") == "" {
+		t.Skip("ORPHEUS_TEST_S3 not set")
+	}
+	dsn := os.Getenv("ORPHEUS_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("ORPHEUS_TEST_DATABASE_URL not set")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cfg := &config.Config{
+		S3Endpoint:  envOr("ORPHEUS_S3_ENDPOINT", "http://localhost:9000"),
+		S3AccessKey: envOr("ORPHEUS_S3_ACCESS_KEY", "orpheus"),
+		S3SecretKey: envOr("ORPHEUS_S3_SECRET_KEY", "orpheus-dev-secret"),
+		S3Bucket:    envOr("ORPHEUS_S3_BUCKET", "orpheus-uploads"),
+	}
+	s3c, err := s3.New(ctx, cfg)
+	if err != nil {
+		t.Fatalf("s3.New: %v", err)
+	}
+	sut := testArtifactDB(t)
+	svc := testServiceDB(t)
+	orgID := uuid.NewString()
+	if _, err := svc.Exec(ctx, `INSERT INTO organizations (id, name, slug) VALUES ($1,$2,$2)`, orgID, "av-"+orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	t.Cleanup(func() {
+		cctx, c := context.WithTimeout(context.Background(), 10*time.Second)
+		defer c()
+		_, _ = svc.Exec(cctx, `DELETE FROM organizations WHERE id=$1`, orgID)
+	})
+
+	h := &UploadHandler{DB: sut, S3: s3c, Audit: newTestAudit(sut), Scanner: &avscan.SignatureScanner{Reader: s3c}}
+
+	// upload runs Create → PUT → Complete and returns the Complete recorder.
+	upload := func(payload []byte, name string) *httptest.ResponseRecorder {
+		body := `{"filename":"` + name + `","content_type":"audio/wav","size_bytes":` + itoa(len(payload)) + `}`
+		rec := httptest.NewRecorder()
+		h.Create(rec, withPrincipal(httptest.NewRequest(http.MethodPost, "/v1/uploads", bytes.NewBufferString(body)), &auth.Principal{OrgID: orgID}))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("Create = %d, want 201; %s", rec.Code, rec.Body.String())
+		}
+		var session UploadSession
+		_ = json.NewDecoder(rec.Body).Decode(&session)
+		putReq, _ := http.NewRequestWithContext(ctx, http.MethodPut, session.Parts[0].URL, bytes.NewReader(payload))
+		putResp, err := http.DefaultClient.Do(putReq)
+		if err != nil {
+			t.Fatalf("PUT: %v", err)
+		}
+		_ = putResp.Body.Close()
+		etag := putResp.Header.Get("ETag")
+		cbody, _ := json.Marshal(CompleteUploadRequest{Parts: []CompletedPart{{PartNumber: 1, ETag: etag}}})
+		creq := withURLParam(withPrincipal(httptest.NewRequest(http.MethodPost, "/v1/uploads/"+session.ID+"/complete", bytes.NewReader(cbody)), &auth.Principal{OrgID: orgID}), "id", session.ID)
+		crec := httptest.NewRecorder()
+		h.Complete(crec, creq)
+		return crec
+	}
+
+	// Infected upload → 422.
+	if got := upload(eicarWAV(), "evil.wav"); got.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("EICAR Complete = %d, want 422; body=%s", got.Code, got.Body.String())
+	}
+	// Clean upload with the same scanner → success.
+	if got := upload(minimalWAV(), "clean.wav"); got.Code != http.StatusOK && got.Code != http.StatusCreated {
+		t.Fatalf("clean Complete = %d, want 200/201; body=%s", got.Code, got.Body.String())
 	}
 }
