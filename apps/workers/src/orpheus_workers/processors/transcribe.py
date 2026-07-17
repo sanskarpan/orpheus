@@ -45,6 +45,7 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
     # Inf, and out-of-range values that would explode into millions of
     # ffmpeg + whisper invocations.
     chunk_seconds = parse_chunk_seconds(params, default=DEFAULT_CHUNK_SECONDS)
+    word_timestamps = bool(params.get("word_timestamps", False))
 
     art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s", artifact_id)
     if art is None:
@@ -64,7 +65,7 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
 
         duration = _wav_duration(wav_path)
         if duration <= chunk_seconds:
-            return _transcribe_one(wav_path, offset=0.0)
+            return _transcribe_one(wav_path, offset=0.0, word_timestamps=word_timestamps)
 
         model_size = os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
         model_dir = os.environ.get("ORPHEUS_WORKER_WHISPER_DIR") or None
@@ -82,7 +83,12 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
             chunk_path = Path(work_dir) / f"{job_id}.chunk{i}.wav"
             try:
                 ffmpeg_slice(wav_path, chunk_path, start, end)
-                result = transcribe(chunk_path, model_size=model_size, model_dir=model_dir)
+                result = transcribe(
+                    chunk_path,
+                    model_size=model_size,
+                    model_dir=model_dir,
+                    word_timestamps=word_timestamps,
+                )
             except (FFmpegError, TranscribeError) as e:
                 logger.error("worker.chunk_failed", job_id=job_id, chunk=i, err=str(e))
                 raise
@@ -92,13 +98,22 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 except FileNotFoundError:
                     pass
             for seg in result.get("segments") or []:
-                all_segments.append(
-                    {
-                        "start": float(seg.get("start", 0.0)) + start,
-                        "end": float(seg.get("end", 0.0)) + start,
-                        "text": seg.get("text", ""),
-                    }
-                )
+                new_seg = {
+                    "start": float(seg.get("start", 0.0)) + start,
+                    "end": float(seg.get("end", 0.0)) + start,
+                    "text": seg.get("text", ""),
+                }
+                if seg.get("words"):
+                    new_seg["words"] = [
+                        {
+                            "start": float(w.get("start", 0.0)) + start,
+                            "end": float(w.get("end", 0.0)) + start,
+                            "word": w.get("word", ""),
+                            "confidence": w.get("confidence", 0.0),
+                        }
+                        for w in seg["words"]
+                    ]
+                all_segments.append(new_seg)
             text = result.get("text", "").strip()
             if text:
                 all_text.append(text)
@@ -118,11 +133,13 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 pass
 
 
-def _transcribe_one(wav_path: Path, offset: float) -> dict[str, Any]:
+def _transcribe_one(wav_path: Path, offset: float, word_timestamps: bool = False) -> dict[str, Any]:
     """Transcribe a single wav, optionally shifting segment timestamps by ``offset``."""
     model_size = os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
     model_dir = os.environ.get("ORPHEUS_WORKER_WHISPER_DIR") or None
-    result = transcribe(wav_path, model_size=model_size, model_dir=model_dir)
+    result = transcribe(
+        wav_path, model_size=model_size, model_dir=model_dir, word_timestamps=word_timestamps
+    )
     for seg in result.get("segments") or []:
         seg["start"] = float(seg.get("start", 0.0)) + offset
         seg["end"] = float(seg.get("end", 0.0)) + offset
