@@ -6,7 +6,13 @@ on first import. The worker process exposes them at :8082/metrics.
 
 from __future__ import annotations
 
-from prometheus_client import Counter, Histogram
+from prometheus_client import Counter, Gauge, Histogram
+
+JETSTREAM_PENDING = Gauge(
+    "orpheus_jetstream_pending_messages",
+    "Messages pending delivery on the worker's JetStream consumer (direct queue depth).",
+    ["stream", "consumer"],
+)
 
 JOBS_PROCESSED = Counter(
     "orpheus_jobs_processed_total",
