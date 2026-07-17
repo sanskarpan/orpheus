@@ -29,9 +29,11 @@ import (
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
+	batchingpkg "github.com/orpheus/api/internal/batching"
 	"github.com/orpheus/api/internal/billing"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
+	deliverypkg "github.com/orpheus/api/internal/delivery"
 	"github.com/orpheus/api/internal/idempotency"
 	"github.com/orpheus/api/internal/jobs"
 	"github.com/orpheus/api/internal/logging"
@@ -194,11 +196,22 @@ func run() error {
 		logger.Warn("orpheus_api.billing.provider_unset", "note", "checkout disabled; set ORPHEUS_DODO_API_KEY to enable")
 	}
 
+	// Tenant-S3 result delivery (PRD 06): a Deliverer that writes to a
+	// destination via static creds (our own MinIO/S3) or an assumed role,
+	// and a batching service that aggregates batches + pushes results.
+	deliverer := &deliverypkg.Deliverer{
+		StaticEndpoint:  cfg.S3Endpoint,
+		StaticAccessKey: cfg.S3AccessKey,
+		StaticSecretKey: cfg.S3SecretKey,
+	}
+	batchSvc := batchingpkg.New(pgDB, deliverer, s3c, logger)
+
 	var workers sync.WaitGroup
 	startWorker(ctx, &workers, "outbox.publisher", publisher.Run)
 	startWorker(ctx, &workers, "webhooks.delivery", delivery.Run)
 	startWorker(ctx, &workers, "retention.sweeper", sweeper.Run)
 	startWorker(ctx, &workers, "billing.rollup", rollup.Run)
+	startWorker(ctx, &workers, "batching", batchSvc.Run)
 
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:          pgDB,
@@ -209,6 +222,7 @@ func run() error {
 		Audit:       auditRec,
 		Metrics:     mtr,
 		Billing:     billingProvider,
+		Deliverer:   deliverer,
 	})
 
 	logger.Info("orpheus_api.ready", "addr", cfg.Addr())

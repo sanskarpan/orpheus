@@ -1789,6 +1789,230 @@
           }
         }
       }
+    },
+    "/v1/batches": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Create a tracked batch",
+        "operationId": "createBatch",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Batch running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid."
+          }
+        }
+      }
+    },
+    "/v1/batches/{id}": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Get batch status",
+        "operationId": "getBatch",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Batch.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Batch"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/v1/batches/{id}/jobs": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List batch child jobs",
+        "operationId": "listBatchJobs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Child jobs."
+          }
+        }
+      }
+    },
+    "/v1/batches/{id}/manifest": {
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Download batch manifest (302)",
+        "operationId": "getBatchManifest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to signed URL."
+          },
+          "409": {
+            "description": "Not ready."
+          }
+        }
+      }
+    },
+    "/v1/destinations": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Create a delivery destination",
+        "operationId": "createDestination",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDestinationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Destination"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid."
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "List delivery destinations",
+        "operationId": "listDestinations",
+        "responses": {
+          "200": {
+            "description": "Destinations."
+          }
+        }
+      }
+    },
+    "/v1/destinations/{id}/verify": {
+      "post": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Verify a destination (probe write+delete)",
+        "operationId": "verifyDestination",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verify result."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/v1/destinations/{id}": {
+      "delete": {
+        "tags": [
+          "jobs"
+        ],
+        "summary": "Delete a destination",
+        "operationId": "deleteDestination",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2772,7 +2996,8 @@
           "upload.failed",
           "api_key.created",
           "api_key.revoked",
-          "billing.period_closed"
+          "billing.period_closed",
+          "batch.completed"
         ],
         "example": "job.succeeded"
       },
@@ -3734,6 +3959,155 @@
           "expires_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateBatchRequest": {
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreateJobRequest"
+            }
+          },
+          "callback": {
+            "type": "object",
+            "properties": {
+              "webhook_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          },
+          "delivery": {
+            "type": "object",
+            "properties": {
+              "destination_id": {
+                "type": "string",
+                "format": "uuid"
+              }
+            }
+          }
+        }
+      },
+      "Batch": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed"
+            ]
+          },
+          "job_count": {
+            "type": "integer"
+          },
+          "completed_count": {
+            "type": "integer"
+          },
+          "failed_count": {
+            "type": "integer"
+          },
+          "manifest_url": {
+            "type": "string"
+          },
+          "poll_url": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "CreateDestinationRequest": {
+        "type": "object",
+        "required": [
+          "bucket"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "s3_sts",
+              "s3_static"
+            ],
+            "default": "s3_sts"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "role_arn": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          }
+        }
+      },
+      "Destination": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "type": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "region": {
+            "type": "string"
+          },
+          "role_arn": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "verified_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_error": {
+            "type": "string"
           },
           "created_at": {
             "type": "string",
