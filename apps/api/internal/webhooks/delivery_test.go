@@ -172,7 +172,7 @@ func TestPost_SendsExpectedShapeAndValidSignature(t *testing.T) {
 
 	s := &DeliveryService{Logger: nil, HTTPClient: srv.Client()}
 	body := []byte(`{"event":"job.succeeded","id":"e1"}`)
-	code, _, err := s.post(context.Background(), endpointInfo{URL: srv.URL, Secret: secret}, claimed{
+	code, _, _, err := s.post(context.Background(), endpointInfo{URL: srv.URL, Secret: secret}, claimed{
 		EventType: "job.succeeded",
 		EventID:   "e1",
 		Payload:   body,
@@ -226,7 +226,7 @@ func TestPost_HandlesNon2xxAsErrorPath(t *testing.T) {
 	defer srv.Close()
 
 	s := &DeliveryService{HTTPClient: srv.Client()}
-	code, body, err := s.post(context.Background(), endpointInfo{URL: srv.URL, Secret: "k"}, claimed{Payload: []byte(`{}`)})
+	code, body, _, err := s.post(context.Background(), endpointInfo{URL: srv.URL, Secret: "k"}, claimed{Payload: []byte(`{}`)})
 	if err != nil {
 		t.Fatalf("unexpected transport err: %v", err)
 	}

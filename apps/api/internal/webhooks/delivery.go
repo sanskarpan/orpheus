@@ -287,7 +287,13 @@ func (s *DeliveryService) deliverOne(ctx context.Context, d claimed) {
 		return
 	}
 
-	statusCode, respBody, postErr := s.post(ctx, info, d)
+	start := time.Now()
+	statusCode, respBody, sigBase, postErr := s.post(ctx, info, d)
+	durMs := int(time.Since(start).Milliseconds())
+
+	// Record the per-attempt timeline + the signature base string and
+	// response snippet for the debug view (PRD 03).
+	s.recordAttempt(ctx, d, attempt, statusCode, durMs, failureReason(statusCode, postErr), sigBase, respBody)
 
 	if postErr == nil && statusCode >= 200 && statusCode < 300 {
 		if err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
@@ -300,6 +306,7 @@ func (s *DeliveryService) deliverOne(ctx context.Context, d claimed) {
 		}); err != nil {
 			s.Logger.Error("webhooks.delivery.mark_delivered_failed", "err", err, "delivery_id", d.ID)
 		}
+		s.recordEndpointOutcome(ctx, d.EndpointID, true)
 		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.deliver", map[string]any{
 			"delivery_id": d.ID, "event_type": d.EventType, "status_code": statusCode, "attempt": attempt,
 		})
@@ -310,6 +317,7 @@ func (s *DeliveryService) deliverOne(ctx context.Context, d claimed) {
 	switch {
 	case attempt >= s.MaxAttempts:
 		_ = s.finishDelivery(ctx, d, "exhausted", statusCode, reason, time.Time{})
+		s.recordEndpointOutcome(ctx, d.EndpointID, false)
 		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.delivery_exhausted", map[string]any{
 			"delivery_id": d.ID, "event_type": d.EventType, "attempts": attempt,
 		})
@@ -321,9 +329,54 @@ func (s *DeliveryService) deliverOne(ctx context.Context, d claimed) {
 		})
 	default:
 		_ = s.finishDelivery(ctx, d, "failed", statusCode, reason, time.Time{})
+		s.recordEndpointOutcome(ctx, d.EndpointID, false)
 		_ = s.recordAudit(ctx, d.OrgID, d.EndpointID, "webhook.delivery_fail", map[string]any{
 			"delivery_id": d.ID, "event_type": d.EventType, "status_code": statusCode, "attempt": attempt, "reason": reason,
 		})
+	}
+}
+
+// autoDisableThreshold is how many consecutive terminal-failure deliveries
+// deactivate an endpoint (PRD 03). Reset to 0 on any success.
+const autoDisableThreshold = 100
+
+// recordAttempt appends the per-attempt row and stashes the signature base
+// string + a response snippet on the delivery for the debug view.
+func (s *DeliveryService) recordAttempt(ctx context.Context, d claimed, attempt, statusCode, durMs int, errStr, sigBase string, respBody []byte) {
+	if err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO webhook_delivery_attempts (id, delivery_id, org_id, attempt_no, attempted_at, status_code, duration_ms, error)
+			VALUES (gen_random_uuid(), $1, $2, $3, now(), NULLIF($4,0), $5, NULLIF($6,''))
+		`, d.ID, d.OrgID, attempt, statusCode, durMs, errStr); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE webhook_deliveries SET signature_base_string = $1, response_body_snippet = $2 WHERE id = $3
+		`, sigBase, truncateBody(respBody), d.ID)
+		return err
+	}); err != nil {
+		s.Logger.Error("webhooks.delivery.record_attempt_failed", "err", err, "delivery_id", d.ID)
+	}
+}
+
+// recordEndpointOutcome resets the failure counter on success, or increments
+// it and auto-disables the endpoint once it crosses the threshold. A manually
+// disabled endpoint is never silently re-enabled.
+func (s *DeliveryService) recordEndpointOutcome(ctx context.Context, endpointID string, success bool) {
+	if err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
+		if success {
+			_, err := tx.Exec(ctx, `UPDATE webhook_endpoints SET consecutive_failures = 0 WHERE id = $1`, endpointID)
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE webhook_endpoints
+			SET consecutive_failures = consecutive_failures + 1,
+			    active = CASE WHEN consecutive_failures + 1 >= $2 THEN false ELSE active END
+			WHERE id = $1
+		`, endpointID, autoDisableThreshold)
+		return err
+	}); err != nil {
+		s.Logger.Error("webhooks.delivery.record_endpoint_outcome_failed", "err", err, "endpoint_id", endpointID)
 	}
 }
 
@@ -373,14 +426,16 @@ func (s *DeliveryService) recordAudit(ctx context.Context, orgID, resourceID, ac
 	})
 }
 
-func (s *DeliveryService) post(ctx context.Context, info endpointInfo, d claimed) (int, []byte, error) {
+func (s *DeliveryService) post(ctx context.Context, info endpointInfo, d claimed) (int, []byte, string, error) {
 	ts := time.Now().Unix()
 	sig := signPayload(info.Secret, ts, d.Payload)
 	header := fmt.Sprintf("t=%d,v1=%s", ts, sig)
+	// The signature base string a receiver reconstructs to verify: "<ts>.<body>".
+	sigBase := fmt.Sprintf("%d.%s", ts, d.Payload)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, info.URL, bytes.NewReader(d.Payload))
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, sigBase, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(signatureHeader, header)
@@ -388,12 +443,12 @@ func (s *DeliveryService) post(ctx context.Context, info endpointInfo, d claimed
 
 	resp, err := s.HTTPClient.Do(req)
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, sigBase, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
-	return resp.StatusCode, body, nil
+	return resp.StatusCode, body, sigBase, nil
 }
 
 // Enqueue inserts one pending webhook_deliveries row per active
