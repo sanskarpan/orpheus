@@ -45,6 +45,22 @@ JOB_DURABLE = "orpheus-workers"
 tracer = trace.get_tracer("orpheus-workers")
 
 
+async def record_queue_depth(js: Any, stream: str, consumer: str) -> int | None:
+    """Query the JetStream consumer and publish its pending-message count to
+    the orpheus_jetstream_pending_messages gauge. Returns the pending count,
+    or None if the consumer could not be inspected. Never raises — queue-depth
+    observability must not take down the worker.
+    """
+    try:
+        info = await js.consumer_info(stream, consumer)
+    except Exception as exc:  # noqa: BLE001 — best-effort telemetry
+        logger.warning("worker.queue_depth_poll_failed", err=str(exc))
+        return None
+    pending = int(getattr(info, "num_pending", 0) or 0)
+    metrics.JETSTREAM_PENDING.labels(stream=stream, consumer=consumer).set(pending)
+    return pending
+
+
 class Worker:
     def __init__(self, settings: WorkerSettings) -> None:
         init_tracing("orpheus-workers")
@@ -54,6 +70,7 @@ class Worker:
         self._nc: NATS | None = None
         self._js: JetStreamContext | None = None
         self._sub: JetStreamContext.PushSubscription | None = None
+        self._depth_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         settings = self._settings
@@ -73,9 +90,25 @@ class Worker:
         )
         start_http_server(settings.metrics_port)
         logger.info("worker.metrics_started", port=settings.metrics_port)
+        self._depth_task = asyncio.create_task(self._poll_queue_depth())
         logger.info("worker.started", nats_url=settings.nats_url)
 
+    async def _poll_queue_depth(self) -> None:
+        """Periodically publish the JetStream consumer's pending depth."""
+        assert self._js is not None
+        interval = self._settings.queue_depth_poll_seconds
+        while True:
+            await record_queue_depth(self._js, JOB_STREAM, JOB_DURABLE)
+            await asyncio.sleep(interval)
+
     async def stop(self) -> None:
+        if self._depth_task is not None:
+            self._depth_task.cancel()
+            try:
+                await self._depth_task
+            except asyncio.CancelledError:
+                pass
+            self._depth_task = None
         if self._sub is not None:
             await self._sub.unsubscribe()
             self._sub = None

@@ -20,6 +20,9 @@ class WorkerSettings(BaseSettings):
     # Cost rate applied to job wall-clock seconds to populate jobs.cost_usd
     # (a coarse CPU-second price; GPU tiers override later). 0 disables it.
     cost_usd_per_second: float = 0.00005
+    # How often (seconds) to poll the JetStream consumer for pending-message
+    # depth and publish it as the orpheus_jetstream_pending_messages gauge.
+    queue_depth_poll_seconds: float = 15.0
     worker_version: str = __version__
     database_url: str = "postgres://orpheus:orpheus@localhost:5432/orpheus?sslmode=disable"
     s3_endpoint: str = "http://localhost:9000"
