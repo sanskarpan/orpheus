@@ -45,7 +45,8 @@ func seedBroadAPIKey(t *testing.T, ctx context.Context, pool *db.DB, orgID strin
 	_, err = pool.Exec(ctx,
 		`INSERT INTO api_keys (id, org_id, name, hashed_secret, prefix, scopes) VALUES ($1,$2,'e2e-broad',$3,$4,$5)`,
 		uuid.NewString(), orgID, hashed, secret[:9],
-		[]string{"jobs:write", "jobs:read", "artifacts:read", "webhooks:write", "webhooks:read", "usage:read"},
+		[]string{"jobs:write", "jobs:read", "artifacts:read", "webhooks:write", "webhooks:read",
+			"usage:read", "uploads:write", "uploads:read", "billing:write", "data:erase", "pii:unmask"},
 	)
 	if err != nil {
 		t.Fatalf("insert api_key: %v", err)
