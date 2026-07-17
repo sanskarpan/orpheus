@@ -16,6 +16,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -36,6 +37,7 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -282,6 +284,15 @@ func EnsureBucket(t *testing.T, ctx context.Context, endpoint, bucket, accessKey
 		return
 	}
 	if _, err := client.CreateBucket(ctx, &awss3.CreateBucketInput{Bucket: aws.String(bucket)}); err != nil {
+		// Idempotent: a bucket we already own is success. (The first S3 call
+		// on a fresh client can also fail HeadBucket above under request
+		// clock skew — the SDK self-corrects on the retry, so CreateBucket
+		// then reports the bucket already exists rather than creating it.)
+		var owned *s3types.BucketAlreadyOwnedByYou
+		var exists *s3types.BucketAlreadyExists
+		if errors.As(err, &owned) || errors.As(err, &exists) {
+			return
+		}
 		t.Fatalf("s3.CreateBucket(%s): %v", bucket, err)
 	}
 }
