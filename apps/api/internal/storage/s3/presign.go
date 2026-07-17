@@ -219,6 +219,44 @@ func (c *Client) GetObjectRange(ctx context.Context, key string, n int64) ([]byt
 	return buf, nil
 }
 
+// UploadedPart is one part already stored for an in-progress multipart upload.
+type UploadedPart struct {
+	PartNumber int32
+	ETag       string
+	Size       int64
+}
+
+// ListParts returns the parts already uploaded for an in-progress multipart
+// upload (S3 is the source of truth), so a client can resume by uploading only
+// the missing parts (PRD 09).
+func (c *Client) ListParts(ctx context.Context, key, uploadID string) ([]UploadedPart, error) {
+	var out []UploadedPart
+	var marker *string
+	for {
+		resp, err := c.client.ListParts(ctx, &s3.ListPartsInput{
+			Bucket:           aws.String(c.bucket),
+			Key:              aws.String(key),
+			UploadId:         aws.String(uploadID),
+			PartNumberMarker: marker,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("s3.list_parts: %w", err)
+		}
+		for _, p := range resp.Parts {
+			out = append(out, UploadedPart{
+				PartNumber: aws.ToInt32(p.PartNumber),
+				ETag:       aws.ToString(p.ETag),
+				Size:       aws.ToInt64(p.Size),
+			})
+		}
+		if !aws.ToBool(resp.IsTruncated) {
+			break
+		}
+		marker = resp.NextPartNumberMarker
+	}
+	return out, nil
+}
+
 // DeleteObject removes an object. Used when an upload is aborted
 // after finalisation (e.g. the user uploaded a file but rejected it
 // before processing) and as a cleanup path in tests.

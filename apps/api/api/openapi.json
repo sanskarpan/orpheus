@@ -2171,6 +2171,127 @@
           }
         }
       }
+    },
+    "/v1/uploads/url": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Ingest audio from a URL (SSRF-safe)",
+        "operationId": "createURLIngest",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "filename": {
+                    "type": "string"
+                  },
+                  "content_type": {
+                    "type": "string"
+                  },
+                  "expected_sha256": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Fetching."
+          },
+          "400": {
+            "description": "Invalid / SSRF-blocked URL."
+          }
+        }
+      }
+    },
+    "/v1/uploads/{id}/parts": {
+      "get": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "List uploaded/missing multipart parts",
+        "operationId": "getUploadParts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "uploaded[], missing[], part_size_bytes."
+          },
+          "404": {
+            "description": "Not found."
+          },
+          "409": {
+            "description": "No active multipart."
+          }
+        }
+      }
+    },
+    "/v1/uploads/{id}/parts:refresh": {
+      "post": {
+        "tags": [
+          "uploads"
+        ],
+        "summary": "Fresh presigned URLs for missing parts",
+        "operationId": "refreshUploadParts",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "part_numbers": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fresh presigned PUT URLs."
+          },
+          "404": {
+            "description": "Incomplete upload not found."
+          }
+        }
+      }
     }
   },
   "components": {
