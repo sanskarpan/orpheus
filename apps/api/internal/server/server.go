@@ -253,6 +253,11 @@ func (s *Server) v1Routes() {
 		r.With(rs("billing:read")).Get("/billing/invoices", bh.ListInvoices)
 		r.With(rs("billing:write")).Post("/billing/invoices/{id}/checkout", bh.CreateCheckout)
 
+		erh := &handlers.ErasureHandler{DB: s.opts.DB, Audit: s.opts.Audit}
+		r.With(rs("data:erase")).Post("/erasure-requests", erh.Create)
+		r.With(rs("data:erase")).Get("/erasure-requests", erh.List)
+		r.With(rs("data:erase")).Get("/erasure-requests/{id}", erh.Get)
+
 		ch := &handlers.CacheHandler{DB: s.opts.DB}
 		r.With(rs("usage:read")).Get("/cache/stats", ch.Stats)
 		// Cache invalidation is an admin operation (purge a model version).

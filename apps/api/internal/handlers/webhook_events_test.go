@@ -18,6 +18,7 @@ func TestAllowedEventsCoversEmittedEvents(t *testing.T) {
 		"bundle.failed",          // workers/processors/export_bundle.py
 		"batch.completed",        // internal/batching
 		"usage.budget_threshold", // internal/usage
+		"data.erased",            // internal/erasure
 	}
 	for _, e := range emitted {
 		if _, ok := allowedEvents[e]; !ok {

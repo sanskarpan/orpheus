@@ -2292,6 +2292,108 @@
           }
         }
       }
+    },
+    "/v1/erasure-requests": {
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Request GDPR erasure",
+        "operationId": "createErasureRequest",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "confirm"
+                ],
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "artifact",
+                      "job"
+                    ]
+                  },
+                  "artifact_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "job_id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "subject_ref": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "confirm": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Scheduled."
+          },
+          "400": {
+            "description": "Invalid / confirm required."
+          },
+          "404": {
+            "description": "Target not found."
+          },
+          "409": {
+            "description": "Legal hold."
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List erasure requests",
+        "operationId": "listErasureRequests",
+        "responses": {
+          "200": {
+            "description": "Requests."
+          }
+        }
+      }
+    },
+    "/v1/erasure-requests/{id}": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Get erasure request status",
+        "operationId": "getErasureRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Request status + deleted_counts + certificate_url."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3277,7 +3379,8 @@
           "api_key.revoked",
           "billing.period_closed",
           "batch.completed",
-          "usage.budget_threshold"
+          "usage.budget_threshold",
+          "data.erased"
         ],
         "example": "job.succeeded"
       },
@@ -3533,7 +3636,8 @@
           "usage:read",
           "audit:read",
           "*",
-          "pii:unmask"
+          "pii:unmask",
+          "data:erase"
         ],
         "example": "jobs:read"
       },

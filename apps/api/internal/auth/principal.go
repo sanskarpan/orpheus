@@ -44,6 +44,7 @@ var validScopes = map[string]struct{}{
 	"webhooks:read": {}, "webhooks:write": {},
 	"usage:read": {}, "audit:read": {},
 	"pii:unmask": {}, // fetch a pii_mapping-sensitivity artifact (PRD 08)
+	"data:erase": {}, // tenant-initiated GDPR erasure (PRD 10)
 	"*":          {},
 }
 

@@ -34,6 +34,7 @@ import (
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
 	deliverypkg "github.com/orpheus/api/internal/delivery"
+	erasurepkg "github.com/orpheus/api/internal/erasure"
 	"github.com/orpheus/api/internal/idempotency"
 	"github.com/orpheus/api/internal/jobs"
 	"github.com/orpheus/api/internal/logging"
@@ -207,6 +208,7 @@ func run() error {
 	}
 	batchSvc := batchingpkg.New(pgDB, deliverer, s3c, logger)
 	usageSvc := usagepkg.New(pgDB, logger)
+	erasureSvc := erasurepkg.New(pgDB, s3c, logger)
 
 	var workers sync.WaitGroup
 	startWorker(ctx, &workers, "outbox.publisher", publisher.Run)
@@ -215,6 +217,7 @@ func run() error {
 	startWorker(ctx, &workers, "billing.rollup", rollup.Run)
 	startWorker(ctx, &workers, "batching", batchSvc.Run)
 	startWorker(ctx, &workers, "usage.rollup", usageSvc.Run)
+	startWorker(ctx, &workers, "erasure", erasureSvc.Run)
 
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:          pgDB,
