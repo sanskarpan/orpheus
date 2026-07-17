@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..llm import get_llm
+from ..redact import maybe_redact
 from . import register_processor
 
 # Abuse guard: cap transcript length fed to the LLM.
@@ -89,6 +90,8 @@ async def translate_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
         raise ValueError("params.target_language required")
     source = params.get("source_language", "auto")
     transcript = _load_transcript(ctx, job, params)
+    # PRD 08: redact PII before translation so downstream never sees it.
+    maybe_redact(transcript, params)
     llm = get_llm()
 
     out_segments: list[dict] = []
@@ -120,6 +123,8 @@ async def summarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
         raise ValueError(f"job {job_id} not found")
     params = _params(job)
     transcript = _load_transcript(ctx, job, params)
+    # PRD 08: redact PII before the (possibly external) LLM sees the text.
+    maybe_redact(transcript, params)
     text = (transcript.get("text", "") or "")[:_MAX_INPUT_CHARS]
     if not text.strip():
         raise ValueError("transcript has no text to summarize")

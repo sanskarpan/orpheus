@@ -27,6 +27,7 @@ from .processors import (  # noqa: F401  (registers handlers)
     export_bundle,
     extract_metadata,
     probe,
+    redact,
     slice,
     text_ops,
     transcribe,

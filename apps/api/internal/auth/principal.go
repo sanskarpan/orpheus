@@ -43,7 +43,8 @@ var validScopes = map[string]struct{}{
 	"jobs:read": {}, "jobs:write": {},
 	"webhooks:read": {}, "webhooks:write": {},
 	"usage:read": {}, "audit:read": {},
-	"*": {},
+	"pii:unmask": {}, // fetch a pii_mapping-sensitivity artifact (PRD 08)
+	"*":          {},
 }
 
 // IsValidScope reports whether s is a recognised API-key scope.
