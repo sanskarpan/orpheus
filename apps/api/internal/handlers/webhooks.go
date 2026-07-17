@@ -146,6 +146,7 @@ var allowedEvents = map[string]struct{}{
 	"bundle.failed":          {},
 	"batch.completed":        {}, // emitted by the batching service (PRD 06)
 	"usage.budget_threshold": {}, // emitted by the usage service (PRD 07)
+	"data.erased":            {}, // emitted by the erasure service (PRD 10)
 	"upload.completed":       {},
 	"upload.failed":          {},
 	"api_key.created":        {},
