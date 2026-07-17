@@ -181,6 +181,18 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Budget hard-cap (PRD 07): reject new work once an org/processor hard-cap
+	// budget is at limit. Best-effort at submit (rollup lag ≤ minutes).
+	var capped bool
+	_ = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
+		capped, _ = budgetHardCapExceeded(ctx, h.DB, req.Processor.Name)
+		return nil
+	})
+	if capped {
+		writeProblem(w, http.StatusPaymentRequired, "budget-exceeded", "Spend budget hard cap reached")
+		return
+	}
+
 	// Content-addressed cache (PRD 01). Compute the key when the processor
 	// is cacheable; read it unless the caller asked to bypass.
 	var cacheMetaArg any // nil unless we want the worker to populate the cache

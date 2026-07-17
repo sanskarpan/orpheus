@@ -2013,6 +2013,164 @@
           }
         }
       }
+    },
+    "/v1/usage/timeseries": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Usage/cost time-series",
+        "operationId": "getUsageTimeseries",
+        "parameters": [
+          {
+            "name": "granularity",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "hour",
+                "day"
+              ],
+              "default": "day"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "total",
+                "processor",
+                "status"
+              ],
+              "default": "total"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Time-series buckets."
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
+        }
+      }
+    },
+    "/v1/budgets": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "List budgets with current spend",
+        "operationId": "listBudgets",
+        "responses": {
+          "200": {
+            "description": "Budgets."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Create a budget",
+        "operationId": "createBudget",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BudgetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Budget"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid."
+          }
+        }
+      }
+    },
+    "/v1/budgets/{id}": {
+      "patch": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Update a budget",
+        "operationId": "updateBudget",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Updated."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Delete a budget",
+        "operationId": "deleteBudget",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2997,7 +3155,8 @@
           "api_key.created",
           "api_key.revoked",
           "billing.period_closed",
-          "batch.completed"
+          "batch.completed",
+          "usage.budget_threshold"
         ],
         "example": "job.succeeded"
       },
@@ -4108,6 +4267,86 @@
           },
           "last_error": {
             "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "BudgetRequest": {
+        "type": "object",
+        "required": [
+          "limit_usd"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "org",
+              "processor"
+            ],
+            "default": "org"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string",
+            "default": "monthly"
+          },
+          "limit_usd": {
+            "type": "number"
+          },
+          "alert_thresholds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "enforcement": {
+            "type": "string",
+            "enum": [
+              "alert",
+              "hard_cap"
+            ],
+            "default": "alert"
+          }
+        }
+      },
+      "Budget": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "scope_id": {
+            "type": "string"
+          },
+          "period": {
+            "type": "string"
+          },
+          "limit_usd": {
+            "type": "number"
+          },
+          "alert_thresholds": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "enforcement": {
+            "type": "string"
+          },
+          "spend_usd": {
+            "type": "number"
+          },
+          "percent_consumed": {
+            "type": "number"
           },
           "created_at": {
             "type": "string",

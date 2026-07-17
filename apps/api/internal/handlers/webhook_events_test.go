@@ -9,14 +9,15 @@ import "testing"
 // handlers/jobs.go / bundles.go.
 func TestAllowedEventsCoversEmittedEvents(t *testing.T) {
 	emitted := []string{
-		"job.queued",      // handlers/jobs.go, workflows.go, bundles.go
-		"job.completed",   // workers/worker.py, handlers/jobs.go (cache hit)
-		"job.retry",       // workers/worker.py
-		"job.dead_letter", // workers/worker.py
-		"job.canceled",    // handlers/jobs.go
-		"bundle.ready",    // workers/processors/export_bundle.py
-		"bundle.failed",   // workers/processors/export_bundle.py
-		"batch.completed", // internal/batching
+		"job.queued",             // handlers/jobs.go, workflows.go, bundles.go
+		"job.completed",          // workers/worker.py, handlers/jobs.go (cache hit)
+		"job.retry",              // workers/worker.py
+		"job.dead_letter",        // workers/worker.py
+		"job.canceled",           // handlers/jobs.go
+		"bundle.ready",           // workers/processors/export_bundle.py
+		"bundle.failed",          // workers/processors/export_bundle.py
+		"batch.completed",        // internal/batching
+		"usage.budget_threshold", // internal/usage
 	}
 	for _, e := range emitted {
 		if _, ok := allowedEvents[e]; !ok {
