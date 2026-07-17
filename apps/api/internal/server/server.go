@@ -239,6 +239,13 @@ func (s *Server) v1Routes() {
 		r.With(rs("usage:read")).Get("/cache/stats", ch.Stats)
 		// Cache invalidation is an admin operation (purge a model version).
 		r.With(rs("*")).Delete("/cache", ch.Invalidate)
+
+		bnh := &handlers.BundleHandler{DB: s.opts.DB, S3: s.opts.S3, Audit: s.opts.Audit}
+		r.With(rs("artifacts:read")).Post("/bundles", bnh.Create)
+		r.With(rs("artifacts:read")).Get("/bundles", bnh.List)
+		r.With(rs("artifacts:read")).Get("/bundles/{id}", bnh.Get)
+		r.With(rs("artifacts:read")).Get("/bundles/{id}/download", bnh.Download)
+		r.With(rs("artifacts:read")).Delete("/bundles/{id}", bnh.Delete)
 	})
 }
 
