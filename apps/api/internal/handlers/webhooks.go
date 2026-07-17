@@ -134,23 +134,24 @@ type WebhookDeliveryList struct {
 // handlers/jobs.go); job.succeeded is kept as a documented alias but is not
 // emitted. Keep in sync with the OpenAPI WebhookEvent enum.
 var allowedEvents = map[string]struct{}{
-	"job.queued":            {},
-	"job.started":           {},
-	"job.completed":         {}, // emitted by the worker + cache-hit path
-	"job.succeeded":         {}, // documented alias of job.completed
-	"job.failed":            {},
-	"job.retry":             {}, // emitted by the worker on a retryable failure
-	"job.dead_letter":       {},
-	"job.canceled":          {},
-	"bundle.ready":          {}, // emitted by export.bundle (PRD 02)
-	"bundle.failed":         {},
-	"batch.completed":       {}, // emitted by the batching service (PRD 06)
-	"upload.completed":      {},
-	"upload.failed":         {},
-	"api_key.created":       {},
-	"api_key.revoked":       {},
-	"billing.period_closed": {},
-	"*":                     {},
+	"job.queued":             {},
+	"job.started":            {},
+	"job.completed":          {}, // emitted by the worker + cache-hit path
+	"job.succeeded":          {}, // documented alias of job.completed
+	"job.failed":             {},
+	"job.retry":              {}, // emitted by the worker on a retryable failure
+	"job.dead_letter":        {},
+	"job.canceled":           {},
+	"bundle.ready":           {}, // emitted by export.bundle (PRD 02)
+	"bundle.failed":          {},
+	"batch.completed":        {}, // emitted by the batching service (PRD 06)
+	"usage.budget_threshold": {}, // emitted by the usage service (PRD 07)
+	"upload.completed":       {},
+	"upload.failed":          {},
+	"api_key.created":        {},
+	"api_key.revoked":        {},
+	"billing.period_closed":  {},
+	"*":                      {},
 }
 
 // Create handles POST /v1/webhooks. It validates the request, mints a

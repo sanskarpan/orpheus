@@ -237,6 +237,15 @@ func (s *Server) v1Routes() {
 		r.With(rs("usage:read")).Get("/usage", sh.GetUsage)
 		r.With(rs("audit:read")).Get("/audit-log", sh.ListAuditLog)
 
+		uth := &handlers.UsageTimeseriesHandler{DB: s.opts.DB}
+		r.With(rs("usage:read")).Get("/usage/timeseries", uth.GetTimeseries)
+
+		budh := &handlers.BudgetHandler{DB: s.opts.DB, Audit: s.opts.Audit}
+		r.With(rs("usage:read")).Get("/budgets", budh.List)
+		r.With(rs("billing:write")).Post("/budgets", budh.Create)
+		r.With(rs("billing:write")).Patch("/budgets/{id}", budh.Update)
+		r.With(rs("billing:write")).Delete("/budgets/{id}", budh.Delete)
+
 		bh := &handlers.BillingHandler{DB: s.opts.DB, Audit: s.opts.Audit, Provider: s.opts.Billing}
 		r.With(rs("billing:read")).Get("/billing/invoices", bh.ListInvoices)
 		r.With(rs("billing:write")).Post("/billing/invoices/{id}/checkout", bh.CreateCheckout)

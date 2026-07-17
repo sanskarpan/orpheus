@@ -44,6 +44,7 @@ import (
 	"github.com/orpheus/api/internal/retention"
 	"github.com/orpheus/api/internal/server"
 	"github.com/orpheus/api/internal/storage/s3"
+	usagepkg "github.com/orpheus/api/internal/usage"
 	"github.com/orpheus/api/internal/version"
 	"github.com/orpheus/api/internal/webhooks"
 )
@@ -205,6 +206,7 @@ func run() error {
 		StaticSecretKey: cfg.S3SecretKey,
 	}
 	batchSvc := batchingpkg.New(pgDB, deliverer, s3c, logger)
+	usageSvc := usagepkg.New(pgDB, logger)
 
 	var workers sync.WaitGroup
 	startWorker(ctx, &workers, "outbox.publisher", publisher.Run)
@@ -212,6 +214,7 @@ func run() error {
 	startWorker(ctx, &workers, "retention.sweeper", sweeper.Run)
 	startWorker(ctx, &workers, "billing.rollup", rollup.Run)
 	startWorker(ctx, &workers, "batching", batchSvc.Run)
+	startWorker(ctx, &workers, "usage.rollup", usageSvc.Run)
 
 	srv := server.NewWithOptions(cfg, logger, server.Options{
 		DB:          pgDB,
