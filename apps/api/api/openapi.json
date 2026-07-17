@@ -1627,6 +1627,168 @@
           }
         }
       }
+    },
+    "/v1/webhooks/{id}/test": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Test-fire a synthetic signed event",
+        "operationId": "testFireWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event_type": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Test delivery enqueued."
+          },
+          "404": {
+            "description": "Webhook not found."
+          },
+          "429": {
+            "description": "Rate limited."
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries/{delivery_id}": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delivery debug detail",
+        "operationId": "getWebhookDelivery",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enriched delivery detail (attempt timeline, signature base string, response snippet)."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/deliveries/replay": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Bulk replay deliveries by filter",
+        "operationId": "bulkReplayWebhookDeliveries",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "event_type": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "since": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "limit": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Requeued count."
+          },
+          "400": {
+            "description": "Invalid filter."
+          }
+        }
+      }
+    },
+    "/v1/webhooks/{id}/enable": {
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Re-enable an auto-disabled endpoint",
+        "operationId": "enableWebhook",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Enabled."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
     }
   },
   "components": {

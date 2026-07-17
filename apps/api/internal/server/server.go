@@ -213,7 +213,11 @@ func (s *Server) v1Routes() {
 		r.With(rs("webhooks:write")).Patch("/webhooks/{id}", wh.Update)
 		r.With(rs("webhooks:write")).Delete("/webhooks/{id}", wh.Delete)
 		r.With(rs("webhooks:read")).Get("/webhooks/{id}/deliveries", wh.ListDeliveries)
+		r.With(rs("webhooks:read")).Get("/webhooks/{id}/deliveries/{delivery_id}", wh.GetDelivery)
 		r.With(rs("webhooks:write")).Post("/webhooks/{id}/deliveries/{delivery_id}/replay", wh.Replay)
+		r.With(rs("webhooks:write")).Post("/webhooks/{id}/deliveries/replay", wh.BulkReplay)
+		r.With(rs("webhooks:write")).Post("/webhooks/{id}/test", wh.TestFire)
+		r.With(rs("webhooks:write")).Post("/webhooks/{id}/enable", wh.Enable)
 
 		// API-key management is an admin operation. There is no
 		// api_keys scope in the enum, so require the "*" wildcard: a
