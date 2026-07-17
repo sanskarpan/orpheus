@@ -22,7 +22,13 @@ from .config import WorkerSettings, get_settings
 from .db import WorkerDB
 from .observability.tracing import init as init_tracing
 from .processors import get_processor
-from .processors import extract_metadata, probe, slice, transcribe  # noqa: F401  (registers handlers)
+from .processors import (  # noqa: F401  (registers handlers)
+    export_bundle,
+    extract_metadata,
+    probe,
+    slice,
+    transcribe,
+)
 from .s3 import WorkerS3
 
 logger = structlog.get_logger(__name__)
@@ -108,6 +114,7 @@ class Worker:
             "db": self._db,
             "s3": self._s3,
             "work_dir": self._settings.work_dir,
+            "bucket": self._settings.s3_bucket,
         }
         row = self._db.fetchrow("SELECT org_id, params, status FROM jobs WHERE id = %s", job_id)
         if row is None:

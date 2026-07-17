@@ -1476,6 +1476,157 @@
           }
         }
       }
+    },
+    "/v1/bundles": {
+      "post": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Create a download bundle",
+        "operationId": "createBundle",
+        "description": "Zip a set of artifacts (and optionally source-job result JSON) into one signed, expiring download. Async: returns 202 + poll_url.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBundleRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Bundle building.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bundle"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid / empty bundle."
+          },
+          "404": {
+            "description": "A source was not found."
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "List bundles",
+        "operationId": "listBundles",
+        "responses": {
+          "200": {
+            "description": "Bundle list."
+          },
+          "401": {
+            "$ref": "#/components/responses/UnauthorizedProblem"
+          }
+        }
+      }
+    },
+    "/v1/bundles/{id}": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Get bundle status",
+        "operationId": "getBundle",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bundle.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Bundle"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Revoke a bundle",
+        "operationId": "deleteBundle",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
+    },
+    "/v1/bundles/{id}/download": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Download a bundle (302 to signed URL)",
+        "operationId": "downloadBundle",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to a signed S3 URL."
+          },
+          "409": {
+            "description": "Not ready."
+          },
+          "410": {
+            "description": "Expired."
+          },
+          "404": {
+            "description": "Not found."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3340,6 +3491,86 @@
           },
           "period": {
             "type": "string"
+          }
+        }
+      },
+      "BundleSource": {
+        "type": "object",
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "job_id": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "CreateBundleRequest": {
+        "type": "object",
+        "required": [
+          "sources"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BundleSource"
+            }
+          },
+          "include_result_json": {
+            "type": "boolean",
+            "default": true
+          },
+          "ttl_seconds": {
+            "type": "integer",
+            "description": "Download-link TTL (clamped to 24h)."
+          }
+        }
+      },
+      "Bundle": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "building",
+              "ready",
+              "failed",
+              "expired",
+              "revoked"
+            ]
+          },
+          "size_bytes": {
+            "type": "integer"
+          },
+          "artifact_count": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "poll_url": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       }

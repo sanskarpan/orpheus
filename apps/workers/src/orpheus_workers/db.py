@@ -48,6 +48,11 @@ class WorkerDB:
             cur.execute(sql, args)
             return cur.fetchone()
 
+    def fetchall(self, sql: str, *args: Any) -> list[dict[str, Any]]:
+        with self.conn() as c, c.cursor(row_factory=dict_row) as cur:
+            cur.execute(sql, args)
+            return list(cur.fetchall())
+
     def execute(self, sql: str, *args: Any) -> None:
         with self.conn() as c, c.cursor() as cur:
             cur.execute(sql, args)
