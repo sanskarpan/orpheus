@@ -127,18 +127,23 @@ type WebhookDeliveryList struct {
 	NextCursor string            `json:"next_cursor"`
 }
 
-// allowedEvents is the catalogue of event types the API publishes in
-// Phase 1. The set is duplicated from the OpenAPI WebhookEvent enum
-// (handlers/openapi.json). Keep in sync. The "*" wildcard is also
-// accepted by validation; it is not a publishable event type but a
-// subscription marker.
+// allowedEvents is the catalogue of event types a webhook may subscribe to.
+// It MUST include every event the system actually emits, or a subscription to
+// a real event is rejected and that event never delivers. The worker + job
+// handlers emit job.completed / job.retry (see workers/worker.py,
+// handlers/jobs.go); job.succeeded is kept as a documented alias but is not
+// emitted. Keep in sync with the OpenAPI WebhookEvent enum.
 var allowedEvents = map[string]struct{}{
 	"job.queued":            {},
-	"job.dead_letter":       {},
 	"job.started":           {},
-	"job.succeeded":         {},
+	"job.completed":         {}, // emitted by the worker + cache-hit path
+	"job.succeeded":         {}, // documented alias of job.completed
 	"job.failed":            {},
+	"job.retry":             {}, // emitted by the worker on a retryable failure
+	"job.dead_letter":       {},
 	"job.canceled":          {},
+	"bundle.ready":          {}, // emitted by export.bundle (PRD 02)
+	"bundle.failed":         {},
 	"upload.completed":      {},
 	"upload.failed":         {},
 	"api_key.created":       {},
