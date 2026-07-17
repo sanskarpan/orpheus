@@ -186,7 +186,10 @@ func (s *Server) v1Routes() {
 
 		uh := &handlers.UploadHandler{DB: s.opts.DB, S3: s.opts.S3, Audit: s.opts.Audit}
 		r.With(rs("uploads:write")).Post("/uploads", uh.Create)
+		r.With(rs("uploads:write")).Post("/uploads/url", uh.CreateURLIngest)
 		r.With(rs("uploads:write")).Post("/uploads/{id}/complete", uh.Complete)
+		r.With(rs("uploads:read")).Get("/uploads/{id}/parts", uh.GetParts)
+		r.With(rs("uploads:write")).Post("/uploads/{id}/parts:refresh", uh.RefreshParts)
 		r.With(rs("uploads:read")).Get("/uploads", uh.List)
 		r.With(rs("uploads:read")).Get("/uploads/{id}", uh.Get)
 

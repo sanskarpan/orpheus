@@ -26,6 +26,7 @@ from .processors import (  # noqa: F401  (registers handlers)
     audio_ops,
     export_bundle,
     extract_metadata,
+    ingest_url,
     probe,
     redact,
     slice,
