@@ -16,6 +16,7 @@ func TestAllowedEventsCoversEmittedEvents(t *testing.T) {
 		"job.canceled",    // handlers/jobs.go
 		"bundle.ready",    // workers/processors/export_bundle.py
 		"bundle.failed",   // workers/processors/export_bundle.py
+		"batch.completed", // internal/batching
 	}
 	for _, e := range emitted {
 		if _, ok := allowedEvents[e]; !ok {

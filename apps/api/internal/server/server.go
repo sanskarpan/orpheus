@@ -21,6 +21,7 @@ import (
 	"github.com/orpheus/api/internal/billing"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
+	"github.com/orpheus/api/internal/delivery"
 	"github.com/orpheus/api/internal/handlers"
 	"github.com/orpheus/api/internal/idempotency"
 	"github.com/orpheus/api/internal/metrics"
@@ -42,6 +43,7 @@ type Options struct {
 	Audit       *audit.Recorder
 	Metrics     *metrics.Metrics
 	Billing     billing.Provider
+	Deliverer   *delivery.Deliverer
 }
 
 // Server is the HTTP server for the Orpheus API.
@@ -243,6 +245,18 @@ func (s *Server) v1Routes() {
 		r.With(rs("usage:read")).Get("/cache/stats", ch.Stats)
 		// Cache invalidation is an admin operation (purge a model version).
 		r.With(rs("*")).Delete("/cache", ch.Invalidate)
+
+		bth := &handlers.BatchHandler{DB: s.opts.DB, Audit: s.opts.Audit, S3: s.opts.S3}
+		r.With(rs("jobs:write")).Post("/batches", bth.Create)
+		r.With(rs("jobs:read")).Get("/batches/{id}", bth.Get)
+		r.With(rs("jobs:read")).Get("/batches/{id}/jobs", bth.ListJobs)
+		r.With(rs("jobs:read")).Get("/batches/{id}/manifest", bth.Manifest)
+
+		dsh := &handlers.DestinationHandler{DB: s.opts.DB, Audit: s.opts.Audit, Deliverer: s.opts.Deliverer}
+		r.With(rs("jobs:write")).Post("/destinations", dsh.Create)
+		r.With(rs("jobs:read")).Get("/destinations", dsh.List)
+		r.With(rs("jobs:write")).Post("/destinations/{id}/verify", dsh.Verify)
+		r.With(rs("jobs:write")).Delete("/destinations/{id}", dsh.Delete)
 
 		bnh := &handlers.BundleHandler{DB: s.opts.DB, S3: s.opts.S3, Audit: s.opts.Audit}
 		r.With(rs("artifacts:read")).Post("/bundles", bnh.Create)

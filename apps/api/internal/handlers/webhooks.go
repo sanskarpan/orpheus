@@ -144,6 +144,7 @@ var allowedEvents = map[string]struct{}{
 	"job.canceled":          {},
 	"bundle.ready":          {}, // emitted by export.bundle (PRD 02)
 	"bundle.failed":         {},
+	"batch.completed":       {}, // emitted by the batching service (PRD 06)
 	"upload.completed":      {},
 	"upload.failed":         {},
 	"api_key.created":       {},
