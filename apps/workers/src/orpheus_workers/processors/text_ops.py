@@ -56,7 +56,16 @@ def _load_transcript(ctx: dict[str, Any], job: dict, params: dict) -> dict:
     raise ValueError("no transcript source (set params.source_job_id or params.artifact_id)")
 
 
-@register_processor("text.detect-language")
+@register_processor(
+    "text.detect-language",
+    display_name="Detect Language",
+    description="Detect the language of a transcript.",
+    tier="cpu_tiny",
+    timeout_seconds=60,
+    cost_per_job_usd=0.0001,
+    model_id="lang-detect",
+    model_version_id="lang-detect-1",
+)
 async def detect_language_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     job = db.fetchrow("SELECT org_id, artifact_id, params FROM jobs WHERE id = %s", job_id)
@@ -78,7 +87,16 @@ async def detect_language_proc(ctx: dict[str, Any], job_id: str) -> dict[str, An
     return {"language": code, "confidence": conf, "model_version_id": llm.model_version_id}
 
 
-@register_processor("text.translate")
+@register_processor(
+    "text.translate",
+    display_name="Translate",
+    description="Translate transcript segments to a target language.",
+    tier="cpu_small",
+    timeout_seconds=300,
+    cost_per_job_usd=0.002,
+    model_id="orpheus-llm",
+    model_version_id="orpheus-llm-1",
+)
 async def translate_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     job = db.fetchrow("SELECT org_id, artifact_id, params FROM jobs WHERE id = %s", job_id)
@@ -115,7 +133,17 @@ async def translate_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     }
 
 
-@register_processor("text.summarize")
+@register_processor(
+    "text.summarize",
+    display_name="Summarize",
+    description="LLM summary of a transcript (abstract/bullets/chapters/action_items).",
+    tier="cpu_small",
+    timeout_seconds=300,
+    cost_per_job_usd=0.003,
+    cacheable=False,
+    model_id="orpheus-llm",
+    model_version_id="orpheus-llm-1",
+)
 async def summarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     job = db.fetchrow("SELECT org_id, artifact_id, params FROM jobs WHERE id = %s", job_id)

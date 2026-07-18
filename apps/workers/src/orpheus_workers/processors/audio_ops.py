@@ -116,7 +116,16 @@ def _overlap_speaker(turns: list[dict], seg: dict) -> str | None:
     return best
 
 
-@register_processor("audio.diarize")
+@register_processor(
+    "audio.diarize",
+    display_name="Diarize",
+    description="Assign anonymous speaker labels (S1..Sn) to transcript segments.",
+    tier="cpu_medium",
+    timeout_seconds=1800,
+    cost_per_job_usd=0.01,
+    model_id="pyannote",
+    model_version_id="pyannote-1",
+)
 async def diarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     s3 = ctx["s3"]
@@ -163,7 +172,16 @@ async def diarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     }
 
 
-@register_processor("export.subtitles")
+@register_processor(
+    "export.subtitles",
+    display_name="Export Subtitles",
+    description="Render .srt/.vtt from a transcript with optional speaker labels.",
+    tier="cpu_tiny",
+    timeout_seconds=120,
+    cost_per_job_usd=0.0005,
+    model_id="subtitle-render",
+    model_version_id="subtitle-1",
+)
 async def export_subtitles_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     s3 = ctx["s3"]

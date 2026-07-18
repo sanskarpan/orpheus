@@ -18,7 +18,16 @@ from . import register_processor
 from .text_ops import _load_transcript, _params
 
 
-@register_processor("text.redact")
+@register_processor(
+    "text.redact",
+    display_name="Redact PII",
+    description="Mask configurable PII entity types in a transcript.",
+    tier="cpu_small",
+    timeout_seconds=300,
+    cost_per_job_usd=0.001,
+    model_id="orpheus-redact",
+    model_version_id="orpheus-redact-1",
+)
 async def redact_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     job = db.fetchrow("SELECT org_id, artifact_id, params FROM jobs WHERE id = %s", job_id)

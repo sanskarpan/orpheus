@@ -12,7 +12,16 @@ from . import register_processor
 logger = structlog.get_logger(__name__)
 
 
-@register_processor("probe")
+@register_processor(
+    "probe",
+    display_name="Probe",
+    description="Probe an artifact's audio format/duration/codec via ffprobe.",
+    tier="cpu_tiny",
+    timeout_seconds=60,
+    cost_per_job_usd=0.0001,
+    model_id="ffprobe",
+    model_version_id="ffprobe-1",
+)
 async def probe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Download the artifact, run ffprobe, write metadata back.
 

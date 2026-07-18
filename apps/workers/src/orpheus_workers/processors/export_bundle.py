@@ -24,7 +24,16 @@ def _params(job: dict) -> dict:
     return params
 
 
-@register_processor("export.bundle")
+@register_processor(
+    "export.bundle",
+    display_name="Export Bundle",
+    description="Package artifacts/results into a signed, expiring downloadable zip.",
+    tier="cpu_tiny",
+    timeout_seconds=300,
+    cost_per_job_usd=0.0005,
+    model_id="bundle",
+    model_version_id="bundle-1",
+)
 async def export_bundle(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     s3 = ctx["s3"]

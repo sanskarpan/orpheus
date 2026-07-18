@@ -17,7 +17,16 @@ _CONVERT_NS = uuid.UUID("b2d4f6a8-1c3e-4a5b-9d7f-2e4c6a8b0d1f")
 logger = structlog.get_logger(__name__)
 
 
-@register_processor("convert-to-wav")
+@register_processor(
+    "convert-to-wav",
+    display_name="Convert to WAV",
+    description="Transcode audio to 16 kHz mono 16-bit PCM WAV.",
+    tier="cpu_tiny",
+    timeout_seconds=180,
+    cost_per_job_usd=0.0005,
+    model_id="ffmpeg",
+    model_version_id="ffmpeg-1",
+)
 async def convert_to_wav(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Transcode the source artifact to 16 kHz mono 16-bit PCM WAV.
 
