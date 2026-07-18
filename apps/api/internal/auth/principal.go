@@ -43,9 +43,11 @@ var validScopes = map[string]struct{}{
 	"jobs:read": {}, "jobs:write": {},
 	"webhooks:read": {}, "webhooks:write": {},
 	"usage:read": {}, "audit:read": {},
-	"pii:unmask": {}, // fetch a pii_mapping-sensitivity artifact (PRD 08)
-	"data:erase": {}, // tenant-initiated GDPR erasure (PRD 10)
-	"*":          {},
+	"pii:unmask":      {}, // fetch a pii_mapping-sensitivity artifact (PRD 08)
+	"data:erase":      {}, // tenant-initiated GDPR erasure (PRD 10)
+	"streaming:read":  {}, // inspect/list streaming sessions (Phase 8)
+	"streaming:write": {}, // create/finalize streaming sessions (Phase 8)
+	"*":               {},
 }
 
 // IsValidScope reports whether s is a recognised API-key scope.
