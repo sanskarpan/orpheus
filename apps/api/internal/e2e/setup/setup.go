@@ -164,19 +164,24 @@ func SeedAPIKey(t *testing.T, ctx context.Context, pool *db.DB, orgID string) st
 // and returns the two ids.
 func SeedProcessor(t *testing.T, ctx context.Context, pool *db.DB, name, version string) (processorID, versionID string) {
 	t.Helper()
+	// Idempotent: the worker's startup catalog sync (from in-code manifests)
+	// may already have registered this processor, so upsert and return the
+	// actual catalog id rather than blindly inserting.
 	processorID = uuid.NewString()
-	versionID = uuid.NewString()
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO processors (id, name, display_name, tier, timeout_seconds) VALUES ($1, $2, $3, 'cpu_tiny', 60)`,
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO processors (id, name, display_name, tier, timeout_seconds) VALUES ($1, $2, $3, 'cpu_tiny', 60)
+		 ON CONFLICT (name) DO UPDATE SET display_name = EXCLUDED.display_name RETURNING id`,
 		processorID, name, name,
-	); err != nil {
-		t.Fatalf("insert processor: %v", err)
+	).Scan(&processorID); err != nil {
+		t.Fatalf("upsert processor: %v", err)
 	}
-	if _, err := pool.Exec(ctx,
-		`INSERT INTO processor_versions (id, processor_id, version, model_id, model_version_id) VALUES ($1, $2, $3, $4, $5)`,
+	versionID = uuid.NewString()
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO processor_versions (id, processor_id, version, model_id, model_version_id) VALUES ($1, $2, $3, $4, $5)
+		 ON CONFLICT (processor_id, version) DO UPDATE SET model_id = EXCLUDED.model_id RETURNING id`,
 		versionID, processorID, version, "model-"+name, "v1",
-	); err != nil {
-		t.Fatalf("insert processor_version: %v", err)
+	).Scan(&versionID); err != nil {
+		t.Fatalf("upsert processor_version: %v", err)
 	}
 	return processorID, versionID
 }

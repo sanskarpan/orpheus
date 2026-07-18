@@ -19,7 +19,16 @@ _SLICE_NS = uuid.UUID("6f1e5b8a-2c3d-4e5f-8a9b-0c1d2e3f4a5b")
 logger = structlog.get_logger(__name__)
 
 
-@register_processor("slice")
+@register_processor(
+    "slice",
+    display_name="Slice",
+    description="Extract a time range from a source artifact into a new artifact.",
+    tier="cpu_tiny",
+    timeout_seconds=120,
+    cost_per_job_usd=0.0005,
+    model_id="ffmpeg",
+    model_version_id="ffmpeg-1",
+)
 async def slice_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Extract a time range from the source artifact; create a new artifact.
 

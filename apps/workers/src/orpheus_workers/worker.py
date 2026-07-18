@@ -18,6 +18,7 @@ from opentelemetry.trace import Status, StatusCode
 from prometheus_client import start_http_server
 
 from . import metrics
+from .catalog import sync_catalog
 from .config import WorkerSettings, get_settings
 from .db import WorkerDB
 from .observability.tracing import init as init_tracing
@@ -41,6 +42,9 @@ logger = structlog.get_logger(__name__)
 JOB_STREAM = "ORPHEUS_JOBS"
 JOB_SUBJECTS = "adkil.job.>"
 JOB_DURABLE = "orpheus-workers"
+# Core NATS subject (not JetStream) that triggers a processor-catalog
+# hot-reload across the worker fleet.
+CONTROL_RELOAD_SUBJECT = "orpheus.control.catalog.reload"
 
 tracer = trace.get_tracer("orpheus-workers")
 
@@ -71,6 +75,7 @@ class Worker:
         self._js: JetStreamContext | None = None
         self._sub: JetStreamContext.PushSubscription | None = None
         self._depth_task: asyncio.Task[None] | None = None
+        self._control_sub: Any | None = None
 
     async def start(self) -> None:
         settings = self._settings
@@ -88,10 +93,32 @@ class Worker:
             cb=self._on_message,
             durable=JOB_DURABLE,
         )
+        # Sync in-code processor manifests into the DB catalog so the code is
+        # the source of truth for what the API can accept, then subscribe to a
+        # control subject that re-runs the sync on demand (hot-reload) — NATS
+        # standing in for the roadmap's Redis pubsub, per the same substitution
+        # used for the job bus. Run in a thread (WorkerDB is synchronous) so it
+        # doesn't block the event loop, and treat a failure as non-fatal — the
+        # catalog is also seeded by migrations, so the worker can still process.
+        try:
+            await asyncio.to_thread(sync_catalog, self._db)
+        except Exception as exc:  # noqa: BLE001 — sync must not block startup
+            logger.error("worker.catalog_sync_failed", err=str(exc))
+        self._control_sub = await self._nc.subscribe(CONTROL_RELOAD_SUBJECT, cb=self._on_control)
+
         start_http_server(settings.metrics_port)
         logger.info("worker.metrics_started", port=settings.metrics_port)
         self._depth_task = asyncio.create_task(self._poll_queue_depth())
         logger.info("worker.started", nats_url=settings.nats_url)
+
+    async def _on_control(self, msg: Any) -> None:
+        """Hot-reload the processor catalog on a control message."""
+        assert self._db is not None
+        try:
+            n = await asyncio.to_thread(sync_catalog, self._db)
+            logger.info("worker.catalog_reloaded", processors=n)
+        except Exception as exc:  # noqa: BLE001 — reload must not crash the worker
+            logger.error("worker.catalog_reload_failed", err=str(exc))
 
     async def _poll_queue_depth(self) -> None:
         """Periodically publish the JetStream consumer's pending depth."""
@@ -109,6 +136,9 @@ class Worker:
             except asyncio.CancelledError:
                 pass
             self._depth_task = None
+        if self._control_sub is not None:
+            await self._control_sub.unsubscribe()
+            self._control_sub = None
         if self._sub is not None:
             await self._sub.unsubscribe()
             self._sub = None

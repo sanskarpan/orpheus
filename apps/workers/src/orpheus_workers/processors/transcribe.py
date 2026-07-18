@@ -19,7 +19,16 @@ logger = structlog.get_logger(__name__)
 DEFAULT_CHUNK_SECONDS = 60
 
 
-@register_processor("transcribe")
+@register_processor(
+    "transcribe",
+    display_name="Transcribe",
+    description="Transcribe an audio artifact with faster-whisper (chunked for long files).",
+    tier="cpu_medium",
+    timeout_seconds=1800,
+    cost_per_job_usd=0.02,
+    model_id="whisper",
+    model_version_id="whisper-tiny.en",
+)
 async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Download the artifact, transcribe with whisper, return the result.
 

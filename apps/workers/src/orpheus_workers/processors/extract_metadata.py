@@ -42,7 +42,16 @@ def _extract_from_path(path: str) -> dict[str, Any]:
     }
 
 
-@register_processor("extract-metadata")
+@register_processor(
+    "extract-metadata",
+    display_name="Extract Metadata",
+    description="Extract container/codec/tag metadata from an audio artifact.",
+    tier="cpu_tiny",
+    timeout_seconds=60,
+    cost_per_job_usd=0.0001,
+    model_id="metadata",
+    model_version_id="metadata-1",
+)
 async def extract_metadata(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Download the artifact, run mutagen, return metadata as a dict.
 

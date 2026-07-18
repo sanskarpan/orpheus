@@ -103,7 +103,16 @@ def _fetch(url: str, dest: Path) -> tuple[int, str]:
                 return size, hasher.hexdigest()
 
 
-@register_processor("ingest.url")
+@register_processor(
+    "ingest.url",
+    display_name="Ingest URL",
+    description="Fetch audio from an SSRF-checked URL into a new artifact.",
+    tier="cpu_tiny",
+    timeout_seconds=300,
+    cost_per_job_usd=0.0005,
+    model_id="fetch",
+    model_version_id="fetch-1",
+)
 async def ingest_url(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
     s3 = ctx["s3"]
