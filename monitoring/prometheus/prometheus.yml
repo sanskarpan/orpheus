@@ -117,3 +117,17 @@ scrape_configs:
         labels:
           service: otel-collector
           component: app-metrics-export
+
+  # ─────────────────────────────────────────────────────────────────
+  # Synthetic canary (cmd/canary) — external prober of the client-facing
+  # API surface. Exposes orpheus_canary_up / _probes_total / _probe_
+  # duration_seconds on :9102. The CanaryDown / CanaryAbsent alerts in
+  # alerts.yml depend on this target being scraped.
+  # ─────────────────────────────────────────────────────────────────
+  - job_name: orpheus-canary
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["orpheus-canary:9102"]
+        labels:
+          service: orpheus-canary
+          component: canary

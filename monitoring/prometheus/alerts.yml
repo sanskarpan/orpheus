@@ -272,3 +272,61 @@ groups:
             regression or an authorization probe. Break down by the `table`
             label in Grafana to find the affected table and investigate.
           runbook: /runbooks/postgres-connection-exhaustion.md
+
+  # ─────────────────────────────────────────────────────────────────
+  # Synthetic canary — external probe of the client-facing surface.
+  # Metrics come from cmd/canary (orpheus_canary_*).
+  # ─────────────────────────────────────────────────────────────────
+  - name: orpheus-canary
+    rules:
+      # The API is unreachable/unhealthy to an outside prober — a client-facing
+      # outage even if internal metrics look fine (e.g. broken ingress/LB).
+      - alert: CanaryDown
+        expr: |
+          min(orpheus_canary_up) == 0
+        for: 2m
+        labels:
+          severity: page
+          service: orpheus-api
+        annotations:
+          summary: "Synthetic canary cannot reach the API ({{ $labels.endpoint }})"
+          description: >-
+            orpheus_canary_up is 0 — the external canary's probe of a health
+            endpoint failed for 2m. Treat as a client-facing outage.
+          runbook: /runbooks/canary-failing.md
+      # The canary process itself stopped reporting — we're blind to the
+      # client-facing view, so page before a real outage hides behind it.
+      - alert: CanaryAbsent
+        expr: |
+          absent(orpheus_canary_up)
+        for: 5m
+        labels:
+          severity: ticket
+          service: orpheus-canary
+        annotations:
+          summary: "Synthetic canary is not reporting metrics"
+          description: >-
+            No orpheus_canary_up samples for 5m — the canary Deployment is down
+            or unscraped. Restore it so the client-facing probe is live again.
+          runbook: /runbooks/canary-failing.md
+
+  # ─────────────────────────────────────────────────────────────────
+  # JetStream queue depth — direct pending gauge
+  # (orpheus_jetstream_pending_messages) from the worker's consumer_info poll.
+  # ─────────────────────────────────────────────────────────────────
+  - name: orpheus-queue
+    rules:
+      - alert: JetStreamPendingHigh
+        expr: |
+          max(orpheus_jetstream_pending_messages) > 100
+        for: 10m
+        labels:
+          severity: ticket
+          service: orpheus-workers
+        annotations:
+          summary: "JetStream backlog is high ({{ $value }} pending for 10m)"
+          description: >-
+            The worker consumer has a sustained pending backlog. Workers may be
+            under-provisioned, stuck, or a processor is failing and re-queuing.
+            Check worker health and orpheus_jobs_processed_total by status.
+          runbook: /runbooks/worker-pod-crashloop.md

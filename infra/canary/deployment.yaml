@@ -1,0 +1,77 @@
+# Synthetic canary — an external prober of the client-facing API surface.
+#
+# It runs the orpheus-canary binary (shipped in the API image) which probes
+# /health and /ready every interval and exposes orpheus_canary_* metrics on
+# :9102. Prometheus scrapes it (see the prometheus-scrape ConfigMap note in
+# monitoring/prometheus/prometheus.yml) and the CanaryDown/CanaryAbsent alerts
+# in monitoring/prometheus/alerts.yml fire on failure.
+#
+# Point ORPHEUS_CANARY_TARGET_URL at the *public* API URL (through the ingress/
+# LB), not the in-cluster Service, so the probe exercises the same path clients
+# take — that's what makes it catch ingress/LB/DNS/TLS outages.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orpheus-canary
+  labels:
+    app.kubernetes.io/name: orpheus-canary
+    app.kubernetes.io/component: canary
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orpheus-canary
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orpheus-canary
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9102"
+        prometheus.io/path: /metrics
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: canary
+          image: ghcr.io/sanskarpan/orpheus-api:latest
+          command: ["/app/orpheus-canary"]
+          env:
+            - name: ORPHEUS_CANARY_TARGET_URL
+              value: "https://api.orpheus.example.com"
+            - name: ORPHEUS_CANARY_INTERVAL_SECONDS
+              value: "300" # roadmap: probe every ~5 min
+            - name: ORPHEUS_CANARY_METRICS_PORT
+              value: "9102"
+          ports:
+            - name: metrics
+              containerPort: 9102
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orpheus-canary
+  labels:
+    app.kubernetes.io/name: orpheus-canary
+spec:
+  selector:
+    app.kubernetes.io/name: orpheus-canary
+  ports:
+    - name: metrics
+      port: 9102
+      targetPort: metrics
