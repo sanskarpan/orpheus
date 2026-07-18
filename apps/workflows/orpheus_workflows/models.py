@@ -35,9 +35,18 @@ class ChunkTranscript:
     index: int
     start_seconds: float
     text: str
+    # Segments with timestamps already shifted to the absolute timeline of the
+    # full recording (chunk-local ts + start_seconds). Each: {start, end, text}.
+    segments: list[dict] = field(default_factory=list)
     # id of any intermediate artifact created for this chunk, so it can be
     # compensated (deleted) on cancellation.
     artifact_id: str | None = None
+
+
+@dataclass
+class StitchResult:
+    text: str
+    segments: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -47,6 +56,7 @@ class TranscribeLongResult:
     text: str
     chunk_count: int
     result_artifact_id: str | None = None
+    segments: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -56,6 +66,7 @@ class PersistInput:
     artifact_id: str
     text: str
     chunk_count: int
+    segments: list[dict] = field(default_factory=list)
 
 
 @dataclass

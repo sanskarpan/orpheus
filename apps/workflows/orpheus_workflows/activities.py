@@ -21,7 +21,7 @@ from orpheus_workers.s3 import WorkerS3
 from orpheus_workers.transcribe import transcribe as run_whisper
 from temporalio import activity
 
-from .models import ChunkTranscript, CompensateInput, PersistInput, ProbeResult
+from .models import ChunkTranscript, CompensateInput, PersistInput, ProbeResult, StitchResult
 from .transcribe_long import COMPENSATE, PERSIST, PROBE, STITCH, TRANSCRIBE_CHUNK
 
 # Module-level singletons; activity workers are long-lived processes.
@@ -81,9 +81,24 @@ async def transcribe_chunk(
             cut = work / f"wf-{artifact_id}-{index}.cut.wav"
             ffmpeg_slice(sliced, cut, start, end)
             sliced = cut
-        seg = run_whisper(str(sliced))
-        text = seg.get("text", "") if isinstance(seg, dict) else str(seg)
-        return ChunkTranscript(index=index, start_seconds=start, text=text, artifact_id=None)
+        out = run_whisper(str(sliced))
+        if isinstance(out, dict):
+            text = out.get("text", "")
+            raw_segments = out.get("segments", []) or []
+        else:
+            text, raw_segments = str(out), []
+        # Shift chunk-local timestamps onto the full recording's timeline.
+        segments = [
+            {
+                "start": float(s.get("start", 0.0)) + start,
+                "end": float(s.get("end", 0.0)) + start,
+                "text": s.get("text", ""),
+            }
+            for s in raw_segments
+        ]
+        return ChunkTranscript(
+            index=index, start_seconds=start, text=text, segments=segments, artifact_id=None
+        )
     finally:
         for p in (src, sliced):
             with contextlib.suppress(FileNotFoundError):
@@ -91,8 +106,16 @@ async def transcribe_chunk(
 
 
 @activity.defn(name=STITCH)
-async def stitch(texts: list[str]) -> str:
-    return " ".join(t.strip() for t in texts if t and t.strip())
+async def stitch(chunks: list[ChunkTranscript]) -> StitchResult:
+    """Merge ordered chunk transcripts into one transcript with a continuous
+    segment timeline (not just concatenated text)."""
+    ordered = sorted(chunks, key=lambda c: c.index)
+    segments: list[dict] = []
+    for c in ordered:
+        segments.extend(c.segments or [])
+    segments.sort(key=lambda s: (s.get("start", 0.0), s.get("end", 0.0)))
+    text = " ".join(c.text.strip() for c in ordered if c.text and c.text.strip())
+    return StitchResult(text=text, segments=segments)
 
 
 @activity.defn(name=PERSIST)
@@ -107,7 +130,12 @@ async def persist(inp: PersistInput) -> str:
         WHERE id = %s
         """,
         json.dumps(
-            {"text": inp.text, "chunk_count": inp.chunk_count, "result_artifact_id": result_id}
+            {
+                "text": inp.text,
+                "segments": inp.segments,
+                "chunk_count": inp.chunk_count,
+                "result_artifact_id": result_id,
+            }
         ),
         inp.workflow_id,
     )
