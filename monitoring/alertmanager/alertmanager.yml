@@ -1,0 +1,81 @@
+# Alertmanager configuration for Orpheus.
+#
+# Routing policy (matches the severity convention in prometheus/alerts.yml):
+#   severity=page   -> PagerDuty (wake someone) + Slack #orpheus-alerts
+#   severity=ticket -> Slack #orpheus-alerts only (business-hours triage)
+#
+# Alertmanager does NOT expand environment variables in this file, so secrets
+# are read from mounted files via *_file fields:
+#   /etc/alertmanager/secrets/slack_webhook_url    - Slack incoming-webhook URL
+#   /etc/alertmanager/secrets/pagerduty_routing_key - PagerDuty Events API v2 key
+# In Kubernetes mount a Secret at /etc/alertmanager/secrets (External Secrets in
+# prod). Placeholder files with fake values are committed so the config loads;
+# replace them (they are .gitignored under secrets/*.local) or bind-mount real
+# ones in dev.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Group alerts by name + service so a flapping route doesn't spam.
+  group_by: ["alertname", "service"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: slack-default
+  routes:
+    # Pages go to PagerDuty AND Slack.
+    - matchers:
+        - severity = "page"
+      receiver: pagerduty-and-slack
+      group_wait: 10s
+      repeat_interval: 1h
+    # Tickets go to Slack only.
+    - matchers:
+        - severity = "ticket"
+      receiver: slack-default
+
+# Silence noisy children when a parent outage is already paging: if the API is
+# down (ApiDown), don't also ticket on downstream symptoms for the same service.
+inhibit_rules:
+  - source_matchers:
+      - alertname = "ApiDown"
+    target_matchers:
+      - severity = "ticket"
+    equal: ["service"]
+  - source_matchers:
+      - alertname = "CanaryDown"
+    target_matchers:
+      - alertname = "CanaryAbsent"
+
+receivers:
+  - name: slack-default
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack_webhook_url
+        channel: "#orpheus-alerts"
+        send_resolved: true
+        title: '{{ if eq .Status "firing" }}🔥{{ else }}✅{{ end }} [{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts }}*{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}{{ end }}
+          {{ end }}
+
+  - name: pagerduty-and-slack
+    pagerduty_configs:
+      - routing_key_file: /etc/alertmanager/secrets/pagerduty_routing_key
+        severity: critical
+        description: "{{ .CommonLabels.alertname }}: {{ .CommonAnnotations.summary }}"
+        details:
+          runbook: "{{ .CommonAnnotations.runbook }}"
+          service: "{{ .CommonLabels.service }}"
+    slack_configs:
+      - api_url_file: /etc/alertmanager/secrets/slack_webhook_url
+        channel: "#orpheus-alerts"
+        send_resolved: true
+        title: '🚨 [PAGE] {{ .CommonLabels.alertname }}'
+        text: >-
+          {{ range .Alerts }}*{{ .Annotations.summary }}*
+          {{ .Annotations.description }}
+          {{ if .Annotations.runbook }}Runbook: {{ .Annotations.runbook }}{{ end }}
+          {{ end }}
