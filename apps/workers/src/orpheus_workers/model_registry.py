@@ -81,8 +81,16 @@ class ModelRegistry:
             digest,
             size,
         )
-        logger.info("model_registry.registered", name=name, version=version, sha256=digest, size=size)
-        return {"name": name, "version": version, "sha256": digest, "size_bytes": size, "s3_key": key}
+        logger.info(
+            "model_registry.registered", name=name, version=version, sha256=digest, size=size
+        )
+        return {
+            "name": name,
+            "version": version,
+            "sha256": digest,
+            "size_bytes": size,
+            "s3_key": key,
+        }
 
     def resolve(self, name: str, version: str) -> Path:
         """Return a local path to the verified model, downloading + caching if needed.
