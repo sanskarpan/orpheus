@@ -92,7 +92,8 @@ def test_sync_catalog_real_db_idempotent() -> None:
 
     with db.conn() as c, c.cursor() as cur:
         cur.execute("SELECT count(*) FROM processors WHERE name = 'convert-to-wav'")
-        assert cur.fetchone()[0] == 1
+        count_row = cur.fetchone()
+        assert count_row is not None and count_row[0] == 1
         cur.execute(
             """SELECT p.tier, pv.model_id
                FROM processors p JOIN processor_versions pv ON pv.processor_id = p.id
