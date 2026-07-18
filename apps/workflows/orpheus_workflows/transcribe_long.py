@@ -25,6 +25,7 @@ with workflow.unsafe.imports_passed_through():
         CompensateInput,
         PersistInput,
         ProbeResult,
+        StitchResult,
         TranscribeLongInput,
         TranscribeLongResult,
     )
@@ -88,9 +89,9 @@ class TranscribeLongWorkflow:
                 transcripts.extend(await asyncio.gather(*[do_chunk(c) for c in batch]))
             transcripts.sort(key=lambda t: t.index)
 
-            full_text: str = await workflow.execute_activity(
+            stitched: StitchResult = await workflow.execute_activity(
                 STITCH,
-                args=[[t.text for t in transcripts]],
+                args=[transcripts],
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=_ACTIVITY_RETRY,
             )
@@ -101,8 +102,9 @@ class TranscribeLongWorkflow:
                     workflow_id=inp.workflow_id,
                     org_id=inp.org_id,
                     artifact_id=inp.artifact_id,
-                    text=full_text,
+                    text=stitched.text,
                     chunk_count=len(chunks),
+                    segments=stitched.segments,
                 ),
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=_ACTIVITY_RETRY,
@@ -113,9 +115,10 @@ class TranscribeLongWorkflow:
             return TranscribeLongResult(
                 workflow_id=inp.workflow_id,
                 artifact_id=inp.artifact_id,
-                text=full_text,
+                text=stitched.text,
                 chunk_count=len(chunks),
                 result_artifact_id=result_artifact_id,
+                segments=stitched.segments,
             )
         except (CancelledError, ActivityError):
             # Saga compensation: undo intermediate artifacts in reverse order.

@@ -15,6 +15,7 @@ from orpheus_workflows.models import (
     ChunkTranscript,
     CompensateInput,
     PersistInput,
+    StitchResult,
     TranscribeLongInput,
 )
 from orpheus_workflows.transcribe_long import (
@@ -58,13 +59,22 @@ def _fakes(rec: Recorder):
         # Chunk 0 fails the first N times to exercise the retry policy.
         if index == 0 and rec.chunk_calls[index] <= rec.chunk_fail_times:
             raise ApplicationError("transient chunk failure", non_retryable=False)
+        # One segment per chunk, timestamped on the absolute timeline.
         return ChunkTranscript(
-            index=index, start_seconds=start, text=f"[{index}]", artifact_id=f"chunk-{index}"
+            index=index,
+            start_seconds=start,
+            text=f"[{index}]",
+            segments=[{"start": start, "end": end, "text": f"[{index}]"}],
+            artifact_id=f"chunk-{index}",
         )
 
     @activity.defn(name=STITCH)
-    async def stitch(texts: list[str]):
-        return " ".join(texts)
+    async def stitch(chunks: list[ChunkTranscript]):
+        ordered = sorted(chunks, key=lambda c: c.index)
+        segments: list[dict] = []
+        for c in ordered:
+            segments.extend(c.segments or [])
+        return StitchResult(text=" ".join(c.text for c in ordered), segments=segments)
 
     @activity.defn(name=PERSIST)
     async def persist(inp: PersistInput):
@@ -117,6 +127,13 @@ async def test_transcribe_long_workflow_e2e():
         assert res.chunk_count == 4
         assert res.text == "[0] [1] [2] [3]"
         assert res.result_artifact_id == "result-w1"
+        # Segments flow through stitch onto a continuous absolute timeline.
+        assert [(s["start"], s["end"]) for s in res.segments] == [
+            (0.0, 60.0),
+            (60.0, 120.0),
+            (120.0, 180.0),
+            (180.0, 185.0),
+        ]
 
         # 2) Retry — chunk 0 fails twice then succeeds; the workflow still
         #    completes because the activity retry policy re-runs it.
