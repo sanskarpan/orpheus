@@ -66,7 +66,7 @@ ADRs, distroless API image. Done.
 | Direct queue-depth metric | ✅ | `orpheus_jetstream_pending_messages` gauge (stream, consumer), polled from `consumer_info().num_pending` every `queue_depth_poll_seconds`. |
 | Worker Helm chart | ✅ | `infra/helm/orpheus-worker` with KEDA `scaledobject`. |
 
-## Phase 3 — Observability & SRE 🟡 (~40%)
+## Phase 3 — Observability & SRE 🟡 (~55%)
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -75,25 +75,26 @@ ADRs, distroless API image. Done.
 | OTel Collector → Prometheus/Loki/Tempo | ✅ | `monitoring/otel-collector/config.yaml` with all three pipelines + `docker-compose.observability.yml`. |
 | Grafana dashboards | 🟡 | 4 provisioned (api, workers-queue, database-rls, cost-usage); roadmap target was 10+. |
 | SLO definitions + burn-rate alerts | ✅ | `docs/SLOs.md` (4 SLOs) + `monitoring/prometheus/alerts.yml` (multi-window burn-rate alerts). |
-| On-call runbooks | 🟡 | 5 in `docs/runbooks/`, cross-linked from alerts; target was 10. |
-| Alertmanager → PagerDuty/Slack | ❌ | Prometheus `alerting.alertmanagers` targets list is empty; no Alertmanager deployed. |
-| Synthetic canary (5 min) | ❌ | No canary/CronJob. |
+| On-call runbooks | 🟡 | 6 in `docs/runbooks/` (added canary), cross-linked from alerts; target was 10. |
+| Alertmanager → PagerDuty/Slack | ✅ | `monitoring/alertmanager/alertmanager.yml` — page→PagerDuty+Slack, ticket→Slack, inhibition; wired into Prometheus + compose (#214). Secrets via `*_file`. |
+| Synthetic canary (5 min) | ✅ | `cmd/canary` probes `/health` + `/ready`, exports `orpheus_canary_*`; `CanaryDown`/`CanaryAbsent` alerts + k8s Deployment (#213). |
+| Direct queue-depth alert | ✅ | `JetStreamPendingHigh` on the `orpheus_jetstream_pending_messages` gauge (#213). |
 | Continuous profiling (Pyroscope) | ❌ | Not present. |
 | Chaos drills / DR drill | ❌ | Not present (overlaps Phase 5). |
 
-## Phase 4 — Transcribe-Long workflow 🟡 (~60%)
+## Phase 4 — Transcribe-Long workflow 🟡 (~70%)
 
 | Item | Status | Notes |
 |------|--------|-------|
 | `transcribe` processor (faster-whisper) | ✅ | Chunked with segment-offset adjustment; params validated. |
-| **Temporal** `TranscribeLongWorkflow` | ✅ | Real `apps/workflows/` module (temporalio): probe → plan chunks → bounded-parallel transcribe → stitch → persist. |
+| **Temporal** `TranscribeLongWorkflow` | ✅ | Real `apps/workflows/` module (temporalio): probe → plan chunks → bounded-parallel transcribe → stitch → persist. Stitch merges chunk **segments onto an absolute timeline** (not just concatenated text) (#216). |
 | Saga compensation on cancel | ✅ | Reverse-order artifact cleanup on cancel/failure; unit + replay tested (`test_transcribe_long.py`). |
 | `workflows` table + endpoints | ✅ | DB-tracked status alongside Temporal (migration 0003, `handlers/workflows.go`). |
 | Idempotency for activities | 🟡 | `persist` is CAS-idempotent; probe/stitch read-only; no dedicated activity idempotency-key table. |
 | `diarize` processor + alignment | ✅ | PRD 05 (#187): pyannote `diarize` (stub fallback) + transcript/word alignment + word-level timestamps + SRT/VTT export. |
 | API → Temporal trigger wiring | 🟡 | Go API still creates the DB-tracked path; the Temporal worker exists but is not yet started from the API on every request. |
-| GPU worker pool + gVisor sandbox | ❌ | CPU only. |
-| Model registry (S3, checksums) | ❌ | Model downloaded by faster-whisper; no registry/checksum. |
+| GPU worker pool + gVisor sandbox | ❌ | CPU only (needs GPU hardware + a k8s admission controller to implement/test). |
+| Model registry (S3, checksums) | ✅ | `model_registry` table + `ModelRegistry.register/resolve` with sha256 verification on load (tamper rejected) (#215). Wiring processors to source weights through it is a follow-up. |
 
 ## PRD wave (2026-07) — feature expansion ✅
 
@@ -180,10 +181,12 @@ now specific.
   retry/backoff, per-tenant concurrency, computed cost, `convert-to-wav`,
   direct queue-depth gauge). Only nicety left: an in-code processor
   manifest/hot-reload (metadata currently lives in the DB catalog).
-- **Phase 3 (~40%)** — Alertmanager→PagerDuty/Slack wiring; synthetic canary;
-  Pyroscope; more dashboards/runbooks; chaos/DR.
+- **Phase 3 (~55%)** — Alertmanager (#214), synthetic canary + queue-depth
+  alert (#213) now shipped. Remaining: Pyroscope, more dashboards/runbooks,
+  chaos/DR drills (need a cluster).
 - **Phase 4 (~60%)** — GPU pool + gVisor; model registry + checksums; wire the Go
-  API to actually start the Temporal workflow; richer stitch/alignment.
+  API to actually start the Temporal workflow (needs a Temporal server in the
+  stack). Model registry (#215) + richer stitch (#216) now shipped.
 - **Phase 5 (~15%)** — multi-region, WAF, gVisor-enforce, supply-chain
   (cosign/SLSA/SBOM/Trivy), ESO, VPC endpoints, SOC 2, preview envs, DR.
 - **Phase 6 (~25%)** — Ray Serve + dynamic batching + MIG; real admin UI; Mintlify;
