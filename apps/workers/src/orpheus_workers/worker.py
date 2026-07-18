@@ -97,8 +97,13 @@ class Worker:
         # the source of truth for what the API can accept, then subscribe to a
         # control subject that re-runs the sync on demand (hot-reload) — NATS
         # standing in for the roadmap's Redis pubsub, per the same substitution
-        # used for the job bus.
-        sync_catalog(self._db)
+        # used for the job bus. Run in a thread (WorkerDB is synchronous) so it
+        # doesn't block the event loop, and treat a failure as non-fatal — the
+        # catalog is also seeded by migrations, so the worker can still process.
+        try:
+            await asyncio.to_thread(sync_catalog, self._db)
+        except Exception as exc:  # noqa: BLE001 — sync must not block startup
+            logger.error("worker.catalog_sync_failed", err=str(exc))
         self._control_sub = await self._nc.subscribe(CONTROL_RELOAD_SUBJECT, cb=self._on_control)
 
         start_http_server(settings.metrics_port)
@@ -110,7 +115,7 @@ class Worker:
         """Hot-reload the processor catalog on a control message."""
         assert self._db is not None
         try:
-            n = sync_catalog(self._db)
+            n = await asyncio.to_thread(sync_catalog, self._db)
             logger.info("worker.catalog_reloaded", processors=n)
         except Exception as exc:  # noqa: BLE001 — reload must not crash the worker
             logger.error("worker.catalog_reload_failed", err=str(exc))
