@@ -90,7 +90,7 @@ jobs:
           cosign attest --yes --predicate sbom.spdx.json --type spdxjson "$IMAGE"
 
       - name: Trivy image scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.name }}@${{ steps.build.outputs.digest }}
           severity: CRITICAL,HIGH
