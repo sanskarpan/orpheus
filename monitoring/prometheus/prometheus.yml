@@ -16,13 +16,12 @@ global:
 rule_files:
   - /etc/prometheus/alerts.yml
 
-# Alertmanager is not shipped in this stack by default. Point Prometheus
-# at one here when you deploy it.
+# Alertmanager ships in the observability stack (see
+# docker-compose.observability.yml and monitoring/alertmanager/alertmanager.yml).
 alerting:
   alertmanagers:
     - static_configs:
-        - targets: []
-          # - alertmanager:9093
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   # ─────────────────────────────────────────────────────────────────
