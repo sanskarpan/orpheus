@@ -460,3 +460,40 @@ jobs:
         if: always()
         run: |
           pkill -f 'cmd/api' || true
+
+  # ─────────────────────────────────────────────────────────────────
+  # OpenAPI lint + breaking-change detection (Phase 6).
+  # Redocly lint is report-only (the spec is hand-written; style nits
+  # shouldn't block unrelated work). oasdiff is the blocking gate: a
+  # breaking change to the committed spec vs the base commit fails CI.
+  # ─────────────────────────────────────────────────────────────────
+  openapi-diff:
+    name: OpenAPI lint + oasdiff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Redocly lint (report-only)
+        run: npx --yes @redocly/cli@1.25.11 lint apps/api/api/openapi.json || true
+
+      - name: Resolve base spec
+        id: base
+        run: |
+          BASE="${{ github.event.pull_request.base.sha }}"
+          if [ -z "$BASE" ]; then BASE="$(git rev-parse HEAD~1 2>/dev/null || echo '')"; fi
+          if [ -n "$BASE" ] && git cat-file -e "$BASE:apps/api/api/openapi.json" 2>/dev/null; then
+            git show "$BASE:apps/api/api/openapi.json" > /tmp/base-openapi.json
+            echo "has_base=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_base=false (no base spec to diff against)"
+            echo "has_base=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: oasdiff breaking-change check (blocking)
+        if: steps.base.outputs.has_base == 'true'
+        run: |
+          docker run --rm -v /tmp:/tmp -v "$PWD/apps/api/api:/spec" \
+            tufin/oasdiff:latest breaking \
+            /tmp/base-openapi.json /spec/openapi.json --fail-on ERR
