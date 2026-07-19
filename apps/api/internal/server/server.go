@@ -243,6 +243,12 @@ func (s *Server) v1Routes() {
 		r.With(rs("streaming:read")).Get("/streaming/sessions/{id}", strh.Get)
 		r.With(rs("streaming:write")).Post("/streaming/sessions/{id}/finalize", strh.Finalize)
 
+		mph := &handlers.MarketplaceHandler{DB: s.opts.DB}
+		r.With(rs("marketplace:read")).Get("/marketplace/processors", mph.ListProcessors)
+		r.With(rs("marketplace:write")).Post("/marketplace/submissions", mph.Submit)
+		r.With(rs("marketplace:read")).Get("/marketplace/submissions", mph.ListSubmissions)
+		r.With(rs("*")).Post("/marketplace/submissions/{id}/review", mph.Review)
+
 		sh := &handlers.SystemHandler{DB: s.opts.DB}
 		r.With(rs("usage:read")).Get("/usage", sh.GetUsage)
 		r.With(rs("audit:read")).Get("/audit-log", sh.ListAuditLog)
