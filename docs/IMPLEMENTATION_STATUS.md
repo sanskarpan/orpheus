@@ -118,7 +118,7 @@ Postgres + MinIO + NATS. Tracked as issues #195–#204.
 
 Comprehensive cross-feature e2e: #188 (PRD 01–05) and #194 (PRD 06–10).
 
-## Phase 5 — Production Hardening 🟡 (~35%)
+## Phase 5 — Production Hardening 🟡 (~40%)
 
 | Item | Status | Notes |
 |------|--------|-------|
@@ -132,7 +132,7 @@ Comprehensive cross-feature e2e: #188 (PRD 01–05) and #194 (PRD 06–10).
 | Postgres HA / read replica | 🟡 | RDS Multi-AZ standby; no read replica, no cross-region backup. |
 | Single-region Terraform (EKS/VPC/RDS/ElastiCache/S3) | ✅ | `infra/terraform/` modules provision one region. |
 | Multi-region active-passive | ❌ | Single region only (needs a rollout to a second region). |
-| OPA/Rego authz | ❌ | RLS only. |
+| OPA/Rego authz | ✅ | Embedded OPA/Rego policy (`internal/authz`) evaluated per request alongside RLS: scope enforcement + deny-overrides (suspended org can't mutate), fail-closed (#224). |
 | External Secrets Operator + AWS Secrets Manager | 🟡 | Referenced in Helm comments; not deployed. |
 | SOC 2 Type I readiness | ❌ | No control mapping/evidence. |
 | Per-PR preview environments | ❌ | Not in CI. |
@@ -140,18 +140,18 @@ Comprehensive cross-feature e2e: #188 (PRD 01–05) and #194 (PRD 06–10).
 
 See `infra/HARDENING.md` for the validated-vs-infra-bound ledger.
 
-## Phase 6 — Scale & Polish 🟡 (~35%)
+## Phase 6 — Scale & Polish 🟡 (~40%)
 
 | Item | Status | Notes |
 |------|--------|-------|
 | Result cache (content-addressed) | ✅ | PRD 01 (#183); RLS-scoped `job_result_cache`. |
 | OpenAPI linting + oasdiff in CI | ✅ | Redocly lint + oasdiff breaking-change gate (#219). |
 | Usage-based billing rollup (schema + rollup) | 🟡 | PRD 07 (#190) ships `usage_rollup_hourly`/`budgets`/alerts + computes cost; no invoice/Stripe pipeline. |
-| SDKs (Python, TypeScript) | 🟡 | Exist (v0.2.0) but not published; no CI release; no Go SDK. |
+| SDKs (Python, TypeScript, Go) | 🟡 | Python/TS (v0.2.0) + a new stdlib-only **Go SDK** `packages/sdk-go` (#225). Not yet published to registries. |
 | Admin dashboard (Next.js) | 🟡 | `apps/web` is an explicit **scaffold** (`0.0.0-scaffold`, build scripts error out); not wired, not in CI. |
 | Ray Serve GPU inference / dynamic batching / MIG | ❌ | In-process CPU whisper only (needs GPU hardware). |
 | Docs site (Mintlify) | ❌ | Markdown ADRs/design docs only. |
-| Customer onboarding flow | ❌ | No signup/trial provisioning. |
+| Customer onboarding flow | 🟡 | `POST /v1/onboarding/provision` (platform-admin) creates org+user+key atomically (#225). Self-serve signup + email verification is a follow-up. |
 | Temporal Cloud migration | ❌ | Self-hosted Temporal only. |
 | Design-partner validation | ❌ | Not started. |
 
@@ -192,9 +192,9 @@ now specific.
   alert (#213). Remaining: Pyroscope, more dashboards/runbooks, chaos/DR (cluster).
 - **Phase 4 (~70%)** — model registry + checksums (#215), richer stitch (#216).
   Remaining: GPU pool + gVisor (hardware), API→Temporal trigger wiring (server).
-- **Phase 5 (~35%)** — supply-chain CI (#218), WAF + VPC-endpoints + gVisor
-  RuntimeClass config (#222). Remaining: multi-region, OPA/Rego, ESO, SOC 2,
-  gVisor enforcement, preview envs, DR.
+- **Phase 5 (~40%)** — supply-chain CI (#218), WAF/VPC/gVisor config (#222),
+  **OPA/Rego authz** (#224). Remaining: multi-region, ESO, SOC 2, gVisor
+  enforcement, preview envs, DR.
 - **Phase 6 (~35%)** — oasdiff/lint in CI (#219). Remaining: Ray Serve/batching/MIG
   (GPU); admin UI; Mintlify; SDK publish + Go SDK; cost invoicing; onboarding.
 - **Phase 7 (~20%)** — trust classes + moderation + publisher CLI (#221), community
