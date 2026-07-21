@@ -24,6 +24,10 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
+      {{- if .Values.gvisor.enabled }}
+      # Run under the gVisor syscall sandbox (see infra/k8s/runtimeclass-gvisor.yaml).
+      runtimeClassName: {{ .Values.gvisor.runtimeClassName }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
