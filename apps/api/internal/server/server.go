@@ -18,6 +18,7 @@ import (
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
+	"github.com/orpheus/api/internal/authz"
 	"github.com/orpheus/api/internal/billing"
 	"github.com/orpheus/api/internal/config"
 	"github.com/orpheus/api/internal/db"
@@ -45,6 +46,7 @@ type Options struct {
 	Billing     billing.Provider
 	Deliverer   *delivery.Deliverer
 	Scanner     handlers.AVScanner
+	Authz       *authz.Authorizer
 }
 
 // Server is the HTTP server for the Orpheus API.
@@ -182,8 +184,13 @@ func (s *Server) v1Routes() {
 
 		// Per-route scope enforcement. JWT principals have full org
 		// authority; API-key principals must hold the listed scope (or
-		// "*"). RequireScope is a no-op for unscoped tokens by design.
+		// "*"). When an OPA authorizer is wired, decisions route through the
+		// Rego policy (scope + deny-overrides); otherwise the in-Go
+		// RequireScope is used (same scope contract).
 		rs := auth.RequireScope
+		if s.opts.Authz != nil {
+			rs = s.opts.Authz.Require
+		}
 
 		uh := &handlers.UploadHandler{DB: s.opts.DB, S3: s.opts.S3, Audit: s.opts.Audit, Scanner: s.opts.Scanner}
 		r.With(rs("uploads:write")).Post("/uploads", uh.Create)

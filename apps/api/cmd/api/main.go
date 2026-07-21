@@ -29,6 +29,7 @@ import (
 
 	"github.com/orpheus/api/internal/audit"
 	"github.com/orpheus/api/internal/auth"
+	"github.com/orpheus/api/internal/authz"
 	"github.com/orpheus/api/internal/avscan"
 	batchingpkg "github.com/orpheus/api/internal/batching"
 	"github.com/orpheus/api/internal/billing"
@@ -149,6 +150,13 @@ func run() error {
 	apikey := auth.NewAPIKeyValidator(pgDB)
 	authn := &auth.Authenticator{Keycloak: keycloak, APIKey: apikey}
 
+	// Rego authorization policy (Phase 5: OPA/Rego alongside RLS). Compiled
+	// once; a failure here is fatal since the policy is embedded.
+	authorizer, err := authz.New(ctx)
+	if err != nil {
+		return fmt.Errorf("orpheus_api.authz_init: %w", err)
+	}
+
 	// Cross-cutting middleware. Each is optional; the server treats
 	// nil fields as "feature disabled" so a minimal binary can omit
 	// Redis or the audit recorder.
@@ -247,6 +255,7 @@ func run() error {
 		Billing:     billingProvider,
 		Deliverer:   deliverer,
 		Scanner:     avScanner,
+		Authz:       authorizer,
 	})
 
 	logger.Info("orpheus_api.ready", "addr", cfg.Addr())
