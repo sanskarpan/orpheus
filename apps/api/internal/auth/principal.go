@@ -32,6 +32,11 @@ type Principal struct {
 	Email     string // from JWT claims; empty for API key auth
 	Roles     []string
 	IsService bool // true for the service role (bypass RLS)
+	// OrgSuspended is consumed by the Rego authorization policy (a suspended
+	// org may read but not mutate). It is a hook: the auth layer does not yet
+	// populate it from org status, so it defaults false and the deny-override
+	// is inert until that lookup is wired.
+	OrgSuspended bool
 }
 
 // validScopes is the set of API-key scope strings the API recognises,
