@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 )
 
 // Principal is the authenticated identity attached to a request.
@@ -54,6 +55,7 @@ var validScopes = map[string]struct{}{
 	"streaming:write":   {}, // create/finalize streaming sessions (Phase 8)
 	"marketplace:read":  {}, // browse the processor marketplace (Phase 7)
 	"marketplace:write": {}, // submit a community processor (Phase 7)
+	"platform:admin":    {}, // cross-tenant admin (provisioning, moderation)
 	"*":                 {},
 }
 
@@ -114,6 +116,28 @@ func RequireScope(scope string) func(http.Handler) http.Handler {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusForbidden)
 				_, _ = w.Write([]byte(`{"type":"https://docs.orpheus.dev/errors/forbidden","title":"Forbidden","status":403,"detail":"missing required scope: ` + scope + `"}`))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// RequireRole returns middleware that rejects (403) any principal — JWT or
+// API key — that does not *explicitly* hold `role` in its Roles/scopes. Unlike
+// RequireScope, a JWT principal does NOT auto-pass: this is the gate for
+// platform-admin / cross-tenant actions (e.g. tenant provisioning) where
+// "full authority within one's own org" is not enough. The admin marker must
+// be granted deliberately (a Keycloak realm role for users, or the scope on an
+// API key).
+func RequireRole(role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p, err := PrincipalFromContext(r.Context())
+			if err != nil || p == nil || !slices.Contains(p.Roles, role) {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"type":"https://docs.orpheus.dev/errors/forbidden","title":"Forbidden","status":403,"detail":"missing required role: ` + role + `"}`))
 				return
 			}
 			next.ServeHTTP(w, r)

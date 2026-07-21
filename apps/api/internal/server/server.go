@@ -244,6 +244,13 @@ func (s *Server) v1Routes() {
 		r.With(rs("jobs:write")).Post("/workflows/transcribe-long", wh2.CreateTranscribeLong)
 		r.With(rs("jobs:read")).Get("/workflows/{id}", wh2.Get)
 
+		// Onboarding: platform-admin-only tenant provisioning (org + user +
+		// key). RequireRole (not rs/RequireScope) so a normal JWT org user
+		// cannot mint tenants — the "platform:admin" role/scope must be held
+		// explicitly.
+		obh := &handlers.OnboardingHandler{DB: s.opts.DB, Audit: s.opts.Audit}
+		r.With(auth.RequireRole("platform:admin")).Post("/onboarding/provision", obh.Provision)
+
 		strh := &handlers.StreamingHandler{DB: s.opts.DB, Audit: s.opts.Audit}
 		r.With(rs("streaming:write")).Post("/streaming/sessions", strh.Create)
 		r.With(rs("streaming:read")).Get("/streaming/sessions", strh.List)
