@@ -118,53 +118,63 @@ Postgres + MinIO + NATS. Tracked as issues #195–#204.
 
 Comprehensive cross-feature e2e: #188 (PRD 01–05) and #194 (PRD 06–10).
 
-## Phase 5 — Production Hardening 🟡 (~15%)
+## Phase 5 — Production Hardening 🟡 (~35%)
 
 | Item | Status | Notes |
 |------|--------|-------|
 | API keys with Argon2id | ✅ | Load-bearing; hash+verify with DoS-guard cache. |
 | RLS as authz layer | ✅ | Every table FORCE RLS (this is the primary tenant-isolation control). |
+| Supply chain (cosign/SLSA/SBOM/Trivy) | ✅ | CI Trivy fs+secret scan + Syft SBOM (#218); release cosign keyless sign + SBOM attest + Trivy image scan. |
+| WAF rules | ✅ | `terraform/modules/waf`: per-IP rate limit + AWS managed rule sets + geo-block (#222, `terraform validate`). |
+| VPC endpoints | ✅ | `terraform/modules/vpc-endpoints`: S3 gateway + ECR/Secrets/Logs interface (#222). |
+| gVisor sandbox | 🟡 | RuntimeClass + worker Helm `runtimeClassName` (opt-in) (#222); **not yet enforced** by an admission controller. |
 | Redis failover | 🟡 | ElastiCache `automatic_failover_enabled` for 2+ nodes; not cluster (sharded) mode. |
 | Postgres HA / read replica | 🟡 | RDS Multi-AZ standby; no read replica, no cross-region backup. |
 | Single-region Terraform (EKS/VPC/RDS/ElastiCache/S3) | ✅ | `infra/terraform/` modules provision one region. |
-| Multi-region active-passive | ❌ | Single region only. |
+| Multi-region active-passive | ❌ | Single region only (needs a rollout to a second region). |
 | OPA/Rego authz | ❌ | RLS only. |
-| WAF rules | ❌ | Rate-limit is in the Go API, not a WAF. |
-| gVisor enforced via admission controller | ❌ | ADR-0008 only; no `runtimeClassName` in Helm. |
-| Supply chain (cosign/SLSA/SBOM/Trivy) | ❌ | CI runs `pip-audit`; no image signing/SBOM/scan. |
 | External Secrets Operator + AWS Secrets Manager | 🟡 | Referenced in Helm comments; not deployed. |
-| VPC endpoints | ❌ | No `aws_vpc_endpoint` resources. |
 | SOC 2 Type I readiness | ❌ | No control mapping/evidence. |
 | Per-PR preview environments | ❌ | Not in CI. |
 | DR runbook tested | ❌ | No DR runbook. |
 
-## Phase 6 — Scale & Polish 🟡 (~25%)
+See `infra/HARDENING.md` for the validated-vs-infra-bound ledger.
+
+## Phase 6 — Scale & Polish 🟡 (~35%)
 
 | Item | Status | Notes |
 |------|--------|-------|
 | Result cache (content-addressed) | ✅ | PRD 01 (#183); RLS-scoped `job_result_cache`. |
+| OpenAPI linting + oasdiff in CI | ✅ | Redocly lint + oasdiff breaking-change gate (#219). |
 | Usage-based billing rollup (schema + rollup) | 🟡 | PRD 07 (#190) ships `usage_rollup_hourly`/`budgets`/alerts + computes cost; no invoice/Stripe pipeline. |
 | SDKs (Python, TypeScript) | 🟡 | Exist (v0.2.0) but not published; no CI release; no Go SDK. |
 | Admin dashboard (Next.js) | 🟡 | `apps/web` is an explicit **scaffold** (`0.0.0-scaffold`, build scripts error out); not wired, not in CI. |
-| Ray Serve GPU inference / dynamic batching / MIG | ❌ | In-process CPU whisper only. |
+| Ray Serve GPU inference / dynamic batching / MIG | ❌ | In-process CPU whisper only (needs GPU hardware). |
 | Docs site (Mintlify) | ❌ | Markdown ADRs/design docs only. |
-| OpenAPI linting + oasdiff in CI | ❌ | Runtime spec validation only; no lint/diff. |
 | Customer onboarding flow | ❌ | No signup/trial provisioning. |
 | Temporal Cloud migration | ❌ | Self-hosted Temporal only. |
 | Design-partner validation | ❌ | Not started. |
 
-## Phase 7 — Marketplace & BYO Model ❌ (0%)
-Genuinely untouched — no schema, no code, no design doc. Marketplace UI, publisher
-CLI, trust classes, community sandbox, BYO-model upload, LoRA fine-tuning,
-federated cost reporting, moderation queue all not started.
+## Phase 7 — Marketplace & BYO Model 🟡 (~20%)
 
-## Phase 8 — Streaming & Realtime 🟡 (~15%)
+| Item | Status | Notes |
+|------|--------|-------|
+| Trust classes (first_party/verified/community) | ✅ | `processors.trust_class` + `publisher` (#221). |
+| Moderation queue (submit → review → promote) | ✅ | `marketplace_submissions` + `/v1/marketplace/*`; approval promotes into the catalog (#221). |
+| Publisher CLI | ✅ | `cmd/orpheus-publish` submits a community processor (#221). |
+| Community sandbox (gVisor + no-egress) | 🟡 | RuntimeClass + NetworkPolicy config (#222); not enforced. |
+| Marketplace discovery UI | ❌ | API only; no UI. |
+| BYO-model upload / HuggingFace import | ❌ | Needs the model-registry ingest path + storage quota. |
+| LoRA fine-tuning per tenant | ❌ | Needs GPU (A100) infra. |
+| Federated cost reporting (revenue share) | ❌ | Not started. |
+
+## Phase 8 — Streaming & Realtime 🟡 (~30%)
 
 | Item | Status | Notes |
 |------|--------|-------|
 | WebSocket streaming ASR | ✅ | `apps/workers/src/orpheus_workers/streaming.py` — standalone FastAPI on :8082, `StreamSession` state machine, partial/final frames, offline faster-whisper; unit + e2e tested. |
-| WebRTC ingress (LiveKit/mediasoup) | ❌ | Not present. |
-| Session REST API + `streaming_sessions` persistence | ❌ | No API endpoints, no DB table, no result persistence to jobs. |
+| Session REST API + `streaming_sessions` persistence | ✅ | `0019_streaming_sessions.sql` + `/v1/streaming/sessions` create/get/list/finalize (persists transcript + billable audio + cost) (#220). |
+| WebRTC ingress (LiveKit/mediasoup) | ❌ | Needs media/SFU infra. |
 | SLA latency instrumentation (p95 partial) | ❌ | No latency metrics. |
 | Enterprise tier / dedicated GPU pools / custom contracts | ❌ | Not started. |
 
@@ -177,20 +187,21 @@ now specific.
 
 - **Phase 1 (100%)** — complete. AV/malware scan now active (built-in EICAR +
   optional clamd).
-- **Phase 2 (~98%)** — complete for the roadmap's capabilities (DLQ+requeue,
-  retry/backoff, per-tenant concurrency, computed cost, `convert-to-wav`,
-  direct queue-depth gauge). Only nicety left: an in-code processor
-  manifest/hot-reload (metadata currently lives in the DB catalog).
+- **Phase 2 (100%)** — complete (manifest + catalog-sync + NATS hot-reload, #212).
 - **Phase 3 (~55%)** — Alertmanager (#214), synthetic canary + queue-depth
-  alert (#213) now shipped. Remaining: Pyroscope, more dashboards/runbooks,
-  chaos/DR drills (need a cluster).
-- **Phase 4 (~60%)** — GPU pool + gVisor; model registry + checksums; wire the Go
-  API to actually start the Temporal workflow (needs a Temporal server in the
-  stack). Model registry (#215) + richer stitch (#216) now shipped.
-- **Phase 5 (~15%)** — multi-region, WAF, gVisor-enforce, supply-chain
-  (cosign/SLSA/SBOM/Trivy), ESO, VPC endpoints, SOC 2, preview envs, DR.
-- **Phase 6 (~25%)** — Ray Serve + dynamic batching + MIG; real admin UI; Mintlify;
-  oasdiff/lint; SDK publish + Go SDK; cost invoicing; onboarding; Temporal Cloud.
-- **Phase 7 (0%)** — entire marketplace / BYO-model surface (greenfield).
-- **Phase 8 (~15%)** — WebRTC ingress; streaming session REST API + persistence;
-  SLA instrumentation; enterprise tier.
+  alert (#213). Remaining: Pyroscope, more dashboards/runbooks, chaos/DR (cluster).
+- **Phase 4 (~70%)** — model registry + checksums (#215), richer stitch (#216).
+  Remaining: GPU pool + gVisor (hardware), API→Temporal trigger wiring (server).
+- **Phase 5 (~35%)** — supply-chain CI (#218), WAF + VPC-endpoints + gVisor
+  RuntimeClass config (#222). Remaining: multi-region, OPA/Rego, ESO, SOC 2,
+  gVisor enforcement, preview envs, DR.
+- **Phase 6 (~35%)** — oasdiff/lint in CI (#219). Remaining: Ray Serve/batching/MIG
+  (GPU); admin UI; Mintlify; SDK publish + Go SDK; cost invoicing; onboarding.
+- **Phase 7 (~20%)** — trust classes + moderation + publisher CLI (#221), community
+  sandbox config (#222). Remaining: discovery UI, BYO-model, LoRA (GPU), revenue share.
+- **Phase 8 (~30%)** — streaming session REST API + persistence (#220). Remaining:
+  WebRTC ingress (media infra), SLA instrumentation, enterprise tier.
+
+> Items marked "needs hardware/cluster/server" are delivered as validated
+> config/design where possible (see `infra/HARDENING.md`) but cannot be
+> exercised end-to-end in this environment.
