@@ -139,3 +139,11 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 terminationGracePeriodSeconds: 120
+
+# gVisor syscall sandbox (Phase 5 / community-processor isolation). Enable on
+# clusters where nodes advertise the gvisor RuntimeClass (see
+# infra/k8s/runtimeclass-gvisor.yaml). Off by default so the chart installs on
+# any cluster.
+gvisor:
+  enabled: false
+  runtimeClassName: gvisor

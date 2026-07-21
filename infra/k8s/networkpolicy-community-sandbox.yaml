@@ -1,0 +1,24 @@
+# Default-deny egress for community-trust processor pods (Phase 7 sandbox).
+#
+# Community processors run untrusted third-party code, so they get NO network
+# egress except DNS — combined with the gVisor RuntimeClass and an ephemeral,
+# read-only rootfs this bounds what published code can reach. Label such pods
+# `orpheus.dev/trust-class: community` for this policy to select them.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: community-sandbox-deny-egress
+spec:
+  podSelector:
+    matchLabels:
+      orpheus.dev/trust-class: community
+  policyTypes:
+    - Egress
+  egress:
+    # DNS only (so the pod can resolve, but reach nothing else).
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53

@@ -1,0 +1,16 @@
+# gVisor RuntimeClass (Phase 5 / Phase 7 community sandbox).
+#
+# Nodes must have the gVisor runtime (runsc) installed and the containerd
+# handler named "runsc" (e.g. via the gVisor GKE Sandbox add-on, or the
+# gvisor-containerd-shim on self-managed nodes). Worker pods reference this
+# class via runtimeClassName to run under the gVisor syscall sandbox, which
+# is what makes running untrusted/community processor code acceptable.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: gvisor
+handler: runsc
+# Schedule gVisor-sandboxed pods only onto nodes advertised as sandbox-capable.
+scheduling:
+  nodeSelector:
+    sandbox.gke.io/runtime: gvisor
