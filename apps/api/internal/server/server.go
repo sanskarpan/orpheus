@@ -237,6 +237,12 @@ func (s *Server) v1Routes() {
 		r.With(rs("jobs:write")).Post("/workflows/transcribe-long", wh2.CreateTranscribeLong)
 		r.With(rs("jobs:read")).Get("/workflows/{id}", wh2.Get)
 
+		strh := &handlers.StreamingHandler{DB: s.opts.DB, Audit: s.opts.Audit}
+		r.With(rs("streaming:write")).Post("/streaming/sessions", strh.Create)
+		r.With(rs("streaming:read")).Get("/streaming/sessions", strh.List)
+		r.With(rs("streaming:read")).Get("/streaming/sessions/{id}", strh.Get)
+		r.With(rs("streaming:write")).Post("/streaming/sessions/{id}/finalize", strh.Finalize)
+
 		sh := &handlers.SystemHandler{DB: s.opts.DB}
 		r.With(rs("usage:read")).Get("/usage", sh.GetUsage)
 		r.With(rs("audit:read")).Get("/audit-log", sh.ListAuditLog)
