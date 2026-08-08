@@ -42,7 +42,7 @@ func (db *DB) GetAPIKeyByPrefix(ctx context.Context, prefix string) (auth.APIKey
 	// (is_service_role() OR org_id = current_org_id()) otherwise filters the
 	// row out and every API-key request 401s. Scope the GUC to a short tx so
 	// pooled connections don't leak service-role privilege.
-	conn, err := db.Pool.Acquire(ctx)
+	conn, err := db.Acquire(ctx)
 	if err != nil {
 		return auth.APIKeyRecord{}, fmt.Errorf("db.apikey.acquire: %w", err)
 	}
