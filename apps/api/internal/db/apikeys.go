@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 
@@ -35,9 +36,29 @@ func (db *DB) GetAPIKeyByPrefix(ctx context.Context, prefix string) (auth.APIKey
 		  AND revoked_at IS NULL
 		LIMIT 1
 	`
+	// The lookup runs BEFORE any tenant context exists (we resolve the org
+	// from the row), so it must run as the service role — under FORCE ROW
+	// LEVEL SECURITY the api_keys_tenant_select policy
+	// (is_service_role() OR org_id = current_org_id()) otherwise filters the
+	// row out and every API-key request 401s. Scope the GUC to a short tx so
+	// pooled connections don't leak service-role privilege.
+	conn, err := db.Pool.Acquire(ctx)
+	if err != nil {
+		return auth.APIKeyRecord{}, fmt.Errorf("db.apikey.acquire: %w", err)
+	}
+	defer conn.Release()
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		return auth.APIKeyRecord{}, fmt.Errorf("db.apikey.begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.is_service','true',true)"); err != nil {
+		return auth.APIKeyRecord{}, fmt.Errorf("db.apikey.service_role: %w", err)
+	}
+
 	var rec auth.APIKeyRecord
 	var revoked *string
-	err := db.QueryRow(ctx, q, prefix).Scan(
+	err = tx.QueryRow(ctx, q, prefix).Scan(
 		&rec.ID,
 		&rec.OrgID,
 		&rec.HashedSecret,

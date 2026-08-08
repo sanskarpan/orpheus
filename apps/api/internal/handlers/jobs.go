@@ -326,20 +326,28 @@ func (h *JobHandler) serveCacheHit(w http.ResponseWriter, r *http.Request, orgID
 		}
 		found, cachedResult, sourceJobID = true, res, src
 
+		// Persist the cached result onto the new job row. Omitting it left
+		// cache-hit jobs with a NULL result: the POST response carried the
+		// result (from the fetched value) but GET /v1/jobs/{id} and every
+		// downstream `source_job_id` read got nothing.
+		resultArg := []byte(res)
+		if len(resultArg) == 0 {
+			resultArg = []byte("{}")
+		}
 		if _, e := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO jobs (
 				id, org_id, user_id, artifact_id, job_type, params,
 				status, priority, max_retries, attempts, version,
-				cache_hit, cached_from_job_id, cost_usd,
+				cache_hit, cached_from_job_id, cost_usd, result,
 				created_at, updated_at, started_at, completed_at
 			)
 			VALUES (
 				$1, $2, NULLIF($3, '')::uuid, $4, 'custom'::job_type, $5::jsonb,
 				'completed'::job_status, $6, 3, 0, 1,
-				true, $7::uuid, 0,
+				true, $7::uuid, 0, $9::jsonb,
 				$8, $8, $8, $8
 			)
-		`, id, orgID, "", req.ArtifactID, paramsArg, req.Priority, sourceJobID, now); e != nil {
+		`, id, orgID, "", req.ArtifactID, paramsArg, req.Priority, sourceJobID, now, resultArg); e != nil {
 			return e
 		}
 		if _, e := dbtx.Exec(ctx, h.DB, `

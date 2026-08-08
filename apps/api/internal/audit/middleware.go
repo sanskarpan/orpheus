@@ -115,11 +115,19 @@ func (r *Recorder) Record(ctx context.Context, e Entry) error {
 	// from the middleware after the handler returns), so we must set the
 	// tenant GUC ourselves — a bare pool Exec would be rejected by RLS
 	// and every audit row would be silently dropped.
+	// user_id has an FK to users(id); only a USER actor's id belongs there.
+	// For an api-key (or system) actor, user_id must be NULL — actor_type
+	// records that it was a key. Binding the api-key id here violated the FK
+	// and silently dropped every api-key request's audit row.
+	userID := ""
+	if e.ActorType == "user" {
+		userID = e.ActorID
+	}
 	err = r.DB.WithTenant(ctx, e.OrgID, func(tctx context.Context) error {
 		_, execErr := dbtx.Exec(tctx, r.DB, q,
 			uuid.NewString(),
 			e.OrgID,
-			nullableString(e.ActorID),
+			nullableString(userID),
 			e.ActorType,
 			e.Action,
 			e.ResourceType,
