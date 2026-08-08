@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -113,6 +114,18 @@ func TestJobCache_MissThenHit(t *testing.T) {
 	}
 	if j2.CostUSD != 0 {
 		t.Fatalf("cache-hit cost = %v, want 0", j2.CostUSD)
+	}
+
+	// Regression: the cache-hit result must be PERSISTED on the job row, not
+	// just echoed in the POST response. The bug omitted the `result` column
+	// from the cache-hit INSERT, so GET /v1/jobs/{id} and every downstream
+	// `source_job_id` read got NULL even though the POST body looked fine.
+	var persisted *string
+	if err := svc.QueryRow(ctx, `SELECT result::text FROM jobs WHERE id=$1`, j2.ID).Scan(&persisted); err != nil {
+		t.Fatalf("read persisted result: %v", err)
+	}
+	if persisted == nil || !strings.Contains(*persisted, "hello world") {
+		t.Fatalf("cache-hit result not persisted on the job row (got %v)", persisted)
 	}
 
 	// 4) Key sensitivity: different params must miss even with same input.

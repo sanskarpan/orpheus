@@ -79,6 +79,63 @@ func TestRecord_WritesRowUnderRLS(t *testing.T) {
 	}
 }
 
+// TestRecord_APIKeyActor_NoFKViolation is the regression test for a bug where
+// every API-key request's audit row was silently dropped: the middleware set
+// user_id = the api-key id, but user_id has an FK to users(id), so the insert
+// failed with a foreign-key violation. For a key actor, user_id must be NULL
+// (actor_type='apikey' records that it was a key). The existing test above
+// only covers a user actor, which is why this slipped through.
+func TestRecord_APIKeyActor_NoFKViolation(t *testing.T) {
+	dsn := os.Getenv("ORPHEUS_TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("ORPHEUS_TEST_DATABASE_URL not set; skipping live-db audit test")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	pool, err := db.New(ctx, dsn)
+	if err != nil {
+		t.Fatalf("db.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	svc := servicesPool(t, dsn)
+	orgID := uuid.NewString()
+	if _, err := svc.Exec(ctx, `INSERT INTO organizations (id, name, slug) VALUES ($1, $2, $2)`, orgID, "auditk-"+orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	t.Cleanup(func() { _, _ = svc.Exec(context.Background(), `DELETE FROM organizations WHERE id = $1`, orgID) })
+
+	rec := New(pool, nil)
+	resourceID := uuid.NewString()
+	// API-key principal: APIKeyID set, NO UserID (the api key id is not a user).
+	ctx = auth.WithPrincipal(ctx, &auth.Principal{OrgID: orgID, APIKeyID: uuid.NewString()})
+	if err := rec.Record(ctx, Entry{
+		Action:       "job.create",
+		ResourceType: "job",
+		ResourceID:   resourceID,
+	}); err != nil {
+		t.Fatalf("Record for api-key actor failed (FK violation?): %v", err)
+	}
+
+	// The row persisted with actor_type='apikey' and a NULL user_id.
+	var actorType string
+	var userID *string
+	if err := pool.WithTenant(ctx, orgID, func(tctx context.Context) error {
+		return dbtx.QueryRow(tctx, pool, `
+			SELECT actor_type::text, user_id::text FROM audit_log
+			WHERE org_id = $1 AND resource_id = $2
+		`, orgID, resourceID).Scan(&actorType, &userID)
+	}); err != nil {
+		t.Fatalf("read audit row: %v", err)
+	}
+	if actorType != "apikey" {
+		t.Errorf("actor_type = %q, want apikey", actorType)
+	}
+	if userID != nil {
+		t.Errorf("user_id = %q, want NULL for an api-key actor", *userID)
+	}
+}
+
 func servicesPool(t *testing.T, dsn string) *db.DB {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
