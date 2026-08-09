@@ -53,6 +53,27 @@ dev: api-dev ## Run the API server (Go, with hot reload)
 api-dev: ## Run the Go API server
 	cd $(GO_DIR) && go run ./cmd/api
 
+# Local dev DB (override with `make bootstrap-admin ADMIN_DB_URL=...`).
+WEB_DIR      := apps/web
+ADMIN_DB_URL ?= postgres://orpheus:orpheus@localhost:5432/orpheus?sslmode=disable
+ADMIN_EMAILS ?= admin@orpheus.local
+
+.PHONY: bootstrap-admin
+bootstrap-admin: ## Mint a platform-admin key + write apps/web/.env.local (web onboarding)
+	@KEY=$$(cd $(GO_DIR) && go run ./cmd/bootstrap-admin '$(ADMIN_DB_URL)') && \
+	  ENV="$(WEB_DIR)/.env.local"; touch "$$ENV"; \
+	  tmp=$$(mktemp); \
+	  grep -vE '^(ORPHEUS_ADMIN_KEY|ORPHEUS_PLATFORM_ADMIN_EMAILS|ORPHEUS_API_URL|SESSION_SECRET)=' "$$ENV" > "$$tmp" || true; \
+	  { \
+	    echo "ORPHEUS_API_URL=http://127.0.0.1:8090"; \
+	    grep -qE '^SESSION_SECRET=' "$$ENV" && grep -E '^SESSION_SECRET=' "$$ENV" || echo "SESSION_SECRET=$$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)"; \
+	    echo "ORPHEUS_ADMIN_KEY=$$KEY"; \
+	    echo "ORPHEUS_PLATFORM_ADMIN_EMAILS=$(ADMIN_EMAILS)"; \
+	  } >> "$$tmp"; \
+	  mv "$$tmp" "$$ENV"; \
+	  echo "✓ Minted platform-admin key and wrote $$ENV"; \
+	  echo "  Start the dashboard: pnpm --filter @orpheus/web dev  →  http://localhost:3000"
+
 .PHONY: up
 up: infra-up ## Start the full local stack (alias for infra-up)
 

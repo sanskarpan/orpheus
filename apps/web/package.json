@@ -1,23 +1,35 @@
 {
   "name": "@orpheus/web",
-  "version": "0.0.0-scaffold",
+  "version": "0.1.0",
   "private": true,
-  "description": "Orpheus admin dashboard (Next.js App Router). SCAFFOLD — not buildable/wired yet. See docs/design/11-web-ui-and-billing.md.",
-  "//": "SCAFFOLD: placeholder manifest for gap #11. Dependencies are declared for shape only; this app is NOT in CI and is NOT expected to build until the design-11 checklist is done. Do not run install/build against this yet.",
+  "description": "Orpheus web dashboard — Studio Console. Next.js App Router BFF over the Go API.",
   "scripts": {
-    "dev": "echo 'SCAFFOLD: apps/web is not wired yet — see docs/design/11-web-ui-and-billing.md' && exit 1",
-    "build": "echo 'SCAFFOLD: apps/web is not wired yet — see docs/design/11-web-ui-and-billing.md' && exit 1",
-    "lint": "echo 'SCAFFOLD: apps/web is not wired yet' && exit 0"
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "next start -p 3000",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "next": "^14.2.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+    "better-sqlite3": "^13.0.3",
+    "iron-session": "^8.0.3",
+    "next": "14.2.15",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "server-only": "^0.0.1",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/node": "^20.11.0",
-    "@types/react": "^18.3.0",
-    "typescript": "^5.4.0"
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.19",
+    "eslint": "^8.57.0",
+    "eslint-config-next": "14.2.15",
+    "postcss": "^8.4.38",
+    "tailwindcss": "^3.4.10",
+    "typescript": "^5.5.4"
   },
   "engines": {
     "node": ">=20"
