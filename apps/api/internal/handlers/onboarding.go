@@ -82,9 +82,11 @@ func (h *OnboardingHandler) Provision(w http.ResponseWriter, r *http.Request) {
 			writeProblem(w, http.StatusBadRequest, "validation", "unknown scope: "+s)
 			return
 		}
-		// Onboarding mints least-privilege keys: it must never grant the
-		// wildcard or the platform-admin scope (privilege escalation).
-		if s == "*" || s == "platform:admin" {
+		// Onboarding may grant an org-scoped owner key (including "*", which
+		// is confined to the new tenant by RLS) so the tenant can immediately
+		// self-manage its own API keys. It must never grant "platform:admin",
+		// which is cross-tenant and would be a privilege escalation.
+		if s == "platform:admin" {
 			writeProblem(w, http.StatusBadRequest, "validation", "scope not grantable via onboarding: "+s)
 			return
 		}
