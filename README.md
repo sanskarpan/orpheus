@@ -83,6 +83,23 @@ make dev        # → http://localhost:8080  (/health, /ready, /api/docs)
 uv run --package orpheus-workers python -m orpheus_workers.worker
 ```
 
+### Web dashboard (`apps/web`)
+
+The Studio Console dashboard is a Next.js BFF over the API with local user accounts
+(sign up → dashboard → manage API keys). It needs a platform-admin key to provision
+tenants under the hood; `make bootstrap-admin` mints one and writes `apps/web/.env.local`.
+
+```bash
+# one-time: mint a platform-admin key + write apps/web/.env.local
+make bootstrap-admin
+
+# run the dashboard (needs the API on :8090)
+pnpm --filter @orpheus/web dev   # → http://localhost:3000
+
+# then open http://localhost:3000 → Sign up (a real org + API key is provisioned
+# automatically) or use "Continue with a demo account".
+```
+
 ## Testing
 
 Tests are layered; the integration/e2e tiers need the local stack up.
