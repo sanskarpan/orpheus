@@ -43,8 +43,11 @@ type StreamingSession struct {
 	Transcript     *string    `json:"transcript,omitempty"`
 	CostUSD        float64    `json:"cost_usd"`
 	Error          string     `json:"error,omitempty"`
-	// WSURL is a hint for where the client opens the streaming WebSocket.
-	WSURL string `json:"ws_url,omitempty"`
+	// WSURL is the (relative) path the client opens for the streaming
+	// WebSocket, including the short-lived auth token. WSToken is the same
+	// token exposed separately for clients that build their own URL.
+	WSURL   string `json:"ws_url,omitempty"`
+	WSToken string `json:"ws_token,omitempty"`
 }
 
 type createStreamingSessionRequest struct {
@@ -85,7 +88,9 @@ func (h *StreamingHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to load session")
 		return
 	}
-	s.WSURL = "/v1/stream/transcribe?session_id=" + id
+	token := MintStreamToken(id, p.OrgID)
+	s.WSToken = token
+	s.WSURL = "/stream/transcribe?session_id=" + id + "&token=" + token
 	writeJSON(w, http.StatusCreated, s)
 }
 
