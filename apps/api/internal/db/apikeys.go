@@ -5,24 +5,22 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/orpheus/api/internal/auth"
 )
 
-// GetAPIKeyByPrefix implements the lookup half of
-// auth.APIKeyLookup. The SQL mirrors the GetAPIKeyByPrefix query in
-// internal/db/queries/api_keys.sql verbatim; it lives here as a
-// hand-written method so the auth middleware can run before sqlc is
-// regenerated. When sqlc is wired into the build pipeline this method
-// can be deleted and callers can use the generated function instead.
+// GetAPIKeysByPrefix implements the lookup half of auth.APIKeyLookup: it
+// returns EVERY active key sharing a prefix. The stored prefix is only
+// "ak_live_" + one base64 char, so collisions are expected; the caller
+// Argon2-verifies the presented secret against each candidate. Returning a
+// single row (the old LIMIT 1) made auth fail whenever a colliding key was
+// picked instead of the requester's.
 //
-// The prefix is the only piece of the key we can use to find the row
-// before verifying the hashed_secret. We intentionally do NOT scope
-// to org_id; the caller resolves the org from the row itself.
-func (db *DB) GetAPIKeyByPrefix(ctx context.Context, prefix string) (auth.APIKeyRecord, error) {
+// The prefix is the only piece of the key we can use to find rows before
+// verifying the hashed_secret. We intentionally do NOT scope to org_id; the
+// caller resolves the org from the matching row itself.
+func (db *DB) GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]auth.APIKeyRecord, error) {
 	if db == nil {
-		return auth.APIKeyRecord{}, errors.New("db.apikey.nil_pool")
+		return nil, errors.New("db.apikey.nil_pool")
 	}
 	const q = `
 		SELECT id::text,
@@ -34,7 +32,6 @@ func (db *DB) GetAPIKeyByPrefix(ctx context.Context, prefix string) (auth.APIKey
 		FROM api_keys
 		WHERE prefix = $1
 		  AND revoked_at IS NULL
-		LIMIT 1
 	`
 	// The lookup runs BEFORE any tenant context exists (we resolve the org
 	// from the row), so it must run as the service role — under FORCE ROW
@@ -44,34 +41,36 @@ func (db *DB) GetAPIKeyByPrefix(ctx context.Context, prefix string) (auth.APIKey
 	// pooled connections don't leak service-role privilege.
 	conn, err := db.Acquire(ctx)
 	if err != nil {
-		return auth.APIKeyRecord{}, fmt.Errorf("db.apikey.acquire: %w", err)
+		return nil, fmt.Errorf("db.apikey.acquire: %w", err)
 	}
 	defer conn.Release()
 	tx, err := conn.Begin(ctx)
 	if err != nil {
-		return auth.APIKeyRecord{}, fmt.Errorf("db.apikey.begin: %w", err)
+		return nil, fmt.Errorf("db.apikey.begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	if _, err := tx.Exec(ctx, "SELECT set_config('app.is_service','true',true)"); err != nil {
-		return auth.APIKeyRecord{}, fmt.Errorf("db.apikey.service_role: %w", err)
+		return nil, fmt.Errorf("db.apikey.service_role: %w", err)
 	}
 
-	var rec auth.APIKeyRecord
-	var revoked *string
-	err = tx.QueryRow(ctx, q, prefix).Scan(
-		&rec.ID,
-		&rec.OrgID,
-		&rec.HashedSecret,
-		&rec.Prefix,
-		&rec.Scopes,
-		&revoked,
-	)
+	rows, err := tx.Query(ctx, q, prefix)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return auth.APIKeyRecord{}, errors.New("db.apikey.not_found")
-		}
-		return auth.APIKeyRecord{}, err
+		return nil, err
 	}
-	rec.RevokedAt = revoked
-	return rec, nil
+	defer rows.Close()
+
+	var out []auth.APIKeyRecord
+	for rows.Next() {
+		var rec auth.APIKeyRecord
+		var revoked *string
+		if err := rows.Scan(&rec.ID, &rec.OrgID, &rec.HashedSecret, &rec.Prefix, &rec.Scopes, &revoked); err != nil {
+			return nil, err
+		}
+		rec.RevokedAt = revoked
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
