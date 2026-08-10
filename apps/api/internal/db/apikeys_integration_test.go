@@ -74,12 +74,18 @@ func TestGetAPIKeyByPrefix_UnderRLS(t *testing.T) {
 	})
 
 	// The lookup MUST find the key even though the SUT pool has no tenant
-	// context — GetAPIKeyByPrefix has to elevate to the service role itself.
-	rec, err := sut.GetAPIKeyByPrefix(ctx, prefix)
+	// context — GetAPIKeysByPrefix has to elevate to the service role itself.
+	recs, err := sut.GetAPIKeysByPrefix(ctx, prefix)
 	if err != nil {
-		t.Fatalf("GetAPIKeyByPrefix returned %v — API-key auth is broken under RLS", err)
+		t.Fatalf("GetAPIKeysByPrefix returned %v — API-key auth is broken under RLS", err)
 	}
-	if rec.Prefix != prefix || rec.OrgID != orgID {
-		t.Fatalf("wrong record: got prefix=%q org=%q", rec.Prefix, rec.OrgID)
+	var found bool
+	for _, rec := range recs {
+		if rec.Prefix == prefix && rec.OrgID == orgID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("key not found among %d candidates for prefix=%q org=%q", len(recs), prefix, orgID)
 	}
 }
