@@ -63,9 +63,10 @@ bootstrap-admin: ## Mint a platform-admin key + write apps/web/.env.local (web o
 	@KEY=$$(cd $(GO_DIR) && go run ./cmd/bootstrap-admin '$(ADMIN_DB_URL)') && \
 	  ENV="$(WEB_DIR)/.env.local"; touch "$$ENV"; \
 	  tmp=$$(mktemp); \
-	  grep -vE '^(ORPHEUS_ADMIN_KEY|ORPHEUS_PLATFORM_ADMIN_EMAILS|ORPHEUS_API_URL|SESSION_SECRET)=' "$$ENV" > "$$tmp" || true; \
+	  grep -vE '^(ORPHEUS_ADMIN_KEY|ORPHEUS_PLATFORM_ADMIN_EMAILS|ORPHEUS_API_URL|SESSION_SECRET|NEXT_PUBLIC_ORPHEUS_WS_URL)=' "$$ENV" > "$$tmp" || true; \
 	  { \
 	    echo "ORPHEUS_API_URL=http://127.0.0.1:8090"; \
+	    echo "NEXT_PUBLIC_ORPHEUS_WS_URL=ws://127.0.0.1:8090"; \
 	    grep -qE '^SESSION_SECRET=' "$$ENV" && grep -E '^SESSION_SECRET=' "$$ENV" || echo "SESSION_SECRET=$$(head -c 32 /dev/urandom | base64 | tr -d '/+=' | head -c 40)"; \
 	    echo "ORPHEUS_ADMIN_KEY=$$KEY"; \
 	    echo "ORPHEUS_PLATFORM_ADMIN_EMAILS=$(ADMIN_EMAILS)"; \
