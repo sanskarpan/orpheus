@@ -256,6 +256,11 @@ func (s *Server) v1Routes() {
 		r.With(rs("streaming:read")).Get("/streaming/sessions", strh.List)
 		r.With(rs("streaming:read")).Get("/streaming/sessions/{id}", strh.Get)
 		r.With(rs("streaming:write")).Post("/streaming/sessions/{id}/finalize", strh.Finalize)
+		// The streaming WebSocket is mounted at the top level (not under the
+		// X-API-Key middleware): a browser can't send that header on a WS
+		// handshake, so the relay authenticates via the short-lived token
+		// minted at session creation. It relays to the worker's ASR socket.
+		s.mux.Get("/stream/transcribe", strh.StreamTranscribe)
 
 		mph := &handlers.MarketplaceHandler{DB: s.opts.DB}
 		r.With(rs("marketplace:read")).Get("/marketplace/processors", mph.ListProcessors)
