@@ -293,6 +293,7 @@ export interface StreamingSession {
   cost_usd: number;
   error?: string;
   ws_url?: string;
+  ws_token?: string;
 }
 
 export interface ProvisionResponse {
