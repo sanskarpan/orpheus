@@ -462,23 +462,22 @@ func (h *WebhookHandler) ListDeliveries(w http.ResponseWriter, r *http.Request) 
 	query := `SELECT id::text, endpoint_id::text, event_id::text, event_type,
 	                 response_status, response_body, attempt_count, status, delivered_at, created_at
 	          FROM webhook_deliveries WHERE endpoint_id = $1 AND org_id = $2`
-	argIdx := 2
+	// Placeholders are already $1 ($endpoint) and $2 ($org); the next free
+	// index is len(args)+1. (A previous off-by-one started at $2 and reused the
+	// org param for the LIMIT, so this query never returned any rows.)
 	if cursor != "" {
-		query += fmt.Sprintf(" AND created_at < $%d", argIdx)
+		query += fmt.Sprintf(" AND created_at < $%d", len(args)+1)
 		args = append(args, cursor)
-		argIdx++
 	}
 	if eventType != "" {
-		query += fmt.Sprintf(" AND event_type = $%d", argIdx)
+		query += fmt.Sprintf(" AND event_type = $%d", len(args)+1)
 		args = append(args, eventType)
-		argIdx++
 	}
 	if statusFilter != "" {
-		query += fmt.Sprintf(" AND status = $%d::webhook_status", argIdx)
+		query += fmt.Sprintf(" AND status = $%d::webhook_status", len(args)+1)
 		args = append(args, statusFilter)
-		argIdx++
 	}
-	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", argIdx)
+	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args)+1)
 	args = append(args, limit+1)
 
 	var deliveries []WebhookDelivery
