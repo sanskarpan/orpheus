@@ -43,8 +43,8 @@ export function StreamingManager({ initial }: { initial: StreamingSession[] }) {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <p className="max-w-2xl text-sm text-ink-mid">
-          Streaming sessions accept live audio over a WebSocket (out of scope for this console) and are then
-          finalized with a transcript. You can open a session and finalize it manually here.
+          Past streaming sessions and their finalized transcripts. Use the live studio above to record a new
+          one; you can also open a blank session and finalize it manually here.
         </p>
         <button onClick={create} disabled={pending} className="btn-brass shrink-0">
           + New session
