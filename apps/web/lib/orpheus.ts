@@ -366,7 +366,10 @@ export const orpheus = {
     apiRequest<ListEnvelope<WebhookDelivery>>(`/v1/webhooks/${id}/deliveries`, { query: q }),
   replayDelivery: (id: string, deliveryId: string) =>
     apiRequest<WebhookDelivery>(`/v1/webhooks/${id}/deliveries/${deliveryId}/replay`, { method: "POST" }),
-  testWebhook: (id: string) => apiRequest<unknown>(`/v1/webhooks/${id}/test`, { method: "POST" }),
+  // The API's test-fire requires a JSON body (`{event_type}`); it 400s on an
+  // empty body. Default to a job.completed sample event.
+  testWebhook: (id: string, eventType = "job.completed") =>
+    apiRequest<unknown>(`/v1/webhooks/${id}/test`, { method: "POST", body: { event_type: eventType } }),
 
   // Audit
   listAudit: (q: { limit?: number; cursor?: string; action?: string; resource_type?: string } = {}) =>
