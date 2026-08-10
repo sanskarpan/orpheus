@@ -3,7 +3,6 @@ package auth_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -473,15 +472,15 @@ type stubLookup struct {
 	notFound bool
 }
 
-func (s *stubLookup) GetAPIKeyByPrefix(_ context.Context, prefix string) (auth.APIKeyRecord, error) {
+func (s *stubLookup) GetAPIKeysByPrefix(_ context.Context, prefix string) ([]auth.APIKeyRecord, error) {
 	if s.notFound {
-		return auth.APIKeyRecord{}, errors.New("not found")
+		return nil, nil
 	}
 	r, ok := s.records[prefix]
 	if !ok {
-		return auth.APIKeyRecord{}, errors.New("not found")
+		return nil, nil
 	}
-	return r, nil
+	return []auth.APIKeyRecord{r}, nil
 }
 
 // ─────────────────────────────────────────────────────────────────────

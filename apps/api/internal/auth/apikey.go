@@ -96,10 +96,15 @@ type APIKeyRecord struct {
 }
 
 // APIKeyLookup is the minimum surface the auth layer needs from the
-// database. *db.DB (with sqlc-generated GetAPIKeyByPrefix) satisfies
-// this; tests can supply an in-memory stub.
+// database. *db.DB satisfies this; tests can supply an in-memory stub.
+//
+// It returns ALL active keys sharing a prefix, not one: the stored prefix is
+// only "ak_live_" + one base64 char (see apiKeyPrefixLen), so collisions are
+// expected and the validator must Argon2-verify the presented secret against
+// every candidate. Returning a single row (LIMIT 1) makes auth fail whenever a
+// different key with the same prefix is picked.
 type APIKeyLookup interface {
-	GetAPIKeyByPrefix(ctx context.Context, prefix string) (APIKeyRecord, error)
+	GetAPIKeysByPrefix(ctx context.Context, prefix string) ([]APIKeyRecord, error)
 }
 
 // APIKeyValidator validates X-API-Key values against the api_keys
@@ -128,41 +133,57 @@ func (v *APIKeyValidator) Verify(ctx context.Context, fullKey string) (*Principa
 
 	prefix := fullKey[:apiKeyPrefixLen]
 
-	key, err := v.lookup.GetAPIKeyByPrefix(ctx, prefix)
+	keys, err := v.lookup.GetAPIKeysByPrefix(ctx, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("auth.apikey.lookup: %w", err)
 	}
-	if key.RevokedAt != nil {
+	if len(keys) == 0 {
+		return nil, errors.New("auth.apikey: not_found")
+	}
+
+	// The prefix is low-entropy, so multiple active keys can share it. Find the
+	// candidate whose stored hash matches the presented secret; only that key's
+	// identity matters. Revocation always beats the verify cache (the fresh
+	// lookup normally filters revoked rows, but this keeps a just-revoked,
+	// still-cached key out).
+	sawRevoked := false
+	for i := range keys {
+		key := keys[i]
+
+		cacheKey := ""
+		if v.cache != nil {
+			cacheKey = verifyCacheKey(fullKey, key.HashedSecret)
+			if v.cache.valid(cacheKey) {
+				if key.RevokedAt != nil {
+					return nil, errors.New("auth.apikey: revoked")
+				}
+				return &Principal{OrgID: key.OrgID, APIKeyID: key.ID, Roles: key.Scopes}, nil
+			}
+		}
+
+		// Don't spend an Argon2 compare (or trust its hash) on a revoked row.
+		if key.RevokedAt != nil {
+			sawRevoked = true
+			continue
+		}
+
+		ok, err := argon2id.ComparePasswordAndHash(fullKey, key.HashedSecret)
+		if err != nil {
+			return nil, fmt.Errorf("auth.apikey.verify_hash: %w", err)
+		}
+		if !ok {
+			continue // a colliding-prefix key, not this one
+		}
+		if v.cache != nil {
+			v.cache.store(cacheKey)
+		}
+		return &Principal{OrgID: key.OrgID, APIKeyID: key.ID, Roles: key.Scopes}, nil
+	}
+
+	// No live candidate matched. If every candidate for this prefix was
+	// revoked, surface that; otherwise the secret is simply wrong.
+	if sawRevoked {
 		return nil, errors.New("auth.apikey: revoked")
 	}
-
-	// Fast path: this exact (key, stored-hash) pair verified recently, so
-	// skip the expensive Argon2id compare. Revocation is already handled
-	// above by the fresh lookup, so a cache hit is still a live key.
-	cacheKey := ""
-	if v.cache != nil {
-		cacheKey = verifyCacheKey(fullKey, key.HashedSecret)
-		if v.cache.valid(cacheKey) {
-			return &Principal{OrgID: key.OrgID, APIKeyID: key.ID, Roles: key.Scopes}, nil
-		}
-	}
-
-	ok, err := argon2id.ComparePasswordAndHash(fullKey, key.HashedSecret)
-	if err != nil {
-		return nil, fmt.Errorf("auth.apikey.verify_hash: %w", err)
-	}
-	if !ok {
-		// Never cache failures — a wrong secret must always pay the cost.
-		return nil, errors.New("auth.apikey: invalid")
-	}
-
-	if v.cache != nil {
-		v.cache.store(cacheKey)
-	}
-
-	return &Principal{
-		OrgID:    key.OrgID,
-		APIKeyID: key.ID,
-		Roles:    key.Scopes,
-	}, nil
+	return nil, errors.New("auth.apikey: invalid")
 }
