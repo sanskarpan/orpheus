@@ -139,13 +139,13 @@ func (h *StreamingHandler) StreamTranscribe(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "streaming service unavailable", http.StatusBadGateway)
 		return
 	}
-	defer worker.Close()
+	defer func() { _ = worker.Close() }()
 
 	client, err := streamUpgrader.Upgrade(w, r, nil)
 	if err != nil {
 		return // Upgrade already wrote the error
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	h.setStreamStatus(r.Context(), orgID, sessionID, "live", "")
 
