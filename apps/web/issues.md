@@ -21,6 +21,46 @@ are robustness/correctness gaps below.
 | 009 | P3 | First-admin race (two concurrent → both admin) | Won't fix (local) |
 | — | — | Owner-key revoke guard (`slice(0,9)`) | Investigated — safe |
 
+## Round 2 — behavior verification (B) + streaming
+
+Drove the real mutations at the API level (same endpoints the UI calls) against the live
+API/worker, plus DB inspection. **13/13 behavior checks pass** after the fixes below.
+
+### ISSUE-010 — API-key auth fails intermittently under many keys (prefix collision)
+- **Severity:** P1 · **Area:** `apps/api` auth · **Status:** Fixed ✓ verified (3 clean runs)
+
+The stored key prefix is only `ak_live_` + one base64 char (**64 possible prefixes**), and
+`GetAPIKeyByPrefix` did `WHERE prefix=$1 LIMIT 1` + verified one hash. Once many keys exist,
+the lookup returns a colliding key, Argon2 fails, and auth 401s at random — which broke the
+dashboard after provisioning many orgs. **Fix:** `GetAPIKeysByPrefix` returns all candidates;
+`Verify` Argon2-checks each (revocation still beats the cache). Added regression coverage.
+
+### ISSUE-011 — Webhook deliveries never listed (parameter off-by-one)
+- **Severity:** P1 · **Area:** `apps/api` `WebhookHandler.ListDeliveries` · **Status:** Fixed ✓ verified
+
+`argIdx` started at 2 and was used as the next placeholder, so the query became
+`… org_id = $2 … LIMIT $2` — it never returned rows, so the UI's deliveries table was always
+empty (even for real events). **Fix:** index placeholders as `len(args)+1`.
+
+### ISSUE-012 — Dashboard "Test fire" 400s (missing request body)
+- **Severity:** P1 · **Area:** web `lib/orpheus.ts` · **Status:** Fixed ✓ verified
+
+`POST /v1/webhooks/{id}/test` requires a JSON body (`{event_type}`); the client sent none →
+400 "Invalid JSON". **Fix:** `testWebhook` sends `{event_type:"job.completed"}`.
+
+### Verified working (no change needed)
+Upload→artifact roundtrip; artifact signed-URL playback (`audio/wav`, 200); transcribe→complete;
+**webhook delivery** (real POST to the endpoint, status recorded) + **replay** (new delivery) +
+real `job.completed` emission; **requeue** (dead_letter→queued); marketplace submit/list/review;
+Ops tenant provisioning.
+
+### FEATURE — Live streaming studio (real WebAudio waveform)
+`app/dashboard/streaming/LiveStreamStudio.tsx`: opens the mic (getUserMedia), renders a **real**
+frequency waveform from an `AnalyserNode` on canvas, transcribes live via the browser speech
+engine when available, and finalizes the real Orpheus session (create→capture→finalize).
+Verified with a fake media stream: canvas paints from analyser data, timer runs, finalize
+creates + lists the session. (A server-side WebSocket ASR bridge remains a separate backend effort.)
+
 ### Regression pass (paced, single-user) — PASS
 `typecheck` + `build` clean. Playwright: signup→dashboard ✅ · **transcribe completes + renders
 transcript** ✅ (job COMPLETED, real cost) · jobs pagination href → `/dashboard/jobs` ✅ · bad
