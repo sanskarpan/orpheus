@@ -90,14 +90,21 @@ func TestOnboarding_Provision(t *testing.T) {
 		t.Fatalf("unknown scope = %d, want 400", rec.Code)
 	}
 
-	// Security: onboarding must not mint a wildcard or admin key.
-	for _, bad := range []string{"*", "platform:admin"} {
-		rec = httptest.NewRecorder()
-		h.Provision(rec, httptest.NewRequest(http.MethodPost, "/v1/onboarding/provision",
-			bytes.NewBufferString(`{"org_name":"X","user_email":"a@b.co","scopes":["`+bad+`"]}`)))
-		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("scope %q = %d, want 400 (must not be grantable)", bad, rec.Code)
-		}
+	// Security: onboarding must never mint the cross-tenant platform-admin
+	// scope (privilege escalation) — but an org-scoped "*" owner key is allowed
+	// so a fresh tenant can self-manage its own API keys (RLS confines it).
+	rec = httptest.NewRecorder()
+	h.Provision(rec, httptest.NewRequest(http.MethodPost, "/v1/onboarding/provision",
+		bytes.NewBufferString(`{"org_name":"X","user_email":"a@b.co","scopes":["platform:admin"]}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("scope platform:admin = %d, want 400 (must not be grantable)", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Provision(rec, httptest.NewRequest(http.MethodPost, "/v1/onboarding/provision",
+		bytes.NewBufferString(`{"org_name":"Owner","user_email":"owner@b.co","scopes":["*"]}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("scope * = %d, want 201 (org-scoped owner key is grantable); body=%s", rec.Code, rec.Body.String())
 	}
 
 	// Validation: missing email → 400.
