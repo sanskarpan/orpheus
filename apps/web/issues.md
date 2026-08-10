@@ -54,12 +54,17 @@ Upload→artifact roundtrip; artifact signed-URL playback (`audio/wav`, 200); tr
 real `job.completed` emission; **requeue** (dead_letter→queued); marketplace submit/list/review;
 Ops tenant provisioning.
 
-### FEATURE — Live streaming studio (real WebAudio waveform)
+### FEATURE — Live streaming studio (real WebAudio waveform + server-side ASR)
 `app/dashboard/streaming/LiveStreamStudio.tsx`: opens the mic (getUserMedia), renders a **real**
-frequency waveform from an `AnalyserNode` on canvas, transcribes live via the browser speech
-engine when available, and finalizes the real Orpheus session (create→capture→finalize).
-Verified with a fake media stream: canvas paints from analyser data, timer runs, finalize
-creates + lists the session. (A server-side WebSocket ASR bridge remains a separate backend effort.)
+frequency waveform from an `AnalyserNode`, downsamples to 16 kHz PCM16, and streams frames over a
+WebSocket to a **new API relay** (`apps/api/.../streaming_ws.go` → `/stream/transcribe`) which
+authenticates a short-lived per-session token, marks the session `live`, dials the worker's
+whisper ASR socket, and pumps `partial`/`final` transcripts back — rendered live, then finalized.
+
+Verified two ways: a Node WS client streaming real PCM produced real transcripts through the full
+path ("The quick brown fox jump over the…", cost persisted); Playwright with a fake mic confirmed
+the browser path (78 frames sent, `ready`/`partial`/`final` received, finalize + list). The old
+client-side Web Speech fallback is replaced by real server-side ASR.
 
 ### Regression pass (paced, single-user) — PASS
 `typecheck` + `build` clean. Playwright: signup→dashboard ✅ · **transcribe completes + renders
