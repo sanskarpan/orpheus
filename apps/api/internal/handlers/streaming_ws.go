@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -33,6 +34,15 @@ import (
 )
 
 const streamTokenTTL = 2 * time.Minute
+
+// Server-side audio metering: the browser sends PCM16 mono @ 16 kHz, so the
+// billable duration is (bytes received) / (sampleRate * bytesPerSample). Metering
+// here — not trusting the client's finalize payload — makes billing accurate and
+// unspoofable.
+const (
+	streamSampleRate     = 16000
+	streamBytesPerSample = 2
+)
 
 func streamTokenSecret() []byte {
 	if s := os.Getenv("ORPHEUS_STREAM_TOKEN_SECRET"); s != "" {
@@ -149,29 +159,59 @@ func (h *StreamingHandler) StreamTranscribe(w http.ResponseWriter, r *http.Reque
 
 	h.setStreamStatus(r.Context(), orgID, sessionID, "live", "")
 
-	// Pump both directions; the first error tears down both sockets.
+	// Pump both directions; the first error tears down both sockets. Count the
+	// PCM bytes flowing browser→worker so the session is billed on audio
+	// actually received, not on a duration the client reports at finalize.
 	var once sync.Once
+	var pcmBytes int64
 	done := make(chan struct{})
 	stop := func() { once.Do(func() { close(done) }) }
-	relay := func(src, dst *websocket.Conn) {
+	relay := func(src, dst *websocket.Conn, count *int64) {
 		defer stop()
 		for {
 			mt, data, err := src.ReadMessage()
 			if err != nil {
 				return
 			}
+			if count != nil && mt == websocket.BinaryMessage {
+				atomic.AddInt64(count, int64(len(data)))
+			}
 			if err := dst.WriteMessage(mt, data); err != nil {
 				return
 			}
 		}
 	}
-	go relay(client, worker) // browser → worker (start frame + PCM)
-	go relay(worker, client) // worker → browser (partial/final/done)
+	go relay(client, worker, &pcmBytes) // browser → worker (start frame + PCM16)
+	go relay(worker, client, nil)       // worker → browser (partial/final/done)
 	<-done
+
+	// Send a normal close frame both ways so peers see a clean 1000, not an
+	// abnormal 1006.
+	deadline := time.Now().Add(time.Second)
+	closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+	_ = client.WriteControl(websocket.CloseMessage, closeMsg, deadline)
+	_ = worker.WriteControl(websocket.CloseMessage, closeMsg, deadline)
+
+	// Persist the server-metered audio duration; Finalize bills on it.
+	if metered := float64(atomic.LoadInt64(&pcmBytes)) / float64(streamSampleRate*streamBytesPerSample); metered > 0 {
+		h.setStreamMeteredSeconds(context.Background(), orgID, sessionID, metered)
+	}
 
 	// Leave the session in a finalize-able state; the client POSTs
 	// /finalize with the accumulated transcript, which sets status=closed.
 	h.setStreamStatus(context.Background(), orgID, sessionID, "closing", "")
+}
+
+// setStreamMeteredSeconds records the server-measured billable audio duration on
+// a live session, so Finalize can bill on it instead of a client-reported value.
+func (h *StreamingHandler) setStreamMeteredSeconds(ctx context.Context, orgID, id string, seconds float64) {
+	_ = h.DB.WithTenant(ctx, orgID, func(ctx context.Context) error {
+		_, e := dbtx.Exec(ctx, h.DB,
+			`UPDATE streaming_sessions SET audio_seconds = $3
+			 WHERE id = $1 AND org_id = $2 AND status <> 'closed'`,
+			id, orgID, seconds)
+		return e
+	})
 }
 
 // setStreamStatus best-effort updates a session's status (never on an
