@@ -273,5 +273,5 @@ func (h *BatchHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list batch jobs")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": jobs})
+	writeList(w, http.StatusOK, jobs, false, "")
 }
