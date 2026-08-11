@@ -31,9 +31,7 @@ DEFAULT_MODEL = "large-v3-turbo"
 CACHE_DIR = "/cache"
 
 image = (
-    modal.Image.from_registry(
-        "nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04", add_python="3.12"
-    )
+    modal.Image.from_registry("nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04", add_python="3.12")
     .apt_install("ffmpeg")
     .pip_install("faster-whisper==1.1.0", "requests", "fastapi[standard]")
     .env({"HF_HOME": CACHE_DIR, "HF_HUB_CACHE": CACHE_DIR})
@@ -49,8 +47,8 @@ auth = modal.Secret.from_name("orpheus-modal-auth")
     gpu="a10g",
     volumes={CACHE_DIR: model_cache},
     secrets=[auth],
-    min_containers=0,          # scale to zero when idle → no standing GPU cost
-    scaledown_window=300,      # keep a warm GPU for 5 min after the last request
+    min_containers=0,  # scale to zero when idle → no standing GPU cost
+    scaledown_window=300,  # keep a warm GPU for 5 min after the last request
     timeout=1800,
 )
 @modal.concurrent(max_inputs=4, target_inputs=2)  # a few concurrent decodes per GPU
