@@ -19,8 +19,11 @@ from pathlib import Path
 from typing import Any
 
 from ..diarize import get_diarizer
+from ..diarize import manifest_identity as _diarize_manifest
 from ..ffmpeg import convert_to_wav_16k_mono
 from . import register_processor
+
+_DIARIZE_MODEL_ID, _DIARIZE_MODEL_VERSION = _diarize_manifest()
 
 
 def _params(job: dict) -> dict:
@@ -123,8 +126,8 @@ def _overlap_speaker(turns: list[dict], seg: dict) -> str | None:
     tier="cpu_medium",
     timeout_seconds=1800,
     cost_per_job_usd=0.01,
-    model_id="pyannote",
-    model_version_id="pyannote-1",
+    model_id=_DIARIZE_MODEL_ID,
+    model_version_id=_DIARIZE_MODEL_VERSION,
 )
 async def diarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
