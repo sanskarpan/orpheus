@@ -244,7 +244,7 @@ func (h *WebhookHandler) List(w http.ResponseWriter, r *http.Request) {
 	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", argIdx)
 	args = append(args, limit+1)
 
-	var eps []WebhookEndpoint
+	eps := []WebhookEndpoint{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
@@ -480,7 +480,7 @@ func (h *WebhookHandler) ListDeliveries(w http.ResponseWriter, r *http.Request) 
 	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", len(args)+1)
 	args = append(args, limit+1)
 
-	var deliveries []WebhookDelivery
+	deliveries := []WebhookDelivery{}
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
