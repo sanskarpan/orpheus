@@ -16,6 +16,7 @@ tuple and cached, so per-request model selection does not thrash a single global
 
 from __future__ import annotations
 
+import base64
 import os
 from pathlib import Path
 
@@ -28,6 +29,53 @@ _models: dict[tuple[str, str | None, str, str], WhisperModel] = {}
 
 class TranscribeError(Exception):
     pass
+
+
+def _backend() -> str:
+    """Transcription backend: 'local' (CPU faster-whisper) or 'modal' (GPU)."""
+    return os.environ.get("ORPHEUS_WORKER_TRANSCRIBE_BACKEND", "local").strip().lower()
+
+
+def _transcribe_modal(
+    wav_path: str | Path,
+    model_size: str,
+    word_timestamps: bool,
+    language: str | None,
+    initial_prompt: str | None,
+    vocabulary: list[str] | None,
+) -> dict:
+    """Offload transcription to the Modal GPU endpoint (large-v3-turbo, float16).
+
+    Sends the audio + options and returns the same shape as the local path,
+    plus ``gpu_seconds`` for cost metering. A job-specified model is honored;
+    otherwise the endpoint's GPU default (large-v3-turbo) is used rather than
+    the local CPU default (tiny.en).
+    """
+    import httpx
+
+    url = os.environ.get("ORPHEUS_MODAL_TRANSCRIBE_URL", "").strip()
+    token = os.environ.get("ORPHEUS_MODAL_TRANSCRIBE_TOKEN", "").strip()
+    if not url or not token:
+        raise TranscribeError(
+            "modal backend selected but ORPHEUS_MODAL_TRANSCRIBE_URL/TOKEN not set"
+        )
+    local_default = os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
+    payload = {
+        "token": token,
+        "audio_b64": base64.b64encode(Path(wav_path).read_bytes()).decode(),
+        # Only forward an explicit, non-default model; else let the GPU default win.
+        "model": model_size if model_size and model_size != local_default else None,
+        "language": language,
+        "initial_prompt": initial_prompt,
+        "vocabulary": vocabulary,
+        "word_timestamps": word_timestamps,
+    }
+    try:
+        resp = httpx.post(url, json=payload, timeout=600.0)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as exc:
+        raise TranscribeError(f"modal transcribe failed: {exc}") from exc
 
 
 def _default_device() -> str:
@@ -76,6 +124,8 @@ def warmup(
     compute_type: str | None = None,
 ) -> None:
     """Preload the default (or given) model so the first job doesn't pay cold start."""
+    if _backend() == "modal":
+        return  # GPU model is warmed remotely by the Modal container
     model_size = model_size or os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
     _load_model(model_size, model_dir, device, compute_type)
 
@@ -124,7 +174,19 @@ def transcribe(
     ``language`` defaults to ``None`` (auto-detect); pass a code (e.g.
     ``"fr"``) to force it. ``vocabulary``/``initial_prompt`` bias
     recognition toward domain terms.
+
+    When ``ORPHEUS_WORKER_TRANSCRIBE_BACKEND=modal``, the work is offloaded to
+    the Modal GPU endpoint instead of the local CPU model.
     """
+    if _backend() == "modal":
+        return _transcribe_modal(
+            wav_path,
+            model_size=model_size,
+            word_timestamps=word_timestamps,
+            language=language,
+            initial_prompt=initial_prompt,
+            vocabulary=vocabulary,
+        )
     model = _load_model(model_size, model_dir, device, compute_type)
     prompt = _build_initial_prompt(initial_prompt, vocabulary)
     try:
