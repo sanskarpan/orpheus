@@ -154,17 +154,22 @@ func (h *StreamingHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "validation", "audio_seconds must be >= 0")
 		return
 	}
-	cost := req.AudioSeconds * streamingCostPerAudioSecond
 
 	var found bool
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		var tag string
+		// Bill on the server-metered audio_seconds recorded by the relay when it
+		// is present; fall back to the client-reported value only when the relay
+		// metered nothing. The pre-update audio_seconds is read in every SET
+		// expression, so cost_usd uses the same resolved duration.
 		e := dbtx.QueryRow(ctx, h.DB,
 			`UPDATE streaming_sessions
-			 SET status = 'closed', ended_at = now(), transcript = $2, audio_seconds = $3, cost_usd = $4
+			 SET status = 'closed', ended_at = now(), transcript = $2,
+			     audio_seconds = COALESCE(NULLIF(audio_seconds, 0), $3),
+			     cost_usd = COALESCE(NULLIF(audio_seconds, 0), $3) * $4
 			 WHERE id = $1 AND org_id = $5 AND status <> 'closed'
 			 RETURNING 'ok'`,
-			id, req.Transcript, req.AudioSeconds, cost, p.OrgID,
+			id, req.Transcript, req.AudioSeconds, streamingCostPerAudioSecond, p.OrgID,
 		).Scan(&tag)
 		if errors.Is(e, pgx.ErrNoRows) {
 			// Either not found, or already closed (idempotent) — distinguish below.
