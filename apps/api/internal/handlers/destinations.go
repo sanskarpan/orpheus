@@ -142,7 +142,7 @@ func (h *DestinationHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list destinations")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+	writeList(w, http.StatusOK, out, false, "")
 }
 
 // Verify handles POST /v1/destinations/{id}/verify — assume the role (or use
