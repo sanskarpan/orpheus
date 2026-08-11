@@ -88,7 +88,9 @@ func TestBilling_ListCheckoutWebhook(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("ListInvoices = %d: %s", rec.Code, rec.Body.String())
 		}
-		var list InvoiceList
+		var list struct {
+			Data []InvoiceView `json:"data"`
+		}
 		_ = json.NewDecoder(rec.Body).Decode(&list)
 		if len(list.Data) != 1 || list.Data[0].ID != invID {
 			t.Fatalf("list = %+v, want exactly our invoice %s (RLS leak?)", list.Data, invID)
