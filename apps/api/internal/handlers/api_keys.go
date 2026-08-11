@@ -61,12 +61,6 @@ type APIKey struct {
 	Secret    string    `json:"secret,omitempty"`
 }
 
-// APIKeyList is a cursor-paginated list of API keys (no secrets).
-type APIKeyList struct {
-	Data    []APIKey `json:"data"`
-	HasMore bool     `json:"has_more"`
-}
-
 // Create handles POST /v1/api-keys. It generates a 32-byte random
 // secret, base64-url-encodes it, stores the Argon2id hash in the DB,
 // and returns the cleartext secret to the caller. The cleartext is
@@ -187,7 +181,7 @@ func (h *APIKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 		keys = keys[:limit]
 	}
 
-	writeJSON(w, http.StatusOK, APIKeyList{Data: keys, HasMore: hasMore})
+	writeList(w, http.StatusOK, keys, hasMore, "")
 }
 
 // Revoke handles DELETE /v1/api-keys/{id}. It marks the key revoked
