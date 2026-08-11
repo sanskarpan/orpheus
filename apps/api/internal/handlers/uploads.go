@@ -419,7 +419,7 @@ func (h *UploadHandler) List(w http.ResponseWriter, r *http.Request) {
 	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", argIdx)
 	args = append(args, limit+1)
 
-	var sessions []UploadSession
+	sessions := []UploadSession{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {

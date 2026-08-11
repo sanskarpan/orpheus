@@ -172,7 +172,7 @@ func (h *ErasureHandler) Get(w http.ResponseWriter, r *http.Request) {
 // List handles GET /v1/erasure-requests.
 func (h *ErasureHandler) List(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	var out []ErasureView
+	out := []ErasureView{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, e := dbtx.Query(ctx, h.DB, `
 			SELECT id, scope, status, COALESCE(reason,''), s3_objects_purged, created_at, completed_at

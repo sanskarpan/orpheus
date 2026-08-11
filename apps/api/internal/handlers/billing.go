@@ -56,7 +56,7 @@ func (h *BillingHandler) ListInvoices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var invoices []InvoiceView
+	invoices := []InvoiceView{}
 	err = h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, `
 			SELECT id, period_start, period_end, jobs_count, compute_seconds::float8,

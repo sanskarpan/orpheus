@@ -118,7 +118,7 @@ func (h *DestinationHandler) Create(w http.ResponseWriter, r *http.Request) {
 // List handles GET /v1/destinations.
 func (h *DestinationHandler) List(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	var out []DestinationView
+	out := []DestinationView{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, e := dbtx.Query(ctx, h.DB, `
 			SELECT id, type, bucket, COALESCE(prefix,''), region, COALESCE(role_arn,''), COALESCE(external_id,''),

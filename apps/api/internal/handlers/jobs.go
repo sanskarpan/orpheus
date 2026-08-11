@@ -586,7 +586,7 @@ func (h *JobHandler) List(w http.ResponseWriter, r *http.Request) {
 		LIMIT $%d
 	`, where, argIdx)
 
-	var jobs []Job
+	jobs := []Job{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {

@@ -155,7 +155,7 @@ func (h *APIKeyHandler) List(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, name, prefix, scopes, created_at FROM api_keys
 			  WHERE org_id = $1 AND revoked_at IS NULL ORDER BY created_at DESC LIMIT $2`
 
-	var keys []APIKey
+	keys := []APIKey{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {

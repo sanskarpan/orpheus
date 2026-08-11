@@ -309,7 +309,7 @@ func (h *BundleHandler) List(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	var out []BundleView
+	out := []BundleView{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, e := dbtx.Query(ctx, h.DB, `
 			SELECT id, name, status, size_bytes, artifact_count, COALESCE(error,''), expires_at, created_at
