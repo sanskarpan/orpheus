@@ -146,7 +146,7 @@ func (h *BudgetHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list budgets")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+	writeList(w, http.StatusOK, out, false, "")
 }
 
 // Update handles PATCH /v1/budgets/{id}.
