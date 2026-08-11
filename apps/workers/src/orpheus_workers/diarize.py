@@ -81,6 +81,20 @@ class PyannoteDiarizer:
         return turns
 
 
+def manifest_identity() -> tuple[str, str]:
+    """(model_id, model_version_id) for the default diarizer.
+
+    The catalog advertised ``pyannote`` unconditionally even though the default
+    is the round-robin stub. Reflect the configured engine instead, so the
+    manifest is honest and the content cache doesn't key a stub result under a
+    pyannote version id.
+    """
+    model = os.environ.get("ORPHEUS_DIARIZE_MODEL")
+    if model:
+        return "pyannote", f"pyannote:{model}"
+    return "stub-diarize", StubDiarizer.model_version_id
+
+
 def get_diarizer(num_speakers: int = 2) -> Diarizer:
     """Return the real pyannote diarizer when configured + importable, else the
     deterministic stub."""

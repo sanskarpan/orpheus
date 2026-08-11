@@ -130,6 +130,21 @@ class ClaudeLLM:
         )
 
 
+def manifest_identity() -> tuple[str, str]:
+    """(model_id, model_version_id) for the default LLM engine.
+
+    Lets processor manifests advertise what will actually run: ``stub-llm`` when
+    no provider is configured (rather than implying a real model), or the real
+    ``anthropic:<model>`` when ``ANTHROPIC_API_KEY`` is set. Keeping the catalog
+    value in sync with the runtime engine also keeps the content cache from
+    storing a stub result under a real-model key.
+    """
+    if os.environ.get("ANTHROPIC_API_KEY", "").strip():
+        model = os.environ.get("ORPHEUS_LLM_MODEL", _DEFAULT_MODEL)
+        return "anthropic", f"anthropic:{model}"
+    return "stub-llm", StubLLM.model_version_id
+
+
 def get_llm() -> LLMProvider:
     """Return the configured provider: Claude when a key is set, else the stub."""
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
