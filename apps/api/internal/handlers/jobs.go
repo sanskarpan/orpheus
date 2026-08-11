@@ -195,8 +195,13 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	// Content-addressed cache (PRD 01). Compute the key when the processor
 	// is cacheable; read it unless the caller asked to bypass.
+	//
+	// Guard on a non-empty inputHash: an artifact with a blank sha256 (a legacy
+	// row from before upload-complete hashed content) would make computeCacheKey
+	// collide across *all* such inputs — different audio, same key, wrong cached
+	// result. Skip the cache entirely rather than serve a wrong transcript.
 	var cacheMetaArg any // nil unless we want the worker to populate the cache
-	if cacheable {
+	if cacheable && inputHash != "" {
 		paramsHash, herr := canonicalParamsHash(req.Params)
 		if herr != nil {
 			writeProblem(w, http.StatusBadRequest, "validation", "Invalid params JSON")
