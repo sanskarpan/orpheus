@@ -93,7 +93,7 @@ func (h *ProcessorHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var procs []ProcessorSummary
+	procs := []ProcessorSummary{}
 	for rows.Next() {
 		var p ProcessorSummary
 		if err := rows.Scan(&p.Name, &p.DisplayName, &p.Description); err != nil {
