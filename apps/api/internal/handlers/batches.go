@@ -250,7 +250,7 @@ func (h *BatchHandler) ListJobs(w http.ResponseWriter, r *http.Request) {
 		Status         string `json:"status"`
 		DeliveryStatus string `json:"delivery_status,omitempty"`
 	}
-	var jobs []childJob
+	jobs := []childJob{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, e := dbtx.Query(ctx, h.DB, `
 			SELECT id::text, status::text, COALESCE(delivery_status,'')
