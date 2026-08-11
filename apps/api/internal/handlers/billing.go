@@ -47,11 +47,6 @@ type InvoiceView struct {
 	PaidAt         *time.Time `json:"paid_at,omitempty"`
 }
 
-// InvoiceList is the response for GET /v1/billing/invoices.
-type InvoiceList struct {
-	Data []InvoiceView `json:"data"`
-}
-
 // ListInvoices handles GET /v1/billing/invoices — the caller's invoices,
 // newest period first.
 func (h *BillingHandler) ListInvoices(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +87,7 @@ func (h *BillingHandler) ListInvoices(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list invoices")
 		return
 	}
-	writeJSON(w, http.StatusOK, InvoiceList{Data: invoices})
+	writeList(w, http.StatusOK, invoices, false, "")
 }
 
 // CheckoutResponse is returned by the checkout endpoint.
