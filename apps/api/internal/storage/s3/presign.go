@@ -2,6 +2,8 @@ package s3
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -217,6 +219,30 @@ func (c *Client) GetObjectRange(ctx context.Context, key string, n int64) ([]byt
 		return nil, fmt.Errorf("s3.get_range.read: %w", err)
 	}
 	return buf, nil
+}
+
+// ObjectSHA256 streams the full object and returns the hex-encoded SHA-256 of
+// its content. Used at upload-complete to give the artifact a real content
+// hash: the content-addressed job cache keys on this value, so leaving it blank
+// makes every input collide. Streams (never buffers the whole object) so large
+// files don't blow up memory.
+func (c *Client) ObjectSHA256(ctx context.Context, key string) (string, error) {
+	if key == "" {
+		return "", errors.New("s3.sha256: key is required")
+	}
+	out, err := c.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(c.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return "", fmt.Errorf("s3.sha256.get: %w", err)
+	}
+	defer func() { _ = out.Body.Close() }()
+	h := sha256.New()
+	if _, err := io.Copy(h, out.Body); err != nil {
+		return "", fmt.Errorf("s3.sha256.read: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // UploadedPart is one part already stored for an in-progress multipart upload.
