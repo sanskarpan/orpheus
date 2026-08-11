@@ -304,6 +304,16 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Content hash for the artifact. The content-addressed job cache keys on
+	// this, so it must be the real hash of the object — the probe worker never
+	// populates it, and a blank value makes every input collide (different
+	// audio → same cached transcript). Computed by streaming the object.
+	contentSHA, err := h.S3.ObjectSHA256(r.Context(), key)
+	if err != nil {
+		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to hash uploaded content")
+		return
+	}
+
 	artifactID := uuid.NewString()
 	// WithTenant owns the transaction lifecycle: it commits when the
 	// closure returns nil and rolls back on error. The closure must NOT
@@ -320,8 +330,8 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		// probe_status enum, which is pending/running/completed/failed.)
 		_, err := dbtx.Exec(ctx, h.DB, `
 			INSERT INTO artifacts (id, org_id, upload_session_id, s3_bucket, s3_key, sha256, size_bytes, content_type, probe_status, created_at)
-			VALUES ($1, $2, $3, $4, $5, '', $6, $7, 'pending', now())
-		`, artifactID, p.OrgID, sessionID, bucket, key, actualSize, actualContentType)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', now())
+		`, artifactID, p.OrgID, sessionID, bucket, key, contentSHA, actualSize, actualContentType)
 		return err
 	})
 	if err != nil {
@@ -338,7 +348,7 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, Artifact{
 		ID:          artifactID,
-		SHA256:      "",
+		SHA256:      contentSHA,
 		SizeBytes:   actualSize,
 		ContentType: actualContentType,
 		CreatedAt:   time.Now(),
