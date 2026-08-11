@@ -136,7 +136,7 @@ func (h *StreamingHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list sessions")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+	writeList(w, http.StatusOK, out, false, "")
 }
 
 // Finalize closes a session and persists the final transcript + billable

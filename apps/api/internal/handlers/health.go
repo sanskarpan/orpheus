@@ -50,3 +50,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// listEnvelope is the standard shape for every list endpoint:
+// {data, has_more, next_cursor}. Non-paginated lists set has_more=false and
+// next_cursor="" so clients can rely on one shape everywhere.
+type listEnvelope struct {
+	Data       any    `json:"data"`
+	HasMore    bool   `json:"has_more"`
+	NextCursor string `json:"next_cursor"`
+}
+
+// writeList writes a list response in the standard envelope. `data` should be a
+// slice (encodes as a JSON array; a nil slice still encodes as []).
+func writeList(w http.ResponseWriter, status int, data any, hasMore bool, nextCursor string) {
+	writeJSON(w, status, listEnvelope{Data: data, HasMore: hasMore, NextCursor: nextCursor})
+}

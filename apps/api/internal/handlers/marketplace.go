@@ -76,7 +76,7 @@ func (h *MarketplaceHandler) ListProcessors(w http.ResponseWriter, r *http.Reque
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list processors")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+	writeList(w, http.StatusOK, out, false, "")
 }
 
 type submitRequest struct {
@@ -139,7 +139,7 @@ func (h *MarketplaceHandler) ListSubmissions(w http.ResponseWriter, r *http.Requ
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list submissions")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+	writeList(w, http.StatusOK, out, false, "")
 }
 
 type reviewRequest struct {
