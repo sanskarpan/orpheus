@@ -166,7 +166,10 @@ func (h *BudgetHandler) Update(w http.ResponseWriter, r *http.Request) {
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		tag, e := dbtx.Exec(ctx, h.DB, `
 			UPDATE budgets SET
-			  limit_usd = COALESCE(NULLIF($2,0), limit_usd),
+			  -- $2::float8 so a fractional limit isn't inferred as integer and
+			  -- truncated (e.g. 10.99 -> 10, 0.000001 -> 0 which NULLIFs to NULL
+			  -- and silently keeps the old limit).
+			  limit_usd = COALESCE(NULLIF($2::float8,0), limit_usd),
 			  enforcement = COALESCE(NULLIF($3,''), enforcement),
 			  alert_thresholds = COALESCE($4, alert_thresholds),
 			  updated_at = now()
