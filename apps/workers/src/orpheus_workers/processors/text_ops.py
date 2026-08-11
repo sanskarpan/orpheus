@@ -14,8 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from ..llm import get_llm
+from ..llm import manifest_identity as _llm_manifest
 from ..redact import maybe_redact
 from . import register_processor
+
+_LLM_MODEL_ID, _LLM_MODEL_VERSION = _llm_manifest()
 
 # Abuse guard: cap transcript length fed to the LLM.
 _MAX_INPUT_CHARS = 100_000
@@ -94,8 +97,8 @@ async def detect_language_proc(ctx: dict[str, Any], job_id: str) -> dict[str, An
     tier="cpu_small",
     timeout_seconds=300,
     cost_per_job_usd=0.002,
-    model_id="orpheus-llm",
-    model_version_id="orpheus-llm-1",
+    model_id=_LLM_MODEL_ID,
+    model_version_id=_LLM_MODEL_VERSION,
 )
 async def translate_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
@@ -141,8 +144,8 @@ async def translate_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     timeout_seconds=300,
     cost_per_job_usd=0.003,
     cacheable=False,
-    model_id="orpheus-llm",
-    model_version_id="orpheus-llm-1",
+    model_id=_LLM_MODEL_ID,
+    model_version_id=_LLM_MODEL_VERSION,
 )
 async def summarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     db = ctx["db"]
