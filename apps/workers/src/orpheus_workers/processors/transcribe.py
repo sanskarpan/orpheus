@@ -27,7 +27,7 @@ DEFAULT_CHUNK_SECONDS = 60
     timeout_seconds=1800,
     cost_per_job_usd=0.02,
     model_id="whisper",
-    model_version_id="whisper-tiny.en",
+    model_version_id=f"whisper-{os.environ.get('ORPHEUS_WORKER_WHISPER_MODEL', 'tiny.en')}",
 )
 async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Download the artifact, transcribe with whisper, return the result.
@@ -56,6 +56,7 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
     # ffmpeg + whisper invocations.
     chunk_seconds = parse_chunk_seconds(params, default=DEFAULT_CHUNK_SECONDS)
     word_timestamps = bool(params.get("word_timestamps", False))
+    topts = _transcribe_opts(params)
 
     art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s", artifact_id)
     if art is None:
@@ -75,14 +76,14 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
 
         duration = _wav_duration(wav_path)
         if duration <= chunk_seconds:
-            res = _transcribe_one(wav_path, offset=0.0, word_timestamps=word_timestamps)
+            res = _transcribe_one(
+                wav_path, offset=0.0, word_timestamps=word_timestamps, opts=topts
+            )
             redactions = maybe_redact(res, params)
             if redactions:
                 res["redactions"] = redactions
             return res
 
-        model_size = os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
-        model_dir = os.environ.get("ORPHEUS_WORKER_WHISPER_DIR") or None
         n_chunks = int(duration // chunk_seconds) + (1 if duration % chunk_seconds else 0)
         if n_chunks > MAX_CHUNKS:
             raise ParamError(
@@ -90,7 +91,7 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
             )
         all_segments: list[dict] = []
         all_text: list[str] = []
-        language = "en"
+        language = topts["language"] or "en"
         for i in range(n_chunks):
             start = i * chunk_seconds
             end = min(start + chunk_seconds, duration)
@@ -99,9 +100,8 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 ffmpeg_slice(wav_path, chunk_path, start, end)
                 result = transcribe(
                     chunk_path,
-                    model_size=model_size,
-                    model_dir=model_dir,
                     word_timestamps=word_timestamps,
+                    **topts,
                 )
             except (FFmpegError, TranscribeError) as e:
                 logger.error("worker.chunk_failed", job_id=job_id, chunk=i, err=str(e))
@@ -151,13 +151,42 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 pass
 
 
-def _transcribe_one(wav_path: Path, offset: float, word_timestamps: bool = False) -> dict[str, Any]:
-    """Transcribe a single wav, optionally shifting segment timestamps by ``offset``."""
-    model_size = os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
-    model_dir = os.environ.get("ORPHEUS_WORKER_WHISPER_DIR") or None
-    result = transcribe(
-        wav_path, model_size=model_size, model_dir=model_dir, word_timestamps=word_timestamps
+def _transcribe_opts(params: dict[str, Any]) -> dict[str, Any]:
+    """Resolve per-job transcription options from job params + env defaults.
+
+    ``model`` selects the whisper model per request (falling back to the
+    ``ORPHEUS_WORKER_WHISPER_MODEL`` env default); ``language`` forces a
+    language code (default ``None`` = auto-detect); ``vocabulary`` (list) and
+    ``initial_prompt`` (str) bias recognition toward domain terms.
+    """
+    model = params.get("model")
+    model_size = model if isinstance(model, str) and model.strip() else os.environ.get(
+        "ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en"
     )
+    lang = params.get("language")
+    language = lang.strip() if isinstance(lang, str) and lang.strip() else None
+    vocab = params.get("vocabulary")
+    vocabulary = vocab if isinstance(vocab, list) else None
+    prompt = params.get("initial_prompt")
+    initial_prompt = prompt if isinstance(prompt, str) and prompt.strip() else None
+    return {
+        "model_size": model_size,
+        "model_dir": os.environ.get("ORPHEUS_WORKER_WHISPER_DIR") or None,
+        "language": language,
+        "vocabulary": vocabulary,
+        "initial_prompt": initial_prompt,
+    }
+
+
+def _transcribe_one(
+    wav_path: Path,
+    offset: float,
+    word_timestamps: bool = False,
+    opts: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Transcribe a single wav, optionally shifting segment timestamps by ``offset``."""
+    opts = opts or _transcribe_opts({})
+    result = transcribe(wav_path, word_timestamps=word_timestamps, **opts)
     for seg in result.get("segments") or []:
         seg["start"] = float(seg.get("start", 0.0)) + offset
         seg["end"] = float(seg.get("end", 0.0)) + offset
