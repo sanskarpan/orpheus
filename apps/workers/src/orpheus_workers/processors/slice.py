@@ -18,6 +18,65 @@ _SLICE_NS = uuid.UUID("6f1e5b8a-2c3d-4e5f-8a9b-0c1d2e3f4a5b")
 
 logger = structlog.get_logger(__name__)
 
+# Container extensions ffmpeg can mux. Slice uses `-c copy`, so the output
+# extension must match the source codec — we take it from the artifact's
+# content_type when the S3 key has none (uploaded artifacts are stored under
+# extension-less keys, which previously yielded a ".bin" output ffmpeg rejects).
+_KNOWN_MEDIA_EXT = {
+    ".wav",
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".ogg",
+    ".oga",
+    ".opus",
+    ".flac",
+    ".webm",
+    ".mp4",
+    ".mov",
+    ".mkv",
+    ".wma",
+    ".aiff",
+    ".aif",
+    ".amr",
+    ".3gp",
+}
+_CONTENT_TYPE_EXT = {
+    "audio/wav": ".wav",
+    "audio/x-wav": ".wav",
+    "audio/wave": ".wav",
+    "audio/vnd.wave": ".wav",
+    "audio/mpeg": ".mp3",
+    "audio/mp3": ".mp3",
+    "audio/mp4": ".m4a",
+    "audio/x-m4a": ".m4a",
+    "audio/aac": ".aac",
+    "audio/ogg": ".ogg",
+    "application/ogg": ".ogg",
+    "audio/opus": ".opus",
+    "audio/flac": ".flac",
+    "audio/x-flac": ".flac",
+    "audio/webm": ".webm",
+    "video/webm": ".webm",
+    "video/mp4": ".mp4",
+    "video/quicktime": ".mov",
+    "video/x-matroska": ".mkv",
+    "audio/amr": ".amr",
+}
+
+
+def _media_suffix(s3_key: str, content_type: str | None) -> str:
+    """A muxable output extension for the slice, from the S3 key or content_type.
+
+    Falls back to ``.wav`` (a widely-compatible container) rather than ``.bin``,
+    which ffmpeg cannot choose an output format for.
+    """
+    suf = Path(s3_key).suffix.lower()
+    if suf in _KNOWN_MEDIA_EXT:
+        return suf
+    ct = (content_type or "").split(";")[0].strip().lower()
+    return _CONTENT_TYPE_EXT.get(ct, ".wav")
+
 
 @register_processor(
     "slice",
@@ -60,7 +119,7 @@ async def slice_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     if src is None:
         raise ValueError(f"artifact {src_artifact_id} not found")
 
-    suffix = Path(src["s3_key"]).suffix or ".bin"
+    suffix = _media_suffix(src["s3_key"], src.get("content_type"))
     src_path = Path(work_dir) / f"{job_id}.src{suffix}"
     dst_path = Path(work_dir) / f"{job_id}.dst{suffix}"
     try:
