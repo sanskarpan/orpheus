@@ -76,9 +76,7 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
 
         duration = _wav_duration(wav_path)
         if duration <= chunk_seconds:
-            res = _transcribe_one(
-                wav_path, offset=0.0, word_timestamps=word_timestamps, opts=topts
-            )
+            res = _transcribe_one(wav_path, offset=0.0, word_timestamps=word_timestamps, opts=topts)
             redactions = maybe_redact(res, params)
             if redactions:
                 res["redactions"] = redactions
@@ -160,8 +158,10 @@ def _transcribe_opts(params: dict[str, Any]) -> dict[str, Any]:
     ``initial_prompt`` (str) bias recognition toward domain terms.
     """
     model = params.get("model")
-    model_size = model if isinstance(model, str) and model.strip() else os.environ.get(
-        "ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en"
+    model_size = (
+        model
+        if isinstance(model, str) and model.strip()
+        else os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
     )
     lang = params.get("language")
     language = lang.strip() if isinstance(lang, str) and lang.strip() else None
