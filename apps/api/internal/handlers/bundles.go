@@ -332,7 +332,7 @@ func (h *BundleHandler) List(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to list bundles")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": out})
+	writeList(w, http.StatusOK, out, false, "")
 }
 
 func (h *BundleHandler) loadBundle(r *http.Request, orgID, id string) (BundleView, error) {
