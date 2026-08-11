@@ -114,7 +114,7 @@ func (h *BudgetHandler) Create(w http.ResponseWriter, r *http.Request) {
 // List handles GET /v1/budgets — budgets with current-period spend + % consumed.
 func (h *BudgetHandler) List(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	var out []BudgetView
+	out := []BudgetView{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, e := dbtx.Query(ctx, h.DB, `
 			SELECT b.id, b.scope, COALESCE(b.scope_id,''), b.period, b.limit_usd::float8, b.alert_thresholds, b.enforcement, b.created_at,
