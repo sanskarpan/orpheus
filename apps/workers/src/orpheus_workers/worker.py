@@ -245,7 +245,16 @@ class Worker:
                     raise
                 span.set_status(Status(StatusCode.OK))
             duration = time.monotonic() - start
-            cost = duration * self._settings.cost_usd_per_second
+            # Meter GPU work on its reported gpu_seconds at the GPU rate; fall
+            # back to the flat wall-clock CPU rate for local/CPU processors.
+            gpu_seconds = (result or {}).get("gpu_seconds")
+            if gpu_seconds is not None:
+                try:
+                    cost = float(gpu_seconds) * self._settings.gpu_cost_usd_per_second
+                except (TypeError, ValueError):
+                    cost = duration * self._settings.cost_usd_per_second
+            else:
+                cost = duration * self._settings.cost_usd_per_second
             metrics.JOBS_PROCESSED.labels(processor=processor_name, status="completed").inc()
             self._db.mark_job_completed(job_id, result or {}, cost_usd=cost)
             # Content-addressed cache (PRD 01): populate from the completed

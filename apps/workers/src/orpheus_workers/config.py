@@ -20,6 +20,10 @@ class WorkerSettings(BaseSettings):
     # Cost rate applied to job wall-clock seconds to populate jobs.cost_usd
     # (a coarse CPU-second price; GPU tiers override later). 0 disables it.
     cost_usd_per_second: float = 0.00005
+    # GPU price per second, applied to a result's reported ``gpu_seconds`` (e.g.
+    # from the Modal backend) instead of the flat CPU rate. Default ≈ A10 list
+    # price ($1.10/hr). Override with ORPHEUS_WORKER_GPU_COST_USD_PER_SECOND.
+    gpu_cost_usd_per_second: float = 0.000306
     # How often (seconds) to poll the JetStream consumer for pending-message
     # depth and publish it as the orpheus_jetstream_pending_messages gauge.
     queue_depth_poll_seconds: float = 15.0
