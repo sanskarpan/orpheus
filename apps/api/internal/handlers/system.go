@@ -194,7 +194,7 @@ func (h *SystemHandler) ListAuditLog(w http.ResponseWriter, r *http.Request) {
 		LIMIT $%d
 	`, where, argIdx)
 
-	var entries []AuditLogEntry
+	entries := []AuditLogEntry{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
