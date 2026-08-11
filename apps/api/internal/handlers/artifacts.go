@@ -173,7 +173,7 @@ func (h *ArtifactHandler) List(w http.ResponseWriter, r *http.Request) {
 	query += fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d", argIdx)
 	args = append(args, limit+1)
 
-	var artifacts []Artifact
+	artifacts := []Artifact{}
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		rows, err := dbtx.Query(ctx, h.DB, query, args...)
 		if err != nil {
