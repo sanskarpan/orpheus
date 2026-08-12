@@ -19,6 +19,10 @@ from __future__ import annotations
 
 import modal
 
+# This is a Modal deploy script: it intentionally runs the `vllm` binary and
+# binds 0.0.0.0 inside a controlled container, which the security lints flag.
+# ruff: noqa: S104, S603, S607
+
 APP_NAME = "orpheus-llm"
 MODEL = "Qwen/Qwen2.5-3B-Instruct"
 SERVED_NAME = "orpheus-llm"
@@ -56,6 +60,8 @@ def serve():
     import subprocess
 
     secret = os.environ["ORPHEUS_MODAL_SHARED_SECRET"]
+    # Launch vLLM's OpenAI server inside the Modal container — a fixed command on
+    # a controlled image (secret is a CLI value, not a shell string).
     subprocess.Popen(
         [
             "vllm",
