@@ -1,6 +1,6 @@
 {
   "name": "@orpheus/web",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Orpheus web dashboard — Studio Console. Next.js App Router BFF over the Go API.",
   "scripts": {
