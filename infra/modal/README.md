@@ -130,3 +130,19 @@ Configured on the `Transcriber` class in `orpheus_transcribe.py`:
 `scaledown_window=300` (keeps a warm GPU for 5 min after the last request),
 `@modal.concurrent(max_inputs=4)` (a few concurrent decodes per GPU). Raise
 `min_containers` to keep a GPU permanently warm for latency-sensitive traffic.
+
+## Prewarming (cold-start mitigation)
+
+Scale-to-zero means the first job after idle pays a cold start. Instead of
+paying for an always-warm GPU, the API fires a **warmup on a signal that
+predicts imminent load** — upload completion — so a container is spinning before
+the transcribe job arrives. The transcribe endpoint accepts `{"warmup": true}`
+(spins the container + loads the model, returns immediately). Enable it by
+pointing the API at the endpoint:
+
+| Env var (on the API) | Value |
+|---|---|
+| `ORPHEUS_MODAL_WARMUP_URL` | the transcribe endpoint URL |
+| `ORPHEUS_MODAL_WARMUP_TOKEN` | the `ORPHEUS_MODAL_SHARED_SECRET` value |
+
+Fire-and-forget (never blocks the upload response); a no-op when unset.

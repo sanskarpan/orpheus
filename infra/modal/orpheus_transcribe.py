@@ -78,6 +78,11 @@ class Transcriber:
 
     @modal.method()
     def transcribe(self, payload: dict) -> dict:
+        # Warmup: a caller can spin + load this container ahead of real audio
+        # (e.g. fired on upload-complete) so the first real job isn't cold.
+        if payload.get("warmup"):
+            self._get(payload.get("model") or DEFAULT_MODEL)
+            return {"ok": True, "warmup": True, "model": payload.get("model") or DEFAULT_MODEL}
         model_size = payload.get("model") or DEFAULT_MODEL
         language = payload.get("language") or None
         initial_prompt = payload.get("initial_prompt") or None
