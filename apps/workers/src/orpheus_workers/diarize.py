@@ -81,6 +81,48 @@ class PyannoteDiarizer:
         return turns
 
 
+class ModalDiarizer:
+    """Real GPU diarization via the Modal endpoint (ECAPA embeddings + clustering).
+
+    Sends the 16 kHz mono wav and returns ``[{start, end, speaker}]`` turns —
+    genuine speaker attribution (the same speaker recurs across turns), unlike the
+    round-robin stub.
+    """
+
+    model_version_id = "ecapa-agglomerative-1"
+
+    def __init__(self, url: str, token: str, max_speakers: int = 6) -> None:
+        self._url = url
+        self._token = token
+        self._max_speakers = max(int(max_speakers), 2)
+
+    def diarize(self, wav_path):  # noqa: ANN001 - matches the Diarizer protocol
+        import base64
+
+        import httpx
+
+        with open(wav_path, "rb") as f:
+            audio = f.read()
+        payload = {
+            "token": self._token,
+            "audio_b64": base64.b64encode(audio).decode(),
+            "max_speakers": self._max_speakers,
+        }
+        resp = httpx.post(self._url, json=payload, timeout=600.0)
+        resp.raise_for_status()
+        data = resp.json()
+        self.model_version_id = data.get("model_version_id", self.model_version_id)
+        return data.get("turns", [])
+
+
+def _modal_diarize_config() -> tuple[str, str] | None:
+    if os.environ.get("ORPHEUS_DIARIZE_BACKEND", "").strip().lower() != "modal":
+        return None
+    url = os.environ.get("ORPHEUS_MODAL_DIARIZE_URL", "").strip()
+    token = os.environ.get("ORPHEUS_MODAL_DIARIZE_TOKEN", "").strip()
+    return (url, token) if url and token else None
+
+
 def manifest_identity() -> tuple[str, str]:
     """(model_id, model_version_id) for the default diarizer.
 
@@ -89,6 +131,8 @@ def manifest_identity() -> tuple[str, str]:
     manifest is honest and the content cache doesn't key a stub result under a
     pyannote version id.
     """
+    if _modal_diarize_config():
+        return "ecapa-diarize", ModalDiarizer.model_version_id
     model = os.environ.get("ORPHEUS_DIARIZE_MODEL")
     if model:
         return "pyannote", f"pyannote:{model}"
@@ -96,8 +140,11 @@ def manifest_identity() -> tuple[str, str]:
 
 
 def get_diarizer(num_speakers: int = 2) -> Diarizer:
-    """Return the real pyannote diarizer when configured + importable, else the
-    deterministic stub."""
+    """Return the configured diarizer: Modal GPU (ECAPA) if enabled, else pyannote
+    when configured + importable, else the deterministic stub."""
+    modal_cfg = _modal_diarize_config()
+    if modal_cfg:
+        return ModalDiarizer(modal_cfg[0], modal_cfg[1], max_speakers=num_speakers)
     model = os.environ.get("ORPHEUS_DIARIZE_MODEL")
     if model:
         try:
