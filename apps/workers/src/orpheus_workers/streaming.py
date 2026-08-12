@@ -2,20 +2,27 @@
 
 A client opens a WebSocket, optionally sends a ``start`` control frame, then
 streams raw PCM audio (16-bit signed little-endian, mono) as binary frames.
-The server runs chunked Whisper over a rolling buffer and streams results
-back:
+The server transcribes incrementally and streams results back:
 
-  - ``partial`` — a provisional transcript of the un-finalized tail. It may
-    change on the next update; clients render it as "in progress" and are
-    free to drop it under backpressure.
-  - ``final``   — a stable transcript for a completed window. Never re-sent,
-    never dropped.
-  - ``done``    — sent after the client finalizes; carries the full
-    concatenated final transcript, then the socket closes.
+  - ``partial`` — a provisional transcript of the un-confirmed tail. It may
+    change on the next update; clients render it as "in progress".
+  - ``final``   — confirmed words, never re-sent, never dropped.
+  - ``done``    — sent after the client finalizes; carries the full confirmed
+    transcript, then the socket closes.
 
-The state machine (:class:`StreamSession`) is deliberately transport-free so
-it is unit-testable without a socket, and the transcriber is injectable so
-tests run without the Whisper model. See docs/design/12-streaming-realtime.md.
+**Decoding — LocalAgreement-2.** Naively re-transcribing a growing window makes
+partials unstable and wastes compute. Instead we re-decode the working buffer
+and *confirm* the longest word prefix that two consecutive hypotheses agree on
+(LocalAgreement-2, from Whisper-Streaming). Confirmed words are emitted as
+finals; the buffer is then trimmed at the last confirmed word so re-transcription
+stays bounded rather than growing with the session. A lightweight energy **VAD**
+detects trailing silence and flushes/endpoints at natural pauses (and forces a
+trim so a long pause never grows the buffer).
+
+The state machine (:class:`StreamSession`) is transport-free and unit-testable;
+the transcriber is injectable so tests run without Whisper. The transcriber
+returns word-level timestamps (``{"words": [{"word","start","end"}, ...]}``).
+See docs/design/12-streaming-realtime.md.
 """
 
 from __future__ import annotations
@@ -35,8 +42,9 @@ from typing import Any
 # against module globals — otherwise it misreads `ws` as a query parameter.
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-# A transcriber turns a PCM16 mono buffer into a result dict with at least a
-# "text" key. The default implementation uses Whisper; tests inject a fake.
+# A transcriber turns a PCM16 mono buffer into a result dict carrying word-level
+# timestamps: ``{"words": [{"word", "start", "end"}, ...], "text": ...}``. The
+# default uses Whisper; tests inject a fake.
 Transcriber = Callable[[bytes, int], dict]
 
 _BYTES_PER_SAMPLE = 2  # 16-bit mono
@@ -51,10 +59,26 @@ def pcm16_to_wav_file(pcm: bytes, sample_rate: int, path: str | Path) -> None:
         w.writeframes(pcm)
 
 
-def whisper_transcriber(pcm: bytes, sample_rate: int) -> dict:
-    """Default transcriber: dump the PCM window to a temp wav and run Whisper.
+def _flatten_words(result: dict) -> list[dict[str, Any]]:
+    """Pull ``[{word,start,end}]`` from a transcribe result's segments/words."""
+    words: list[dict[str, Any]] = []
+    for seg in result.get("segments") or []:
+        for w in seg.get("words") or []:
+            text = (w.get("word") or "").strip()
+            if text:
+                words.append(
+                    {
+                        "word": text,
+                        "start": float(w.get("start", 0.0)),
+                        "end": float(w.get("end", 0.0)),
+                    }
+                )
+    return words
 
-    Imported lazily so the module (and its tests) load without the model.
+
+def whisper_transcriber(pcm: bytes, sample_rate: int) -> dict:
+    """Default transcriber: dump the PCM buffer to a temp wav and run Whisper
+    with word timestamps. Imported lazily so the module loads without the model.
     """
     from .transcribe import transcribe as run_whisper
 
@@ -63,109 +87,174 @@ def whisper_transcriber(pcm: bytes, sample_rate: int) -> dict:
         tmp = tf.name
     try:
         pcm16_to_wav_file(pcm, sample_rate, tmp)
-        return run_whisper(tmp, model_size=model_size)
+        res = run_whisper(tmp, model_size=model_size, word_timestamps=True)
+        res.setdefault("words", _flatten_words(res))
+        return res
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(tmp)
 
 
+def _norm(word: str) -> str:
+    """Normalize a word for agreement comparison (case/punctuation-insensitive)."""
+    return "".join(c for c in word.lower() if c.isalnum())
+
+
 @dataclass
 class StreamConfig:
     sample_rate: int = 16_000
-    # A window is finalized once this many seconds of un-finalized audio have
-    # accumulated. Larger = fewer, more-accurate finals but higher latency.
-    window_seconds: float = 3.0
-    # Emit a fresh partial once this many new seconds have arrived since the
-    # last partial. Smaller = snappier interims, more compute.
-    partial_interval_seconds: float = 1.0
+    # Re-decode once this many seconds of new audio have arrived.
+    min_chunk_seconds: float = 1.0
+    # Force a buffer trim once it grows this long, so re-transcription is bounded
+    # even with continuous speech and no agreement.
+    max_buffer_seconds: float = 20.0
+    # Trailing audio quieter than vad_energy_ratio × the buffer's RMS for at
+    # least this long is treated as a pause → flush + endpoint.
+    vad_silence_seconds: float = 0.6
+    vad_energy_ratio: float = 0.30
+    # Set False to disable VAD endpointing (deterministic tests).
+    vad_enabled: bool = True
 
     @property
-    def window_samples(self) -> int:
-        return int(self.window_seconds * self.sample_rate)
+    def min_chunk_samples(self) -> int:
+        return int(self.min_chunk_seconds * self.sample_rate)
 
     @property
-    def partial_interval_samples(self) -> int:
-        return int(self.partial_interval_seconds * self.sample_rate)
+    def max_buffer_samples(self) -> int:
+        return int(self.max_buffer_seconds * self.sample_rate)
+
+
+def _extract_words(result: dict) -> list[dict[str, Any]]:
+    words = result.get("words")
+    if words is None:
+        words = _flatten_words(result)
+    return [
+        {
+            "word": str(w.get("word", "")).strip(),
+            "start": float(w.get("start", 0.0)),
+            "end": float(w.get("end", 0.0)),
+        }
+        for w in words
+        if str(w.get("word", "")).strip()
+    ]
 
 
 @dataclass
 class StreamSession:
-    """Rolling-buffer state machine for streaming transcription.
+    """LocalAgreement-2 state machine for streaming transcription.
 
-    Feed it audio with :meth:`add_audio`; it returns the events to send. Call
-    :meth:`finalize` when the client is done. It guarantees finals are emitted
-    once, in order, and cover the whole stream exactly once.
+    Feed audio with :meth:`add_audio`; it returns the events to send. Call
+    :meth:`finalize` when the client is done. Confirmed words are emitted once,
+    in order; the buffer is trimmed at confirmations so cost stays bounded.
     """
 
     transcriber: Transcriber
     config: StreamConfig = field(default_factory=StreamConfig)
-    _buffer: bytearray = field(default_factory=bytearray)
-    _finalized_samples: int = 0
-    _last_partial_samples: int = 0
+    _buffer: bytearray = field(default_factory=bytearray)  # audio after _offset_s
+    _offset_s: float = 0.0  # absolute time already trimmed away
+    _committed: int = 0  # words confirmed within the CURRENT buffer
+    _prev: list[str] = field(default_factory=list)  # last hypothesis (normalized)
     _final_texts: list[str] = field(default_factory=list)
+    _samples_since_decode: int = 0
 
     @property
-    def _total_samples(self) -> int:
+    def _buffer_samples(self) -> int:
         return len(self._buffer) // _BYTES_PER_SAMPLE
 
     def add_audio(self, pcm: bytes) -> list[dict[str, Any]]:
-        """Append audio and return any partial/final events it produced."""
         self._buffer.extend(pcm)
+        self._samples_since_decode += len(pcm) // _BYTES_PER_SAMPLE
+        if self._samples_since_decode < self.config.min_chunk_samples:
+            return []
+        self._samples_since_decode = 0
+        return self._decode(flush=False)
+
+    def finalize(self) -> list[dict[str, Any]]:
+        events = self._decode(flush=True)
+        events.append({"type": "done", "text": " ".join(self._final_texts).strip()})
+        return events
+
+    def _decode(self, flush: bool) -> list[dict[str, Any]]:
         events: list[dict[str, Any]] = []
+        if self._buffer_samples == 0:
+            return events
 
-        # Finalize every completed window first (stable, never re-sent).
-        win = self.config.window_samples
-        while self._total_samples - self._finalized_samples >= win and win > 0:
-            events.append(self._finalize_range(self._finalized_samples + win))
+        result = self.transcriber(bytes(self._buffer), self.config.sample_rate)
+        words = _extract_words(result)
 
-        # Then a provisional partial for the remaining tail, rate-limited.
-        new_since_partial = self._total_samples - self._last_partial_samples
+        # LocalAgreement-2: confirm the longest prefix the last two hypotheses
+        # agree on. On flush (finalize) or a detected pause, confirm everything.
+        cur = [_norm(w["word"]) for w in words]
+        agreed = _common_prefix_len(self._prev, cur)
+        endpoint = flush or (self.config.vad_enabled and self._trailing_silence())
+        confirm_to = len(words) if endpoint else agreed
+
+        if confirm_to > self._committed:
+            newly = words[self._committed : confirm_to]
+            text = " ".join(w["word"] for w in newly).strip()
+            if text:
+                self._final_texts.append(text)
+                events.append(
+                    {
+                        "type": "final",
+                        "text": text,
+                        "start": self._offset_s + newly[0]["start"],
+                        "end": self._offset_s + newly[-1]["end"],
+                    }
+                )
+            self._committed = confirm_to
+
+        self._prev = cur
+
+        # Trim: on an endpoint, or when the buffer is too long, drop everything
+        # up to the last confirmed word so re-transcription stays bounded.
         if (
-            self._total_samples > self._finalized_samples
-            and new_since_partial >= self.config.partial_interval_samples
-        ):
-            tail = bytes(self._buffer[self._finalized_samples * _BYTES_PER_SAMPLE :])
-            res = self.transcriber(tail, self.config.sample_rate)
-            self._last_partial_samples = self._total_samples
+            endpoint or self._buffer_samples >= self.config.max_buffer_samples
+        ) and self._committed > 0:
+            cut_s = words[self._committed - 1]["end"]
+            cut_samples = min(int(cut_s * self.config.sample_rate), self._buffer_samples)
+            del self._buffer[: cut_samples * _BYTES_PER_SAMPLE]
+            self._offset_s += cut_samples / self.config.sample_rate
+            self._committed = 0
+            self._prev = []
+            words = []  # tail already trimmed away
+
+        # Provisional partial for the still-unconfirmed tail.
+        tail = words[self._committed :]
+        if tail and not flush:
             events.append(
                 {
                     "type": "partial",
-                    "text": res.get("text", ""),
-                    "start": self._finalized_samples / self.config.sample_rate,
+                    "text": " ".join(w["word"] for w in tail).strip(),
+                    "start": self._offset_s + tail[0]["start"],
                 }
             )
         return events
 
-    def finalize(self) -> list[dict[str, Any]]:
-        """Finalize any remaining tail and return the final(s) + ``done``."""
-        events: list[dict[str, Any]] = []
-        if self._total_samples > self._finalized_samples:
-            events.append(self._finalize_range(self._total_samples))
-        events.append({"type": "done", "text": " ".join(self._final_texts).strip()})
-        return events
+    def _trailing_silence(self) -> bool:
+        """True when the buffer ends with vad_silence_seconds of low energy."""
+        import numpy as np
 
-    def _finalize_range(self, end_samples: int) -> dict[str, Any]:
-        """Transcribe [_finalized_samples, end_samples) as a stable final."""
-        start = self._finalized_samples
-        seg = bytes(self._buffer[start * _BYTES_PER_SAMPLE : end_samples * _BYTES_PER_SAMPLE])
-        res = self.transcriber(seg, self.config.sample_rate)
-        text = res.get("text", "")
-        self._final_texts.append(text)
-        self._finalized_samples = end_samples
-        self._last_partial_samples = end_samples
-        return {
-            "type": "final",
-            "text": text,
-            "start": start / self.config.sample_rate,
-            "end": end_samples / self.config.sample_rate,
-        }
+        n = int(self.config.vad_silence_seconds * self.config.sample_rate)
+        if self._buffer_samples < n * 2:  # need speech + trailing region to compare
+            return False
+        buf = np.frombuffer(bytes(self._buffer), dtype=np.int16).astype(np.float32)
+        whole_rms = float(np.sqrt(np.mean(buf**2)))
+        tail_rms = float(np.sqrt(np.mean(buf[-n:] ** 2)))
+        return whole_rms > 0 and tail_rms < self.config.vad_energy_ratio * whole_rms
+
+
+def _common_prefix_len(a: list[str], b: list[str]) -> int:
+    n = 0
+    for x, y in zip(a, b):
+        if x != y or not x:
+            break
+        n += 1
+    return n
 
 
 def create_app(transcriber: Transcriber | None = None) -> Any:
-    """Build the FastAPI app exposing the streaming WebSocket.
-
-    ``transcriber`` defaults to Whisper; tests pass a fake.
-    """
+    """Build the FastAPI app exposing the streaming WebSocket."""
     tx = transcriber or whisper_transcriber
     app = FastAPI(title="Orpheus Streaming", version="0.1.0")
 
