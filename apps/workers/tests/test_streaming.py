@@ -1,9 +1,9 @@
 """Tests for the streaming transcription service (gap #12).
 
-The Whisper model is never loaded: a fake transcriber returns the window's
-sample count as its text, so we can assert exactly which audio each final
-covers. The e2e test drives the real FastAPI WebSocket app in-process via
-Starlette's TestClient — real accept/receive/send frames, real state machine.
+The Whisper model is never loaded: a fake transcriber turns the buffer length
+into a deterministic word sequence (one word per 0.5 s), so we can assert the
+LocalAgreement-2 confirmation, buffer trimming, and VAD endpointing exactly.
+The e2e test drives the real FastAPI WebSocket app in-process.
 """
 
 from __future__ import annotations
@@ -19,57 +19,98 @@ from orpheus_workers.streaming import (
 
 SAMPLE_RATE = 16_000
 BYTES_PER_SAMPLE = 2
+WORD_SECONDS = 0.5
+
+
+def _tone(seconds: float) -> bytes:
+    """Non-silent PCM16 (constant amplitude) so VAD sees it as speech."""
+    return b"\x00\x40" * int(seconds * SAMPLE_RATE)
 
 
 def _silence(seconds: float) -> bytes:
-    """A PCM16 mono buffer of `seconds` of silence at SAMPLE_RATE."""
     return b"\x00\x00" * int(seconds * SAMPLE_RATE)
 
 
 def _fake_transcriber(pcm: bytes, sample_rate: int) -> dict:
-    """Deterministic: text is the window's sample count, so tests can assert
-    exactly which range was transcribed."""
-    return {"text": str(len(pcm) // BYTES_PER_SAMPLE)}
+    """Deterministic: one word ``wN`` per 0.5 s of buffer, with timestamps.
+
+    Re-decoding a longer buffer reproduces the same prefix, so LocalAgreement
+    confirms the stable prefix — exactly what the real model does when the tail
+    settles.
+    """
+    seconds = (len(pcm) // BYTES_PER_SAMPLE) / sample_rate
+    n = int(round(seconds / WORD_SECONDS))
+    words = [
+        {"word": f"w{i}", "start": i * WORD_SECONDS, "end": (i + 1) * WORD_SECONDS}
+        for i in range(n)
+    ]
+    return {"words": words, "text": " ".join(w["word"] for w in words)}
 
 
-def test_session_finalizes_windows_in_order():
-    cfg = StreamConfig(sample_rate=SAMPLE_RATE, window_seconds=3.0, partial_interval_seconds=1.0)
-    sess = StreamSession(transcriber=_fake_transcriber, config=cfg)
+def _no_vad(**kw) -> StreamConfig:
+    return StreamConfig(sample_rate=SAMPLE_RATE, vad_enabled=False, **kw)
 
-    # Feed 7s in 1s chunks; windows of 3s → finals at 3s and 6s.
+
+def test_localagreement_confirms_stable_prefix():
+    sess = StreamSession(transcriber=_fake_transcriber, config=_no_vad())
     finals: list[dict] = []
     partials: list[dict] = []
-    for _ in range(7):
-        for ev in sess.add_audio(_silence(1.0)):
+    # Feed 5 s in 1 s tones; each decode agrees with the previous prefix.
+    for _ in range(5):
+        for ev in sess.add_audio(_tone(1.0)):
             (finals if ev["type"] == "final" else partials).append(ev)
 
-    assert [(f["start"], f["end"]) for f in finals] == [(0.0, 3.0), (3.0, 6.0)]
-    # Each 3s final covers 48000 samples.
-    assert [f["text"] for f in finals] == ["48000", "48000"]
-    # Partials were emitted for the in-progress tail.
+    # Confirmed words are contiguous, in order, non-overlapping.
+    text = " ".join(f["text"] for f in finals).split()
+    assert text == [f"w{i}" for i in range(len(text))]
+    assert len(text) >= 6  # most of the 10 words confirmed before the last tail
     assert partials and all(p["type"] == "partial" for p in partials)
 
-    # Finalize the remaining 1s tail → one more final, then done.
-    tail = sess.finalize()
-    assert tail[0]["type"] == "final"
-    assert (tail[0]["start"], tail[0]["end"]) == (6.0, 7.0)
-    assert tail[0]["text"] == "16000"
-    assert tail[-1] == {"type": "done", "text": "48000 48000 16000"}
+    # Finalize confirms the rest; done has the full transcript in order.
+    done = sess.finalize()[-1]
+    assert done["type"] == "done"
+    assert done["text"].split() == [f"w{i}" for i in range(10)]
 
 
-def test_session_short_stream_only_final_on_finalize():
-    # Under one window: no finals until finalize, then exactly one.
-    cfg = StreamConfig(sample_rate=SAMPLE_RATE, window_seconds=3.0)
-    sess = StreamSession(transcriber=_fake_transcriber, config=cfg)
-    events = sess.add_audio(_silence(1.5))
-    assert all(e["type"] == "partial" for e in events)  # no finals yet
-
+def test_finalize_flushes_short_stream():
+    sess = StreamSession(transcriber=_fake_transcriber, config=_no_vad())
+    # 1.5 s: below the agreement cadence — nothing confirmed until finalize.
+    sess.add_audio(_tone(1.5))
     fin = sess.finalize()
     finals = [e for e in fin if e["type"] == "final"]
     assert len(finals) == 1
-    assert (finals[0]["start"], finals[0]["end"]) == (0.0, 1.5)
-    assert fin[-1]["type"] == "done"
-    assert fin[-1]["text"] == "24000"  # 1.5s * 16000
+    assert finals[0]["text"].split() == ["w0", "w1", "w2"]  # 1.5s / 0.5
+    assert fin[-1] == {"type": "done", "text": "w0 w1 w2"}
+
+
+def test_buffer_is_trimmed_to_bound_cost():
+    # Small max_buffer forces a trim once words are confirmed; the absolute
+    # offset advances and the buffer shrinks, so re-transcription stays bounded.
+    sess = StreamSession(transcriber=_fake_transcriber, config=_no_vad(max_buffer_seconds=3.0))
+    finals: list[dict] = []
+    for _ in range(6):
+        finals += [e for e in sess.add_audio(_tone(1.0)) if e["type"] == "final"]
+    assert sess._offset_s > 0.0  # a trim happened
+    # The buffer never grew past the bound → re-transcription cost stays bounded.
+    assert sess._buffer_samples < sess.config.max_buffer_samples
+    # Finals stream out (in absolute time order) rather than piling up in one buffer.
+    assert finals and all(
+        finals[i]["start"] <= finals[i + 1]["start"] for i in range(len(finals) - 1)
+    )
+    done = sess.finalize()[-1]
+    assert done["type"] == "done" and done["text"]
+
+
+def test_vad_endpoints_on_trailing_silence():
+    sess = StreamSession(
+        transcriber=_fake_transcriber,
+        config=StreamConfig(sample_rate=SAMPLE_RATE, vad_silence_seconds=0.5, vad_energy_ratio=0.3),
+    )
+    sess.add_audio(_tone(2.0))  # speech
+    events = sess.add_audio(_silence(1.0))  # a pause → endpoint + flush
+    finals = [e for e in events if e["type"] == "final"]
+    assert finals, "trailing silence should flush a final"
+    assert sess._offset_s > 0.0  # endpoint trimmed the buffer
 
 
 def test_pcm16_to_wav_roundtrip(tmp_path):
@@ -94,13 +135,10 @@ def test_websocket_e2e_streams_partials_and_finals():
         ws.send_json({"type": "start", "sample_rate": SAMPLE_RATE})
         assert ws.receive_json() == {"type": "ready"}
 
-        # Stream 7s of audio in 1s binary frames. Send all audio first; the
-        # server queues its events in order for us to drain below.
-        for _ in range(7):
-            ws.send_bytes(_silence(1.0))
+        for _ in range(5):
+            ws.send_bytes(_tone(1.0))
         ws.send_json({"type": "finalize"})
 
-        # Drain every event up to and including `done`.
         events: list[dict] = []
         while True:
             ev = ws.receive_json()
@@ -111,12 +149,9 @@ def test_websocket_e2e_streams_partials_and_finals():
         finals = [e for e in events if e["type"] == "final"]
         partials = [e for e in events if e["type"] == "partial"]
         done = events[-1]
-
-        # Three finals covering 0-3, 3-6, 6-7; done concatenates them.
-        assert [(f["start"], f["end"]) for f in finals] == [(0.0, 3.0), (3.0, 6.0), (6.0, 7.0)]
-        assert done == {"type": "done", "text": "48000 48000 16000"}
-        # Interim partials were streamed (server-side; may be batched).
+        assert finals and all(f["type"] == "final" for f in finals)
         assert all(p["type"] == "partial" for p in partials)
+        assert done["text"].split() == [f"w{i}" for i in range(10)]
 
 
 def test_websocket_rejects_bad_control():
@@ -133,8 +168,7 @@ def test_websocket_rejects_bad_control():
 
 
 def test_json_events_are_serializable():
-    # Guard: every event the session emits must be json.dumps-able (the WS
-    # handler sends them with json.dumps).
-    sess = StreamSession(transcriber=_fake_transcriber, config=StreamConfig())
-    for ev in sess.add_audio(_silence(4.0)) + sess.finalize():
+    sess = StreamSession(transcriber=_fake_transcriber, config=_no_vad())
+    evs = sess.add_audio(_tone(4.0)) + sess.finalize()
+    for ev in evs:
         json.dumps(ev)
