@@ -6,6 +6,28 @@ Orpheus offloads GPU work to Modal. Two apps live here:
 - **`orpheus_llm.py`** — an open instruct model (**Qwen2.5-3B-Instruct**) behind a
   vLLM **OpenAI-compatible** API, so `text.summarize` / `text.translate` /
   `text.detect-language` run for real on GPU with **no external API key**.
+- **`orpheus_diarize.py`** — real speaker diarization (SpeechBrain **ECAPA-TDNN**
+  embeddings + agglomerative clustering, non-gated) on GPU, replacing the
+  round-robin stub. See below.
+
+## Diarization (orpheus_diarize.py)
+
+```bash
+modal deploy infra/modal/orpheus_diarize.py   # prints https://<workspace>--orpheus-diarize-diarize.modal.run
+```
+
+Wire the worker:
+
+| Env var | Value |
+|---|---|
+| `ORPHEUS_DIARIZE_BACKEND` | `modal` |
+| `ORPHEUS_MODAL_DIARIZE_URL` | the deployed endpoint URL |
+| `ORPHEUS_MODAL_DIARIZE_TOKEN` | the `ORPHEUS_MODAL_SHARED_SECRET` value |
+
+Genuine speaker attribution (the same speaker recurs across turns), with
+auto speaker-count detection (silhouette) up to `max_speakers`. Verified e2e on a
+3-turn two-speaker clip: correctly labelled speaker A / B / A. Falls back to the
+stub when unset (or pyannote if `ORPHEUS_DIARIZE_MODEL` + `HF_TOKEN` are set).
 
 ## LLM (orpheus_llm.py)
 
