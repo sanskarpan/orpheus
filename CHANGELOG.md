@@ -3,6 +3,58 @@
 All notable changes to Orpheus are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] — 2026-08-12
+
+Audio-intelligence goes real on GPU. This release turns the stubbed
+intelligence paths into working GPU-backed features (no external API key
+required) and rebuilds the streaming decoder. Cut after a 16/16 end-to-end
+release-gate verification against a fresh build; CI green.
+
+### Added
+
+- **Provider-agnostic LLM layer.** Summarize / translate / detect-language now
+  support `anthropic`, `openai`, `gemini`, and any **OpenAI-compatible** endpoint
+  (`ORPHEUS_LLM_BASE_URL` — local vLLM/Ollama, a Modal-hosted model, OpenRouter,
+  Together…), selected by `ORPHEUS_LLM_PROVIDER` (auto → first configured, else
+  the stub). No longer Anthropic-only.
+- **Modal-hosted open LLM.** `infra/modal/orpheus_llm.py` serves
+  **Qwen2.5-3B-Instruct** via vLLM's OpenAI API, so summarize/translate/
+  detect-language run for real on GPU **with no external API key**.
+- **Real speaker diarization on GPU.** `infra/modal/orpheus_diarize.py` —
+  SpeechBrain **ECAPA-TDNN** embeddings + agglomerative clustering with
+  silhouette-based auto speaker count (non-gated, no HF token). Replaces the
+  round-robin stub via `ORPHEUS_DIARIZE_BACKEND=modal`; genuine speaker
+  attribution (the same speaker recurs across turns).
+- **Cold-start prewarming.** The API fires a fire-and-forget warmup at the Modal
+  transcription endpoint on upload-complete (a signal that predicts an imminent
+  job), so a GPU container is spinning before the job arrives — cheaper than an
+  always-warm GPU. Gated by `ORPHEUS_MODAL_WARMUP_URL`/`_TOKEN`.
+- **Streaming rewrite — LocalAgreement-2 + VAD.** Replaces window
+  re-transcription with LocalAgreement-2: confirm the longest word prefix two
+  consecutive hypotheses agree on (stable, word-timestamped finals), trim the
+  buffer at each confirmation so re-transcription stays bounded, and an energy
+  VAD flushes/endpoints at pauses.
+
+### Verified behaviors (release gate, 16/16)
+
+- ASR multilingual on GPU (en/de/es) with exact GPU-seconds billing; content
+  cache correct (distinct→distinct, identical→hit).
+- Summarize/translate produce real LLM output (Modal Qwen); diarization labels a
+  two-speaker clip A→B→A with auto count 2.
+- Budget hard-cap returns 402 when exceeded, allows when under; manifests report
+  the real configured engine; list envelopes uniform; error paths 400/404.
+- Streaming yields stable word-level finals; billing metered server-side (a
+  spoofed client duration is ignored).
+- Modal-down resilience: every GPU path fast-fails (→ dead-letter), never hangs.
+
+### Known limitations
+
+- The **code defaults** are still the stub (LLM) and round-robin (diarize) and
+  local CPU `tiny.en` (ASR) — the GPU-backed real paths are opt-in via the Modal
+  env vars above (or an external LLM key). Manifests report which is active.
+- Realtime diarization, GPU inference batching, and the webhook HTTPS-delivery
+  live test remain tracked follow-ups.
+
 ## [0.1.0] — 2026-08-11
 
 First tagged stable release. This is a verified baseline cut after a full
@@ -88,4 +140,5 @@ API/worker/GPU, not by code inspection alone.
   scale); realtime diarization, VAD endpointing, and inference batching are
   tracked as follow-ups.
 
+[0.2.0]: https://github.com/sanskarpan/orpheus/releases/tag/v0.2.0
 [0.1.0]: https://github.com/sanskarpan/orpheus/releases/tag/v0.1.0

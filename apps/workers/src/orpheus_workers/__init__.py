@@ -6,4 +6,4 @@ Three runnable entry points:
   - orpheus_workers.worker          (NATS JetStream consumer; processes job events)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
