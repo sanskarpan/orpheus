@@ -1,3 +1,36 @@
+# Modal GPU services
+
+Orpheus offloads GPU work to Modal. Two apps live here:
+
+- **`orpheus_transcribe.py`** — GPU transcription (faster-whisper large-v3-turbo). See below.
+- **`orpheus_llm.py`** — an open instruct model (**Qwen2.5-3B-Instruct**) behind a
+  vLLM **OpenAI-compatible** API, so `text.summarize` / `text.translate` /
+  `text.detect-language` run for real on GPU with **no external API key**.
+
+## LLM (orpheus_llm.py)
+
+```bash
+modal deploy infra/modal/orpheus_llm.py   # prints https://<workspace>--orpheus-llm-serve.modal.run
+```
+
+Wire the worker to it via the provider-agnostic LLM layer:
+
+| Env var | Value |
+|---|---|
+| `ORPHEUS_LLM_PROVIDER` | `openai-compat` |
+| `ORPHEUS_LLM_BASE_URL` | `https://<workspace>--orpheus-llm-serve.modal.run/v1` |
+| `ORPHEUS_LLM_API_KEY` | the `ORPHEUS_MODAL_SHARED_SECRET` value |
+| `ORPHEUS_LLM_MODEL` | `orpheus-llm` |
+
+The same layer also supports `anthropic` (`ANTHROPIC_API_KEY`), `openai`
+(`OPENAI_API_KEY`), `gemini` (`GEMINI_API_KEY`), and any other OpenAI-compatible
+host (Ollama, OpenRouter, Together…) — set `ORPHEUS_LLM_PROVIDER`/`_BASE_URL`
+accordingly. Default (nothing set) is the deterministic stub. Verified e2e:
+summarize produced real bullets and translate produced real French from a
+transcript, both served by Qwen on an A10.
+
+---
+
 # Modal GPU transcription
 
 GPU transcription service for Orpheus: [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
