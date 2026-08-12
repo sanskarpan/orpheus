@@ -346,6 +346,10 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		Metadata:     map[string]any{"artifact_id": artifactID, "size": actualSize},
 	})
 
+	// A completed upload usually precedes a transcribe job — prewarm the Modal
+	// GPU container now so that job isn't cold (no-op unless configured).
+	go prewarmModalTranscribe()
+
 	writeJSON(w, http.StatusOK, Artifact{
 		ID:          artifactID,
 		SHA256:      contentSHA,
