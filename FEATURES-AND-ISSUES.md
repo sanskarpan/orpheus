@@ -4,6 +4,32 @@
 > **Method:** source-cited codebase audit + 10 web-research agents across API vendors (Deepgram, AssemblyAI, OpenAI, Gladia, Speechmatics, Rev, ElevenLabs, Google/AWS/Azure), the dictation category (Wispr Flow, Superwhisper, VoiceInk, Talon…), meeting-intelligence SaaS (Otter, Fireflies, Descript, tl;dv, Fathom, Grain…), the open-source ecosystem (Whisper family, NeMo Parakeet/Canary, FunASR/SenseVoice, Kyutai/Moshi, Voxtral, MMS, self-host servers…), and realtime-voice stacks (Soniox, Cartesia, Deepgram Flux, Krisp, LiveKit, Pipecat, Vapi, Retell).
 > **Two lists below:** (A) **every issue** that needs fixing — no priority, exhaustive. (B) **every feature** anyone in the market ships — priority-ordered but complete ("if anyone has it, we want it on the list"). Orpheus status tags: `[HAVE]` `[PARTIAL]` `[STUB]` (real interface, placeholder impl) `[MISSING]`.
 
+> **⚠️ Status note (updated 2026-08-12):** Much of Part A is now **fixed** and much of Part B **P0/P1 shipped** across releases **v0.1.0** and **v0.2.0**. The per-item `[HAVE]/[PARTIAL]/[STUB]/[MISSING]` tags in the tables below reflect the *original* audit; the Progress section immediately below is the current state, and **closed GitHub issues are the source of truth**.
+
+---
+
+## ✅ Progress — shipped since the audit (v0.1.0 → v0.2.0)
+
+**Issues fixed (Part A):**
+- **ASR core:** model/device/`compute_type` configurable (int8 default), **auto language detection** (was English-only), **custom vocabulary**, **warmup**, per-request model — #386–388, #391, #393, #394, #396 · PR #458.
+- **Cache wrong-transcript collision** (empty `sha256` inputHash returned another input's transcript) — #459 · PR #460.
+- **Streaming:** server-side billing (unspoofable) #400, clean `1000` close #404, **O(n²) window → LocalAgreement-2 + VAD endpointing** #397–399, #402 · PR #464, #482.
+- **Cost/budget:** GPU-seconds metering #413, **hard-cap enforcement (402)** #415/#430, fractional-limit PATCH #466 · PR #465, #467.
+- **Honest manifests:** diarize/summarize/translate no longer advertise real models while stubbed #405–407 · PR #468.
+- **List envelopes** uniform + `[]` (not `null`) when empty — #442, #473 · PR #469, #474.
+- **slice** `.bin` ffmpeg-muxer failure on uploaded artifacts — #471 · PR #472.
+- **GPU execution** real via Modal — #418 · PR #461.
+
+**Features shipped (Part B):**
+- **P0:** GPU inference #296 · modern model tier (large-v3-turbo) #295 · **multilingual + auto-langid** #294/#297 · **custom vocab** #305 · **real cost metering + hard caps** #302 · **model tiers** #311.
+- **P1:** **real diarization** (ECAPA on GPU) #300 · **speaker embeddings/ID** #320 · **summarization** #314 · **translation** #315 · **LLM-over-transcript** #319 · **provider-agnostic LLM** (anthropic/openai/gemini/openai-compat) #476 · **transparent GPU-metered pricing** #333.
+- **P2/infra:** **cold-start prewarming** #480 · pre-existing HAVEs confirmed & closed — RLS SaaS #331, composable pipelines #332, content cache #336, GDPR erasure #337, async+webhooks #301, captions #304.
+- **Modal GPU services** (`infra/modal/`): transcribe (large-v3-turbo), open LLM (Qwen2.5-3B via vLLM, no external key), diarization (ECAPA) — all authenticated, scale-to-zero.
+
+**Still PARTIAL / open (representative):** VAD yes but no **semantic turn detection** #308 · sub-300 ms streaming #306 · interim **confidence** #310 · **forced alignment** (word timestamps only) #298 · realtime diarization #307 · client **SDKs**, **MCP server**, **OpenAI-compatible endpoint**, meeting-intelligence, audio-enhancement (Krisp-class), on-device — see open `type:feature` issues.
+
+Releases: **v0.1.0** (stabilization) · **v0.2.0** (real GPU audio-intelligence + streaming rewrite).
+
 ---
 
 # PART A — Issues (exhaustive, unprioritized)
