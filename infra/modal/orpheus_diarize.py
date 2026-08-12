@@ -155,7 +155,7 @@ class Diarizer:
 
         # Merge consecutive same-speaker windows into turns.
         turns = []
-        for (start, end), lab in zip(times, labels):
+        for (start, end), lab in zip(times, labels, strict=False):
             spk = f"S{int(lab) + 1}"
             if turns and turns[-1]["speaker"] == spk and start <= turns[-1]["end"] + HOP_S:
                 turns[-1]["end"] = end
