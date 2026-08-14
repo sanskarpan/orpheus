@@ -12,8 +12,12 @@ import pytest
 
 from orpheus_workers.llm import StubLLM
 from orpheus_workers.processors.text_ops import (
+    _analyze_json,
     detect_language_proc,
+    entities_proc,
+    sentiment_proc,
     summarize_proc,
+    topics_proc,
     translate_proc,
 )
 
@@ -112,3 +116,40 @@ async def test_summarize_rejects_empty():
     )
     with pytest.raises(ValueError):
         await summarize_proc(_ctx(db), "j1")
+
+
+class _FakeLLM:
+    """LLM stub whose complete() returns a fixed string (for JSON-parse tests)."""
+
+    model_version_id = "fake-1"
+
+    def __init__(self, out: str) -> None:
+        self._out = out
+
+    def complete(self, system: str, user: str, max_tokens: int = 512) -> str:
+        return self._out
+
+
+def test_analyze_json_parses_fenced_json():
+    d = _analyze_json(_FakeLLM('```json\n{"overall":"positive","score":0.8}\n```'), "s", "u")
+    assert d == {"overall": "positive", "score": 0.8}
+
+
+def test_analyze_json_extracts_embedded_object():
+    d = _analyze_json(_FakeLLM('Sure! {"topics":["a","b"]} hope that helps'), "s", "u")
+    assert d == {"topics": ["a", "b"]}
+
+
+def test_analyze_json_falls_back_to_raw_on_non_json():
+    d = _analyze_json(_FakeLLM("no json here"), "s", "u")
+    assert d == {"raw": "no json here"}
+
+
+async def test_sentiment_topics_entities_execute_with_expected_shape():
+    db = FakeDB({"org_id": "o", "artifact_id": None, "params": {"source_job_id": "j0"}}, TRANSCRIPT)
+    s = await sentiment_proc(_ctx(db), "j1")
+    assert "sentiment" in s and "model_version_id" in s
+    t = await topics_proc(_ctx(db), "j1")
+    assert "topics" in t and "key_phrases" in t
+    e = await entities_proc(_ctx(db), "j1")
+    assert "entities" in e
