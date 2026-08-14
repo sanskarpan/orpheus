@@ -26,9 +26,12 @@
 - **P2/infra:** **cold-start prewarming** #480 · pre-existing HAVEs confirmed & closed — RLS SaaS #331, composable pipelines #332, content cache #336, GDPR erasure #337, async+webhooks #301, captions #304.
 - **Modal GPU services** (`infra/modal/`): transcribe (large-v3-turbo), open LLM (Qwen2.5-3B via vLLM, no external key), diarization (ECAPA) — all authenticated, scale-to-zero.
 
+**Post-v0.2.0 (main):**
+- **Audio-intelligence processors** — **sentiment** #316 (`text.sentiment`), **topics + key phrases** #317 (`text.topics`), **entity detection** #318 (`text.entities`) — LLM-backed, real on the Modal LLM · PR #486.
+
 **Still PARTIAL / open (representative):** VAD yes but no **semantic turn detection** #308 · sub-300 ms streaming #306 · interim **confidence** #310 · **forced alignment** (word timestamps only) #298 · realtime diarization #307 · client **SDKs**, **MCP server**, **OpenAI-compatible endpoint**, meeting-intelligence, audio-enhancement (Krisp-class), on-device — see open `type:feature` issues.
 
-Releases: **v0.1.0** (stabilization) · **v0.2.0** (real GPU audio-intelligence + streaming rewrite).
+Releases: **v0.1.0** (stabilization) · **v0.2.0** (real GPU audio-intelligence + streaming rewrite); further intelligence processors on `main` since.
 
 ---
 
