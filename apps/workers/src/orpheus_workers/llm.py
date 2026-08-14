@@ -51,6 +51,8 @@ class LLMProvider(Protocol):
         self, text: str, mode: str = "abstract", max_tokens: int = 512, language: str = "en"
     ) -> str: ...
 
+    def complete(self, system: str, user: str, max_tokens: int = 512) -> str: ...
+
 
 class StubLLM:
     """Deterministic, network-free provider for tests and key-less runs."""
@@ -74,6 +76,10 @@ class StubLLM:
         words = text.split()
         head = " ".join(words[:40])
         return f"[{mode}] {head}"
+
+    def complete(self, system: str, user: str, max_tokens: int = 512) -> str:
+        # Deterministic, inspectable stub for analysis processors.
+        return f"[analysis] {user[:80]}"
 
 
 class _TaskLLM:
@@ -123,6 +129,10 @@ class _TaskLLM:
             f"{instr} Respond in {language}.\n<transcript>\n{text}\n</transcript>",
             max_tokens=max_tokens,
         )
+
+    def complete(self, system: str, user: str, max_tokens: int = 512) -> str:
+        """Generic task completion for analysis processors (sentiment, topics, …)."""
+        return self._chat(system, user, max_tokens=max_tokens)
 
 
 class AnthropicLLM(_TaskLLM):
