@@ -19,7 +19,15 @@ const SCOPE_PRESETS = [
   "*",
 ];
 
-export function KeysManager({ initial, ownerPrefix }: { initial: APIKey[]; ownerPrefix: string }) {
+export function KeysManager({
+  initial,
+  ownerKeyId,
+  ownerPrefix,
+}: {
+  initial: APIKey[];
+  ownerKeyId: string;
+  ownerPrefix: string;
+}) {
   const [keys, setKeys] = useState<APIKey[]>(initial);
   const [name, setName] = useState("");
   const [scopes, setScopes] = useState<string[]>(["jobs:write", "jobs:read", "uploads:write", "artifacts:read"]);
@@ -111,7 +119,10 @@ export function KeysManager({ initial, ownerPrefix }: { initial: APIKey[]; owner
             <table className="w-full text-sm">
               <tbody>
                 {keys.map((k) => {
-                  const isOwner = !!ownerPrefix && k.prefix === ownerPrefix;
+                  // Match the owner key by its exact id when known; only fall
+                  // back to the (collision-prone) prefix for legacy accounts
+                  // where no id could be resolved.
+                  const isOwner = ownerKeyId ? k.id === ownerKeyId : !!ownerPrefix && k.prefix === ownerPrefix;
                   return (
                     <tr key={k.id} className="border-b border-hairline/60 last:border-0">
                       <td className="px-5 py-3">
