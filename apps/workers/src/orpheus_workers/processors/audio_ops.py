@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import wave
 from pathlib import Path
 from typing import Any
 
 from ..diarize import get_diarizer
 from ..diarize import manifest_identity as _diarize_manifest
 from ..ffmpeg import convert_to_wav_16k_mono
+from ..voiceprints import get_embedder, match_profile
 from . import register_processor
 
 _DIARIZE_MODEL_ID, _DIARIZE_MODEL_VERSION = _diarize_manifest()
@@ -35,9 +38,13 @@ def _params(job: dict) -> dict:
 
 def _load_transcript(ctx: dict[str, Any], job: dict, params: dict) -> dict:
     db = ctx["db"]
+    # Org-scope the cross-reference: the worker bypasses RLS, so an attacker-set
+    # source_job_id must not read another org's transcript.
     src_job = params.get("source_job_id")
     if src_job:
-        row = db.fetchrow("SELECT result FROM jobs WHERE id = %s", src_job)
+        row = db.fetchrow(
+            "SELECT result FROM jobs WHERE id = %s AND org_id = %s", src_job, job.get("org_id")
+        )
         if row and row["result"]:
             r = row["result"]
             return r if isinstance(r, dict) else json.loads(r)
@@ -142,7 +149,7 @@ async def diarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     artifact_id = job["artifact_id"] or params.get("artifact_id")
     if not artifact_id:
         raise ValueError("audio.diarize requires the source audio artifact")
-    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s", artifact_id)
+    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s", artifact_id, job["org_id"])
     if art is None:
         raise ValueError(f"artifact {artifact_id} not found")
 
@@ -150,11 +157,16 @@ async def diarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     suffix = Path(art["s3_key"]).suffix or ".bin"
     src = work_dir / f"diar-{job_id}.src{suffix}"
     wav = work_dir / f"diar-{job_id}.wav"
+    name_by_label: dict[str, str] = {}
     try:
         s3.download_file(art["s3_bucket"], art["s3_key"], str(src))
         convert_to_wav_16k_mono(src, wav)
         diarizer = get_diarizer(num_speakers=int(params.get("max_speakers", 2)))
         turns = diarizer.diarize(wav)
+        # Optional recognition: match each anonymous cluster to an enrolled
+        # voiceprint (needs the wav → must run before cleanup).
+        if params.get("identify"):
+            name_by_label = _identify_speakers(db, wav, turns, job["org_id"], work_dir, job_id)
     finally:
         for p in (src, wav):
             p.unlink(missing_ok=True)
@@ -164,8 +176,10 @@ async def diarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
         spk = _overlap_speaker(turns, seg)
         if spk:
             seg["speaker"] = spk
+            if spk in name_by_label:
+                seg["speaker_name"] = name_by_label[spk]
     speakers = sorted({t["speaker"] for t in turns})
-    return {
+    result = {
         "segments": segments,
         "text": transcript.get("text", ""),
         "language": transcript.get("language"),
@@ -173,6 +187,63 @@ async def diarize_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
         "num_speakers": len(speakers),
         "model_version_id": diarizer.model_version_id,
     }
+    if params.get("identify"):
+        result["identified"] = name_by_label  # {label: enrolled name}
+    return result
+
+
+def _concat_clip(
+    wav: Path, ranges: list[tuple[float, float]], work_dir: Path, tag: str
+) -> Path | None:
+    """Concatenate a speaker's turn audio into one clip for embedding."""
+    import numpy as np
+
+    with wave.open(str(wav), "rb") as w:
+        sr = w.getframerate() or 16000
+        x = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16)
+    parts = [x[int(s * sr) : int(e * sr)] for s, e in ranges if e > s]
+    parts = [p for p in parts if p.size]
+    if not parts:
+        return None
+    clip = np.concatenate(parts)
+    out = Path(work_dir) / f"spk-{tag}.wav"
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sr)
+        w.writeframes(clip.tobytes())
+    return out
+
+
+def _identify_speakers(
+    db: Any, wav: Path, turns: list[dict], org_id: str, work_dir: Path, job_id: str
+) -> dict[str, str]:
+    """Match each diarized speaker cluster to an enrolled voiceprint → {label: name}.
+
+    Fetches the org's ``speaker_profiles`` (RLS-scoped), embeds each cluster's
+    concatenated audio, and keeps matches at/above ``ORPHEUS_SPEAKER_MATCH_THRESHOLD``.
+    """
+    profiles = db.fetchall(
+        "SELECT id::text AS id, name, embedding FROM speaker_profiles WHERE org_id = %s",
+        org_id,
+    )
+    if not profiles:
+        return {}
+    embedder = get_embedder()
+    threshold = float(os.environ.get("ORPHEUS_SPEAKER_MATCH_THRESHOLD", "0.5"))
+    out: dict[str, str] = {}
+    for label in sorted({t["speaker"] for t in turns}):
+        ranges = [(float(t["start"]), float(t["end"])) for t in turns if t["speaker"] == label]
+        clip = _concat_clip(wav, ranges, work_dir, f"{job_id}-{label}")
+        if clip is None:
+            continue
+        try:
+            match = match_profile(embedder.embed(clip), profiles, threshold)
+        finally:
+            clip.unlink(missing_ok=True)
+        if match:
+            out[label] = match["name"]
+    return out
 
 
 @register_processor(
