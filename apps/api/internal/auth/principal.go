@@ -53,6 +53,8 @@ var validScopes = map[string]struct{}{
 	"data:erase":        {}, // tenant-initiated GDPR erasure (PRD 10)
 	"streaming:read":    {}, // inspect/list streaming sessions (Phase 8)
 	"streaming:write":   {}, // create/finalize streaming sessions (Phase 8)
+	"speakers:read":     {}, // list enrolled speaker voiceprints (PRD 03)
+	"speakers:write":    {}, // enroll/delete speaker voiceprints — biometric (PRD 03)
 	"marketplace:read":  {}, // browse the processor marketplace (Phase 7)
 	"marketplace:write": {}, // submit a community processor (Phase 7)
 	"platform:admin":    {}, // cross-tenant admin (provisioning, moderation)
