@@ -57,6 +57,13 @@ class WorkerDB:
         with self.conn() as c, c.cursor() as cur:
             cur.execute(sql, args)
 
+    def executemany(self, sql: str, rows: list[tuple[Any, ...]]) -> None:
+        """Run one statement over many parameter tuples in a single transaction."""
+        if not rows:
+            return
+        with self.conn() as c, c.cursor() as cur:
+            cur.executemany(sql, rows)
+
     def mark_job_completed(
         self, job_id: str, result: dict[str, Any], cost_usd: float = 0.0
     ) -> None:
