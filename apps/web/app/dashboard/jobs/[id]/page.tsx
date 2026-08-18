@@ -4,10 +4,42 @@ import { orpheus, OrpheusError } from "@/lib/orpheus";
 import { PageHeader } from "@/components/layout";
 import { ResultView } from "@/components/ResultView";
 import { JobActions } from "@/components/JobActions";
+import { RunAnalysis, type AnalysisProcessor } from "@/components/RunAnalysis";
 import { StatusBadge } from "@/components/primitives";
+import { isChainable } from "@/lib/processorParams";
 import { usd, absTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
+
+/** Chainable text/analysis processors, resolved with a runnable version. */
+async function loadAnalysisProcessors(): Promise<AnalysisProcessor[]> {
+  try {
+    const list = (await orpheus.listProcessors(100)).data.filter((p) => isChainable(p.name));
+    const resolved: (AnalysisProcessor | null)[] = await Promise.all(
+      list.map(async (p) => {
+        try {
+          const detail = await orpheus.getProcessor(p.name);
+          const version = detail.versions?.[0]?.version;
+          if (!version) return null;
+          const out: AnalysisProcessor = {
+            name: p.name,
+            display_name: p.display_name || p.name,
+            version,
+            input_schema: detail.input_schema,
+          };
+          return out;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return resolved
+      .filter((p): p is AnalysisProcessor => p !== null)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    return [];
+  }
+}
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -26,6 +58,9 @@ export default async function JobDetailPage({ params }: { params: { id: string }
     if (e instanceof OrpheusError && e.status === 404) notFound();
     throw e;
   }
+
+  const canChain = job.status === "completed" && !!job.artifact_id;
+  const analysisProcessors = canChain ? await loadAnalysisProcessors() : [];
 
   const timeline: { label: string; at?: string }[] = [
     { label: "Created", at: job.created_at },
@@ -119,6 +154,14 @@ export default async function JobDetailPage({ params }: { params: { id: string }
               ))}
             </div>
           </div>
+
+          {canChain && job.artifact_id && analysisProcessors.length > 0 && (
+            <RunAnalysis
+              sourceJobId={job.id}
+              artifactId={job.artifact_id}
+              processors={analysisProcessors}
+            />
+          )}
 
           {job.params != null && (
             <div className="panel p-5">
