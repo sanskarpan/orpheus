@@ -13,6 +13,14 @@ import { getApiKey } from "@/lib/session";
 
 export const API_URL = process.env.ORPHEUS_API_URL ?? "http://127.0.0.1:8090";
 
+/**
+ * Telephony (Twilio Media Streams) feature flag. Off by default and mirrors the
+ * API's ORPHEUS_TELEPHONY_ENABLED: when false the backend telephony routes are
+ * not mounted, so the dashboard must not surface any telephony UI. Keep this in
+ * sync with the API flag (both must be true to use the feature).
+ */
+export const TELEPHONY_ENABLED = process.env.TELEPHONY_ENABLED === "true";
+
 /* ---- error type (RFC 7807 problem+json) ---- */
 export interface Problem {
   type: string;
@@ -188,7 +196,22 @@ export interface Processor {
   name: string;
   display_name: string;
   description: string;
+  tier?: string;
+  cost_per_job_usd?: number;
+  /** JSON-Schema object describing job params; may be an empty object `{}`. */
+  input_schema?: unknown;
+  output_schema?: unknown;
   versions: ProcessorVersion[];
+}
+
+export interface SpeakerProfile {
+  id: string;
+  name: string;
+  dim: number;
+  sample_count: number;
+  model_version_id: string;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface APIKey {
@@ -345,6 +368,11 @@ export const orpheus = {
   listProcessors: (limit = 100) =>
     apiRequest<ListEnvelope<ProcessorSummary>>("/v1/processors", { query: { limit } }),
   getProcessor: (name: string) => apiRequest<Processor>(`/v1/processors/${name}`),
+
+  // Speakers (enrolled voiceprints — biometric; GDPR erasure via delete)
+  listSpeakers: () =>
+    apiRequest<{ speaker_profiles: SpeakerProfile[] }>("/v1/speakers"),
+  deleteSpeaker: (id: string) => apiRequest<void>(`/v1/speakers/${id}`, { method: "DELETE" }),
 
   // Usage
   usage: () => apiRequest<Usage>("/v1/usage"),

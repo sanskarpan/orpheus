@@ -10,6 +10,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strconv"
@@ -30,10 +31,14 @@ type ProcessorHandler struct {
 // Processor is the response shape for GET /v1/processors/{name}.
 // It is the catalog record plus the full set of published versions.
 type Processor struct {
-	Name        string             `json:"name"`
-	DisplayName string             `json:"display_name"`
-	Description string             `json:"description"`
-	Versions    []ProcessorVersion `json:"versions"`
+	Name         string             `json:"name"`
+	DisplayName  string             `json:"display_name"`
+	Description  string             `json:"description"`
+	Tier         string             `json:"tier"`
+	CostPerJob   float64            `json:"cost_per_job_usd"`
+	InputSchema  json.RawMessage    `json:"input_schema,omitempty"`
+	OutputSchema json.RawMessage    `json:"output_schema,omitempty"`
+	Versions     []ProcessorVersion `json:"versions"`
 }
 
 // ProcessorVersion is a single published version of a processor. The
@@ -123,8 +128,13 @@ func (h *ProcessorHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	var p Processor
 	err := h.DB.QueryRow(r.Context(), `
-		SELECT name, display_name, description FROM processors WHERE name = $1
-	`, name).Scan(&p.Name, &p.DisplayName, &p.Description)
+		SELECT name, display_name, description, tier,
+		       COALESCE(cost_per_job_usd, 0)::float8,
+		       COALESCE(input_schema, '{}'::jsonb),
+		       COALESCE(output_schema, '{}'::jsonb)
+		FROM processors WHERE name = $1
+	`, name).Scan(&p.Name, &p.DisplayName, &p.Description, &p.Tier, &p.CostPerJob,
+		&p.InputSchema, &p.OutputSchema)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeProblem(w, http.StatusNotFound, "not_found", "Processor not found")

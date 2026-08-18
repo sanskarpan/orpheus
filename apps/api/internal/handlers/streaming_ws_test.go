@@ -39,3 +39,29 @@ func TestStreamToken_Rejects(t *testing.T) {
 		}
 	}
 }
+
+func TestTelephonyToken_RoundTripAndTamper(t *testing.T) {
+	org := "22222222-2222-2222-2222-222222222222"
+	tok := MintTelephonyToken(org)
+
+	gotOrg, ok := verifyTelephonyToken(tok)
+	if !ok || gotOrg != org {
+		t.Fatalf("valid telephony token failed: org=%q ok=%v", gotOrg, ok)
+	}
+	// Tampered signature is rejected.
+	if _, ok := verifyTelephonyToken(tok + "x"); ok {
+		t.Fatal("tampered telephony token accepted")
+	}
+	// A stream token must NOT verify as a telephony token (different payload prefix).
+	streamTok := MintStreamToken("sid", org)
+	if _, ok := verifyTelephonyToken(streamTok); ok {
+		t.Fatal("stream token wrongly accepted as telephony token")
+	}
+}
+
+func TestSwapWSPath(t *testing.T) {
+	got := swapWSPath("ws://127.0.0.1:8082/v1/stream/transcribe", "/v1/stream/converse")
+	if got != "ws://127.0.0.1:8082/v1/stream/converse" {
+		t.Fatalf("swapWSPath = %q", got)
+	}
+}

@@ -24,16 +24,23 @@ from .db import WorkerDB
 from .observability.tracing import init as init_tracing
 from .processors import get_processor
 from .processors import (  # noqa: F401  (registers handlers)
+    audio_intel,
     audio_ops,
     convert_to_wav,
+    dub,
+    edit,
+    enhance,
     export_bundle,
+    highlights,
     extract_metadata,
     ingest_url,
     probe,
     redact,
     slice,
+    speakers,
     text_ops,
     transcribe,
+    transcript_index,
 )
 from .s3 import WorkerS3
 

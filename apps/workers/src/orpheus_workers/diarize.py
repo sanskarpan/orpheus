@@ -99,7 +99,7 @@ class ModalDiarizer:
     def diarize(self, wav_path):  # noqa: ANN001 - matches the Diarizer protocol
         import base64
 
-        import httpx
+        from .modal_client import modal_post_json
 
         with open(wav_path, "rb") as f:
             audio = f.read()
@@ -108,9 +108,7 @@ class ModalDiarizer:
             "audio_b64": base64.b64encode(audio).decode(),
             "max_speakers": self._max_speakers,
         }
-        resp = httpx.post(self._url, json=payload, timeout=600.0)
-        resp.raise_for_status()
-        data = resp.json()
+        data = modal_post_json(self._url, payload).json()
         self.model_version_id = data.get("model_version_id", self.model_version_id)
         return data.get("turns", [])
 

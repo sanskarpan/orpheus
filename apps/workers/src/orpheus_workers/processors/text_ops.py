@@ -35,16 +35,25 @@ def _load_transcript(ctx: dict[str, Any], job: dict, params: dict) -> dict:
     """Resolve the input transcript from source_job_id, an artifact param, or
     the job's own artifact. Returns a ``{text, segments, language, ...}`` dict."""
     db = ctx["db"]
+    # The worker runs as the service role (RLS bypassed), so cross-references
+    # (source_job_id / artifact_id — attacker-controllable params) MUST be scoped
+    # to the running job's org, or a tenant could read another org's transcript.
+    org_id = job.get("org_id")
     src_job = params.get("source_job_id")
     if src_job:
-        row = db.fetchrow("SELECT result FROM jobs WHERE id = %s", src_job)
+        row = db.fetchrow(
+            "SELECT result FROM jobs WHERE id = %s AND org_id = %s", src_job, org_id
+        )
         if row and row["result"]:
             r = row["result"]
             return r if isinstance(r, dict) else json.loads(r)
 
     art_id = params.get("artifact_id") or job.get("artifact_id")
     if art_id:
-        art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s", art_id)
+        art = db.fetchrow(
+            "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s",
+            art_id, org_id,
+        )
         if art is not None:
             work = Path(ctx["work_dir"])
             work.mkdir(parents=True, exist_ok=True)
@@ -300,3 +309,65 @@ async def entities_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     )
     d = data if isinstance(data, dict) else {}
     return {"entities": d.get("entities", []), "model_version_id": llm.model_version_id}
+
+
+@register_processor(
+    "text.scorecard",
+    display_name="Conversation Scorecard",
+    description="Score a sales/support call across coaching dimensions (PRD 06).",
+    tier="cpu_small",
+    timeout_seconds=300,
+    cost_per_job_usd=0.003,
+    cacheable=False,
+    model_id=_LLM_MODEL_ID,
+    model_version_id=_LLM_MODEL_VERSION,
+)
+async def scorecard_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
+    text = _load_text_for_analysis(ctx, job_id)
+    llm = get_llm()
+    data = _analyze_json(
+        llm,
+        _ANALYSIS_SYSTEM,
+        'Return {"scores":{"rapport":0-5,"discovery":0-5,"objection_handling":0-5,'
+        '"clarity":0-5,"next_steps":0-5},"overall":0-5,"strengths":[...],'
+        '"improvements":[...],"summary":"<one line>"} scoring this call for a rep.\n'
+        f"<transcript>\n{text}\n</transcript>",
+        max_tokens=500,
+    )
+    d = data if isinstance(data, dict) else {}
+    return {
+        "scores": d.get("scores", {}),
+        "overall": d.get("overall"),
+        "strengths": d.get("strengths", []),
+        "improvements": d.get("improvements", []),
+        "summary": d.get("summary", ""),
+        "model_version_id": llm.model_version_id,
+    }
+
+
+@register_processor(
+    "text.crm",
+    display_name="CRM Auto-fill",
+    description="Extract structured CRM fields (contact, deal, next steps) from a call (PRD 06).",
+    tier="cpu_small",
+    timeout_seconds=300,
+    cost_per_job_usd=0.003,
+    cacheable=False,
+    model_id=_LLM_MODEL_ID,
+    model_version_id=_LLM_MODEL_VERSION,
+)
+async def crm_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
+    text = _load_text_for_analysis(ctx, job_id)
+    llm = get_llm()
+    data = _analyze_json(
+        llm,
+        _ANALYSIS_SYSTEM,
+        'Return {"contact":{"name":null,"company":null,"role":null,"email":null},'
+        '"deal_stage":null,"pain_points":[...],"action_items":[...],'
+        '"follow_up_date":null,"sentiment":"positive|neutral|negative"} as CRM fields '
+        "(use null for anything not stated).\n"
+        f"<transcript>\n{text}\n</transcript>",
+        max_tokens=500,
+    )
+    d = data if isinstance(data, dict) else {}
+    return {"fields": d, "model_version_id": llm.model_version_id}

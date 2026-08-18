@@ -20,6 +20,9 @@ export default async function UploadPage() {
             display_name: p.display_name,
             description: p.description,
             versions: (detail.versions ?? []).map((v) => ({ version: v.version })),
+            input_schema: detail.input_schema,
+            tier: detail.tier,
+            cost_per_job_usd: detail.cost_per_job_usd,
           };
         } catch {
           return { name: p.name, display_name: p.display_name, description: p.description, versions: [] };

@@ -51,7 +51,32 @@ def test_redact_transcript_segments_words():
     assert "[PHONE]" in red["text"]
     assert red["segments"][0]["text"].endswith("[PHONE]")
     assert red["segments"][0]["words"][0]["word"] == "[PHONE]"
-    assert {"entity_type": "PHONE", "count": 3} in summary
+    # One phone number → counted ONCE (no longer double/triple-counted across the
+    # top-level text + segment + word passes).
+    assert {"entity_type": "PHONE", "count": 1} in summary
+
+
+def test_redact_transcript_masks_multitoken_pii_in_words():
+    # A phone number spoken as SEPARATE word tokens must be masked in words[] too,
+    # not just in the joined segment text. Regression for the words[] PII leak.
+    transcript = {
+        "text": "call me at 415 555 1234 today",
+        "segments": [
+            {
+                "start": 0.0, "end": 2.0, "text": "call me at 415 555 1234 today",
+                "words": [
+                    {"word": "call"}, {"word": "me"}, {"word": "at"},
+                    {"word": "415"}, {"word": "555"}, {"word": "1234"}, {"word": "today"},
+                ],
+            }
+        ],
+    }
+    red, summary, _ = redact_transcript(transcript, entities=["PHONE"], mask="type")
+    words = [w["word"] for w in red["segments"][0]["words"]]
+    # none of the digit tokens survive; the words carry the mask
+    assert "415" not in words and "555" not in words and "1234" not in words
+    assert "[PHONE]" in words
+    assert "[PHONE]" in red["text"] and "415 555 1234" not in red["text"]
 
 
 def test_maybe_redact_noop_without_flag():
@@ -60,6 +85,41 @@ def test_maybe_redact_noop_without_flag():
     assert t["text"] == "email a@b.com"  # untouched
     assert maybe_redact(t, {"redact": {"enabled": True, "entities": ["EMAIL"]}})
     assert "a@b.com" not in t["text"]
+
+
+def test_llm_detector_merges_llm_names_with_regex_pii(monkeypatch):
+    from orpheus_workers.redact import LLMDetector
+
+    class FakeLLM:
+        model_version_id = "fake"
+
+        def complete(self, system, user, max_tokens=512):
+            return '{"pii":[{"text":"Jane Doe","type":"person"},{"text":"Acme Inc","type":"org"}]}'
+
+    monkeypatch.setattr("orpheus_workers.llm.get_llm", lambda: FakeLLM())
+    det = LLMDetector()
+    text = "Jane Doe from Acme Inc, email jane@acme.com"
+    spans = det.detect(text, ["PERSON", "ORG", "EMAIL"])
+    ents = {s.entity for s in spans}
+    assert {"PERSON", "ORG", "EMAIL"} <= ents  # LLM names + regex email, merged
+    # spans are non-overlapping and cover the right substrings
+    assert any(s.text == "Jane Doe" and s.entity == "PERSON" for s in spans)
+    assert any(s.text == "jane@acme.com" and s.entity == "EMAIL" for s in spans)
+
+
+def test_llm_detector_degrades_to_regex_on_llm_failure(monkeypatch):
+    from orpheus_workers.redact import LLMDetector
+
+    class BrokenLLM:
+        model_version_id = "x"
+
+        def complete(self, system, user, max_tokens=512):
+            return "not json at all"
+
+    monkeypatch.setattr("orpheus_workers.llm.get_llm", lambda: BrokenLLM())
+    spans = LLMDetector().detect("call bob@x.com", ["PERSON", "EMAIL"])
+    # LLM produced nothing usable → still catches the regex EMAIL (never weaker).
+    assert [s.entity for s in spans] == ["EMAIL"]
 
 
 def test_scrub_log_guarantees():
