@@ -129,6 +129,22 @@ func TestLoadProdRejectsDevSecrets(t *testing.T) {
 	}
 }
 
+// TestLoadProdRejectsDefaultStreamSecret verifies the stream-token-secret guard
+// fires even when every other secret is correctly set — a prod deploy that
+// forgets ORPHEUS_STREAM_TOKEN_SECRET must fail closed (the WS/telephony relays
+// authenticate solely on tokens signed with it).
+func TestLoadProdRejectsDefaultStreamSecret(t *testing.T) {
+	t.Setenv("ORPHEUS_PORT", "8080")
+	t.Setenv("ORPHEUS_ENV", "prod")
+	t.Setenv("ORPHEUS_S3_ACCESS_KEY", "AKIAREAL")
+	t.Setenv("ORPHEUS_S3_SECRET_KEY", "a-real-rotated-secret")
+	t.Setenv("ORPHEUS_DATABASE_URL", "postgres://u:p@db:5432/orpheus?sslmode=verify-full")
+	// STREAM_TOKEN_SECRET intentionally left at its dev default.
+	if _, err := Load(); err == nil {
+		t.Fatal("Load() in prod with default stream-token secret should error, got nil")
+	}
+}
+
 // TestLoadProdWithRealSecrets verifies a properly-configured prod env loads.
 func TestLoadProdWithRealSecrets(t *testing.T) {
 	t.Setenv("ORPHEUS_PORT", "8080")
@@ -136,6 +152,7 @@ func TestLoadProdWithRealSecrets(t *testing.T) {
 	t.Setenv("ORPHEUS_S3_ACCESS_KEY", "AKIAREAL")
 	t.Setenv("ORPHEUS_S3_SECRET_KEY", "a-real-rotated-secret")
 	t.Setenv("ORPHEUS_DATABASE_URL", "postgres://u:p@db:5432/orpheus?sslmode=verify-full")
+	t.Setenv("ORPHEUS_STREAM_TOKEN_SECRET", "a-real-rotated-stream-secret")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() with real prod secrets errored: %v", err)
