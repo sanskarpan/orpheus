@@ -30,6 +30,7 @@ const PLATFORM: NavGroup = {
   title: "Platform",
   items: [
     { href: "/dashboard/processors", label: "Processors", icon: "⚙" },
+    { href: "/dashboard/voiceprints", label: "Voiceprints", icon: "◉" },
     { href: "/dashboard/api-keys", label: "API Keys", icon: "⚿" },
     { href: "/dashboard/webhooks", label: "Webhooks", icon: "⇄" },
     { href: "/dashboard/streaming", label: "Streaming", icon: "≈" },
