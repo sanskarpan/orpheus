@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -122,6 +123,17 @@ const maxBulkJobs = 100
 // surface extracts it on read so it can be returned to the client.
 const processorKey = "_processor"
 
+// enrollConsentOK reports whether speaker.enroll params carry explicit consent
+// and a non-empty speaker name — the biometric-enrollment gate (PRD 03).
+func enrollConsentOK(params json.RawMessage) bool {
+	var ep struct {
+		Consent bool   `json:"consent"`
+		Name    string `json:"name"`
+	}
+	_ = json.Unmarshal(params, &ep)
+	return ep.Consent && strings.TrimSpace(ep.Name) != ""
+}
+
 // Create handles POST /v1/jobs. It validates the request, looks up
 // the processor version in the global catalog (no org filter — the
 // processor catalog is public, RLS-wise), verifies the artifact
@@ -167,6 +179,15 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to lookup processor")
+		return
+	}
+
+	// Biometric consent gate (PRD 03): speaker.enroll stores a voiceprint, so it
+	// must not be submittable without explicit consent + a speaker name. Enforced
+	// at the API so a mis-called enroll never reaches the worker/DB.
+	if req.Processor.Name == "speaker.enroll" && !enrollConsentOK(req.Params) {
+		writeProblem(w, http.StatusBadRequest, "validation",
+			"speaker.enroll requires params.consent=true and a non-empty params.name (biometric data)")
 		return
 	}
 
@@ -814,6 +835,13 @@ func (h *JobHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 			)
 		`, j.Processor.Name, j.Processor.Version).Scan(&procExists); err != nil || !procExists {
 			resp.Rejected = append(resp.Rejected, BulkRejection{Index: i, Reason: "unknown or deprecated processor/version"})
+			continue
+		}
+		// Biometric consent gate (PRD 03) — same invariant as Create, per item.
+		if j.Processor.Name == "speaker.enroll" && !enrollConsentOK(j.Params) {
+			resp.Rejected = append(resp.Rejected, BulkRejection{
+				Index: i, Reason: "speaker.enroll requires params.consent=true and a non-empty params.name",
+			})
 			continue
 		}
 		if err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
