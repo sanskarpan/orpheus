@@ -153,3 +153,31 @@ async def test_sentiment_topics_entities_execute_with_expected_shape():
     assert "topics" in t and "key_phrases" in t
     e = await entities_proc(_ctx(db), "j1")
     assert "entities" in e
+
+
+async def test_scorecard_and_crm_parse_llm_json(monkeypatch):
+    from orpheus_workers.processors.text_ops import crm_proc, scorecard_proc
+
+    class FakeLLM:
+        model_version_id = "fake"
+
+        def complete(self, system, user, max_tokens=512):
+            if "rep" in user:  # scorecard prompt
+                return ('{"scores":{"rapport":4,"discovery":3,"objection_handling":5,'
+                        '"clarity":4,"next_steps":2},"overall":4,"strengths":["clear"],'
+                        '"improvements":["ask more"],"summary":"solid call"}')
+            return ('{"contact":{"name":"Jane","company":"Acme","role":"CTO","email":null},'
+                    '"deal_stage":"discovery","pain_points":["latency"],'
+                    '"action_items":["send docs"],"follow_up_date":"2026-09-01",'
+                    '"sentiment":"positive"}')
+
+    monkeypatch.setattr("orpheus_workers.processors.text_ops.get_llm", lambda: FakeLLM())
+    job = {"org_id": "o", "artifact_id": None, "params": {"source_job_id": "j0"}}
+
+    sc = await scorecard_proc(_ctx(FakeDB(job, TRANSCRIPT)), "j1")
+    assert sc["overall"] == 4 and sc["scores"]["objection_handling"] == 5
+    assert sc["strengths"] == ["clear"]
+
+    crm = await crm_proc(_ctx(FakeDB(job, TRANSCRIPT)), "j1")
+    assert crm["fields"]["contact"]["company"] == "Acme"
+    assert crm["fields"]["deal_stage"] == "discovery"
