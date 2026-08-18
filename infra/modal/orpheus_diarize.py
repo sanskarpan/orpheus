@@ -79,6 +79,45 @@ class Diarizer:
         return emb.cpu().numpy()
 
     @modal.method()
+    def embed(self, payload: dict) -> dict:
+        import base64
+        import io
+        import time
+
+        import numpy as np
+        import soundfile as sf
+
+        t0 = time.monotonic()
+        raw = base64.b64decode(payload.get("audio_b64") or "")
+        if not raw:
+            return {"embedding": [], "dim": 0, "model_version_id": "ecapa-agglomerative-1",
+                    "gpu_seconds": 0.0}
+        audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        win = int(WINDOW_S * sr)
+        hop = int(HOP_S * sr)
+        global_rms = float(np.sqrt(np.mean(audio**2)) + 1e-9)
+        windows = []
+        for start in range(0, max(1, len(audio) - win + 1), hop):
+            seg = audio[start : start + win]
+            if seg.size and float(np.sqrt(np.mean(seg**2))) >= 0.35 * global_rms:
+                windows.append(seg)
+        if not windows:
+            base = audio[:win] if len(audio) >= win else np.pad(audio, (0, max(0, win - len(audio))))
+            windows = [base]
+        emb = self._embed(windows)  # [N, D], per-window unit-norm
+        mean = emb.mean(axis=0)
+        norm = float(np.linalg.norm(mean))
+        mean = (mean / norm) if norm else mean
+        return {
+            "embedding": [float(x) for x in mean],
+            "dim": int(mean.shape[0]),
+            "model_version_id": "ecapa-agglomerative-1",
+            "gpu_seconds": round(time.monotonic() - t0, 4),
+        }
+
+    @modal.method()
     def diarize(self, payload: dict) -> dict:
         import base64
         import io
@@ -181,3 +220,22 @@ def diarize(payload: dict):
     if not expected or (payload.get("token", "") if isinstance(payload, dict) else "") != expected:
         raise HTTPException(status_code=401, detail="invalid or missing token")
     return Diarizer().diarize.remote(payload)
+
+
+@app.function(image=image, secrets=[auth], timeout=900)
+@modal.fastapi_endpoint(method="POST")
+def embed(payload: dict):
+    """Speaker-voiceprint embedding for enrollment/recognition (PRD 03 §4.8).
+
+    POST ``{token, audio_b64 (16 kHz mono wav)}`` → ``{embedding (unit-norm),
+    dim, model_version_id, gpu_seconds}``. Mean of VAD-gated ECAPA window
+    embeddings — the same geometry the diarizer clusters on.
+    """
+    import os
+
+    from fastapi import HTTPException
+
+    expected = os.environ.get("ORPHEUS_MODAL_SHARED_SECRET", "")
+    if not expected or (payload.get("token", "") if isinstance(payload, dict) else "") != expected:
+        raise HTTPException(status_code=401, detail="invalid or missing token")
+    return Diarizer().embed.remote(payload)
