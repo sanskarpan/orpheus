@@ -1,20 +1,31 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createJobAction, pollJobAction } from "@/app/actions/jobs";
 import type { Artifact, Job } from "@/lib/orpheus";
 import { ResultView } from "@/components/ResultView";
+import { ProcessorParamsForm } from "@/components/ProcessorParamsForm";
 import { LevelMeter, StatusBadge, WaveBars } from "@/components/primitives";
 import { bytes, usd } from "@/lib/format";
 import { clsx } from "@/lib/clsx";
+import {
+  buildParams,
+  fieldsForProcessor,
+  initValues,
+  validateValues,
+  type ParamValues,
+} from "@/lib/processorParams";
 
 export interface ProcessorOption {
   name: string;
   display_name: string;
   description: string;
   versions: { version: string }[];
+  input_schema?: unknown;
+  tier?: string;
+  cost_per_job_usd?: number;
 }
 
 type Phase = "idle" | "uploading" | "uploaded" | "submitting" | "running" | "done" | "error";
@@ -36,6 +47,21 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
   const [proc, setProc] = useState<string>(defaultProc?.name ?? "");
   const selected = processors.find((p) => p.name === proc) ?? defaultProc;
   const version = selected?.versions?.[0]?.version ?? "1.0.0";
+
+  const fields = useMemo(
+    () => fieldsForProcessor(selected?.name ?? "", selected?.input_schema),
+    [selected?.name, selected?.input_schema],
+  );
+  const [params, setParams] = useState<ParamValues>(() =>
+    initValues(fieldsForProcessor(defaultProc?.name ?? "", defaultProc?.input_schema)),
+  );
+
+  const selectProc = (name: string) => {
+    setProc(name);
+    const p = processors.find((x) => x.name === name);
+    setParams(initValues(fieldsForProcessor(name, p?.input_schema)));
+    setError(null);
+  };
 
   const pickFile = (f: File | null) => {
     setFile(f);
@@ -72,6 +98,13 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
 
   async function run() {
     if (!artifact || !selected) return;
+    const missing = validateValues(fields, params);
+    if (missing.length) {
+      setError(`Please fill required: ${missing.join(", ")}.`);
+      setPhase("error");
+      return;
+    }
+    const built = buildParams(fields, params);
     setPhase("submitting");
     setError(null);
     let created;
@@ -79,6 +112,7 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
       created = await createJobAction({
         artifact_id: artifact.id,
         processor: { name: selected.name, version },
+        params: Object.keys(built).length ? built : undefined,
       });
     } catch {
       setError("Couldn't submit the job. Please try again.");
@@ -189,7 +223,7 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
                 <button
                   key={p.name}
                   type="button"
-                  onClick={() => setProc(p.name)}
+                  onClick={() => selectProc(p.name)}
                   disabled={busy}
                   className={clsx(
                     "w-full rounded-md border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
@@ -210,6 +244,22 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
             })}
             {processors.length === 0 && <div className="text-sm text-ink-lo">No processors available.</div>}
           </div>
+        </div>
+
+        {/* Parameters */}
+        <div className="panel p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="label">Parameters</div>
+            {selected?.cost_per_job_usd ? (
+              <span className="font-mono text-2xs text-ink-lo">
+                ~{usd(selected.cost_per_job_usd)}/job
+                {selected.tier ? ` · ${selected.tier}` : ""}
+              </span>
+            ) : selected?.tier ? (
+              <span className="font-mono text-2xs text-ink-lo">{selected.tier}</span>
+            ) : null}
+          </div>
+          <ProcessorParamsForm fields={fields} values={params} onChange={setParams} disabled={busy} />
         </div>
 
         {/* Action */}
