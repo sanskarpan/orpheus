@@ -158,6 +158,29 @@ func (s *Service) execute(ctx context.Context, r request) {
 			}
 			counts["job_results"] = 1
 		}
+		if r.scope == "org" {
+			// Biometric voiceprints are org-scoped — an org erasure must purge them.
+			st, err := tx.Exec(ctx, `DELETE FROM speaker_profiles WHERE org_id=$1`, r.orgID)
+			if err != nil {
+				return err
+			}
+			counts["speaker_profiles"] = int(st.RowsAffected())
+			// Transcript embeddings hold transcript-derived text — purge too.
+			et, err := tx.Exec(ctx, `DELETE FROM transcript_embeddings WHERE org_id=$1`, r.orgID)
+			if err != nil {
+				return err
+			}
+			counts["transcript_embeddings"] = int(et.RowsAffected())
+		}
+		// Job-scoped erasure: drop this job's embedded segments too.
+		if r.scope == "job" && r.targetID != "" {
+			et, err := tx.Exec(ctx,
+				`DELETE FROM transcript_embeddings WHERE org_id=$1 AND job_id=$2`, r.orgID, r.targetID)
+			if err != nil {
+				return err
+			}
+			counts["transcript_embeddings"] = int(et.RowsAffected())
+		}
 		return nil
 	}); err != nil {
 		s.fail(ctx, r.id, "cascade: "+err.Error())
