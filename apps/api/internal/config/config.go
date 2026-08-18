@@ -13,8 +13,9 @@ import (
 // Dev-only default credentials. In production these must be overridden;
 // Load() refuses to start if any survive into a prod environment.
 const (
-	devS3AccessKey = "orpheus"
-	devS3SecretKey = "orpheus-dev-secret"
+	devS3AccessKey       = "orpheus"
+	devS3SecretKey       = "orpheus-dev-secret"
+	devStreamTokenSecret = "orpheus-dev-stream-token-secret-change-me"
 )
 
 // Config holds the runtime configuration of the API binary.
@@ -71,6 +72,21 @@ type Config struct {
 	// reject requests with 503 if the Redis backend errors (instead of
 	// failing open). It is forced on in prod regardless of this value.
 	RateLimitFailClosed bool `envconfig:"RATE_LIMIT_FAIL_CLOSED" default:"false"`
+
+	// TelephonyEnabled turns on the Twilio Media Streams telephony feature
+	// (PRD 05 #355): the /telephony/* relay + TwiML + token endpoints. Off by
+	// default because it requires an external provisioned phone number; when
+	// false the routes are not mounted at all (404) and the frontend hides any
+	// telephony surface. Set ORPHEUS_TELEPHONY_ENABLED=true to enable.
+	TelephonyEnabled bool `envconfig:"TELEPHONY_ENABLED" default:"false"`
+
+	// StreamTokenSecret signs the short-lived WebSocket stream tokens and the
+	// per-org telephony tokens (the ONLY credential on those relays, which are
+	// mounted outside the API-key middleware). It has a source-visible dev
+	// default; validate() refuses that default in prod so a deploy that forgets
+	// to set ORPHEUS_STREAM_TOKEN_SECRET fails closed instead of running with a
+	// well-known signing key.
+	StreamTokenSecret string `envconfig:"STREAM_TOKEN_SECRET" default:"orpheus-dev-stream-token-secret-change-me"`
 
 	// Keycloak is the OIDC provider. The API validates bearer tokens
 	// against this realm; clients obtain tokens out-of-band.
@@ -133,6 +149,9 @@ func (c *Config) validate() error {
 	}
 	if strings.Contains(c.DatabaseURL, "sslmode=disable") {
 		problems = append(problems, "ORPHEUS_DATABASE_URL has sslmode=disable")
+	}
+	if c.StreamTokenSecret == devStreamTokenSecret || c.StreamTokenSecret == "" {
+		problems = append(problems, "ORPHEUS_STREAM_TOKEN_SECRET is the dev default or empty")
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("insecure prod config: %s", strings.Join(problems, "; "))
