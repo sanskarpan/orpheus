@@ -21,6 +21,10 @@ export interface Account {
   name: string;
   org_id: string;
   org_key: string; // decrypted; only returned by server-side lookups
+  /** The API-key id of the owner key (org_key). Used to label/protect it in the
+   * keys UI by exact id rather than an ambiguous 9-char prefix. May be absent on
+   * accounts created before this column existed. */
+  org_key_id?: string;
   is_platform_admin: boolean;
   created_at: string;
 }
@@ -47,6 +51,12 @@ function db(): Database.Database {
       created_at        TEXT NOT NULL
     );
   `);
+  // Additive migration for accounts created before the owner-key id was tracked.
+  try {
+    d.exec("ALTER TABLE accounts ADD COLUMN org_key_id TEXT");
+  } catch {
+    // Column already exists — SQLite has no idempotent ADD COLUMN.
+  }
   _db = d;
   return d;
 }
@@ -117,6 +127,7 @@ interface Row {
   name: string;
   org_id: string;
   org_key_enc: string;
+  org_key_id: string | null;
   is_platform_admin: number;
   created_at: string;
   password_hash: string;
@@ -129,6 +140,7 @@ function rowToAccount(r: Row): Account {
     name: r.name,
     org_id: r.org_id,
     org_key: decrypt(r.org_key_enc),
+    org_key_id: r.org_key_id ?? undefined,
     is_platform_admin: r.is_platform_admin === 1,
     created_at: r.created_at,
   };
@@ -145,6 +157,7 @@ export function createAccount(input: {
   name: string;
   org_id: string;
   org_key: string;
+  org_key_id?: string;
   is_platform_admin: boolean;
   created_at: string;
 }): Account {
@@ -154,17 +167,23 @@ export function createAccount(input: {
     name: input.name,
     org_id: input.org_id,
     org_key_enc: encrypt(input.org_key),
+    org_key_id: input.org_key_id ?? null,
     is_platform_admin: input.is_platform_admin ? 1 : 0,
     created_at: input.created_at,
     password_hash: hashPassword(input.password),
   };
   db()
     .prepare(
-      `INSERT INTO accounts (id, email, password_hash, name, org_id, org_key_enc, is_platform_admin, created_at)
-       VALUES (@id, @email, @password_hash, @name, @org_id, @org_key_enc, @is_platform_admin, @created_at)`,
+      `INSERT INTO accounts (id, email, password_hash, name, org_id, org_key_enc, org_key_id, is_platform_admin, created_at)
+       VALUES (@id, @email, @password_hash, @name, @org_id, @org_key_enc, @org_key_id, @is_platform_admin, @created_at)`,
     )
     .run(row);
   return rowToAccount(row);
+}
+
+/** Backfill/repair the stored owner-key id for an account. */
+export function setOrgKeyId(accountId: string, keyId: string): void {
+  db().prepare("UPDATE accounts SET org_key_id = ? WHERE id = ?").run(keyId, accountId);
 }
 
 export function getAccountById(id: string): Account | null {
