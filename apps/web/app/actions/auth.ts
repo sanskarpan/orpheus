@@ -2,7 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { redirect } from "next/navigation";
-import { apiRequest, OrpheusError, type ProvisionResponse } from "@/lib/orpheus";
+import { apiRequest, OrpheusError, type APIKey, type ProvisionResponse } from "@/lib/orpheus";
 import { getSession } from "@/lib/session";
 import {
   authenticate,
@@ -39,6 +39,23 @@ async function provisionOrg(orgName: string, email: string): Promise<ProvisionRe
   });
 }
 
+/**
+ * Resolve the id of the just-provisioned owner key. A freshly provisioned org
+ * has exactly one API key (the owner key), so listing under that key uniquely
+ * identifies it — no reliance on the ambiguous 9-char prefix. Best-effort:
+ * returns undefined on any failure, and the keys UI falls back to prefix match.
+ */
+async function resolveOwnerKeyId(apiKey: string, keyPrefix: string): Promise<string | undefined> {
+  try {
+    const res = await apiRequest<{ data: APIKey[] }>("/v1/api-keys", { apiKey, query: { limit: 100 } });
+    const keys = res.data ?? [];
+    if (keys.length === 1) return keys[0].id;
+    return keys.find((k) => k.prefix === keyPrefix)?.id;
+  } catch {
+    return undefined;
+  }
+}
+
 async function openSession(userId: string) {
   const session = await getSession();
   session.userId = userId;
@@ -70,6 +87,8 @@ export async function signUp(_prev: unknown, formData: FormData): Promise<FormRe
     return { error: e instanceof Error ? e.message : "Couldn't create your workspace." };
   }
 
+  const orgKeyId = await resolveOwnerKeyId(provisioned.api_key, provisioned.key_prefix);
+
   const account = createAccount({
     id: randomUUID(),
     email,
@@ -77,6 +96,7 @@ export async function signUp(_prev: unknown, formData: FormData): Promise<FormRe
     name,
     org_id: provisioned.org_id,
     org_key: provisioned.api_key,
+    org_key_id: orgKeyId,
     is_platform_admin: resolvePlatformAdmin(email),
     created_at: new Date().toISOString(),
   });
@@ -118,6 +138,7 @@ export async function demoLogin(): Promise<FormResult> {
       }
       return { error: e instanceof Error ? e.message : "Couldn't set up the demo account." };
     }
+    const orgKeyId = await resolveOwnerKeyId(provisioned.api_key, provisioned.key_prefix);
     account = createAccount({
       id: randomUUID(),
       email,
@@ -125,6 +146,7 @@ export async function demoLogin(): Promise<FormResult> {
       name: "Demo User",
       org_id: provisioned.org_id,
       org_key: provisioned.api_key,
+      org_key_id: orgKeyId,
       is_platform_admin: resolvePlatformAdmin(email),
       created_at: new Date().toISOString(),
     });
