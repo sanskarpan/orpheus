@@ -51,7 +51,7 @@ def _transcribe_modal(
     otherwise the endpoint's GPU default (large-v3-turbo) is used rather than
     the local CPU default (tiny.en).
     """
-    import httpx
+    from .modal_client import modal_post_json
 
     url = os.environ.get("ORPHEUS_MODAL_TRANSCRIBE_URL", "").strip()
     token = os.environ.get("ORPHEUS_MODAL_TRANSCRIBE_TOKEN", "").strip()
@@ -71,9 +71,7 @@ def _transcribe_modal(
         "word_timestamps": word_timestamps,
     }
     try:
-        resp = httpx.post(url, json=payload, timeout=600.0)
-        resp.raise_for_status()
-        return resp.json()
+        return modal_post_json(url, payload).json()
     except Exception as exc:
         raise TranscribeError(f"modal transcribe failed: {exc}") from exc
 
