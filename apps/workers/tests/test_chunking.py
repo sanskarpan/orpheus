@@ -1,4 +1,4 @@
-"""Tests for VAD chunking + utterance segmentation (PRD 01 §4.3, §4.4)."""
+"""Tests for VAD chunking + utterance segmentation (PRD 11 §4.3, §4.4)."""
 
 from __future__ import annotations
 

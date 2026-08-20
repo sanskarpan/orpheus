@@ -267,7 +267,7 @@ def _transcribe_per_channel(
     work_dir: str,
     job_id: str,
 ) -> dict[str, Any]:
-    """Transcribe each audio channel independently (PRD 03 §4.7).
+    """Transcribe each audio channel independently (PRD 13 §4.7).
 
     Extracts each channel to its own 16kHz mono wav (no cross-channel bleed),
     transcribes it through :func:`_transcribe_wav_full`, tags every segment with

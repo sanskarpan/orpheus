@@ -1,4 +1,4 @@
-"""Orpheus audio-enhancement service on Modal GPU (PRD 04).
+"""Orpheus audio-enhancement service on Modal GPU (PRD 14).
 
 Neural, Krisp-class enhancement with open, non-gated models:
 - ``denoise`` / ``dereverb`` / ``telephony`` — **SpeechBrain MetricGAN+** speech

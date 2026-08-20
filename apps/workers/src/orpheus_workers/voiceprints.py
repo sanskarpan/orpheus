@@ -1,4 +1,4 @@
-"""Speaker voiceprint embedding + matching (PRD 03 §4.8).
+"""Speaker voiceprint embedding + matching (PRD 13 §4.8).
 
 ``get_embedder().embed(wav_path)`` returns a unit-norm speaker embedding.
 ``ModalEmbedder`` offloads to the Modal diarize service's ``/embed`` endpoint

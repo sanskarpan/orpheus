@@ -1,4 +1,4 @@
-"""Speaker enrollment / voiceprints processor (PRD 03 §4.8).
+"""Speaker enrollment / voiceprints processor (PRD 13 §4.8).
 
 ``speaker.enroll`` embeds a labeled audio sample (ECAPA via the Modal diarize
 ``/embed`` endpoint, or the stub) and stores a unit-norm voiceprint in the

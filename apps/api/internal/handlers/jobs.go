@@ -124,7 +124,7 @@ const maxBulkJobs = 100
 const processorKey = "_processor"
 
 // enrollConsentOK reports whether speaker.enroll params carry explicit consent
-// and a non-empty speaker name — the biometric-enrollment gate (PRD 03).
+// and a non-empty speaker name — the biometric-enrollment gate (PRD 13).
 func enrollConsentOK(params json.RawMessage) bool {
 	var ep struct {
 		Consent bool   `json:"consent"`
@@ -182,7 +182,7 @@ func (h *JobHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Biometric consent gate (PRD 03): speaker.enroll stores a voiceprint, so it
+	// Biometric consent gate (PRD 13): speaker.enroll stores a voiceprint, so it
 	// must not be submittable without explicit consent + a speaker name. Enforced
 	// at the API so a mis-called enroll never reaches the worker/DB.
 	if req.Processor.Name == "speaker.enroll" && !enrollConsentOK(req.Params) {
@@ -837,7 +837,7 @@ func (h *JobHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 			resp.Rejected = append(resp.Rejected, BulkRejection{Index: i, Reason: "unknown or deprecated processor/version"})
 			continue
 		}
-		// Biometric consent gate (PRD 03) — same invariant as Create, per item.
+		// Biometric consent gate (PRD 13) — same invariant as Create, per item.
 		if j.Processor.Name == "speaker.enroll" && !enrollConsentOK(j.Params) {
 			resp.Rejected = append(resp.Rejected, BulkRejection{
 				Index: i, Reason: "speaker.enroll requires params.consent=true and a non-empty params.name",

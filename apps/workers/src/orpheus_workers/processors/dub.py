@@ -1,4 +1,4 @@
-"""Dubbing / overdub processor (PRD 06 #367).
+"""Dubbing / overdub processor (PRD 16 #367).
 
 ``audio.dub`` turns a transcript into a synthesized speech track — optionally
 translated into a target language first — using the neural TTS (Kokoro on Modal;

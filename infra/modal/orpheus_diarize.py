@@ -225,7 +225,7 @@ def diarize(payload: dict):
 @app.function(image=image, secrets=[auth], timeout=900)
 @modal.fastapi_endpoint(method="POST")
 def embed(payload: dict):
-    """Speaker-voiceprint embedding for enrollment/recognition (PRD 03 §4.8).
+    """Speaker-voiceprint embedding for enrollment/recognition (PRD 13 §4.8).
 
     POST ``{token, audio_b64 (16 kHz mono wav)}`` → ``{embedding (unit-norm),
     dim, model_version_id, gpu_seconds}``. Mean of VAD-gated ECAPA window

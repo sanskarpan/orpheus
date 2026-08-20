@@ -1,4 +1,4 @@
-"""Orpheus speech-emotion + audio-event service on Modal GPU (PRD 03 §4.1-4.3).
+"""Orpheus speech-emotion + audio-event service on Modal GPU (PRD 13 §4.1-4.3).
 
 Runs **SenseVoice-Small** (FunASR, open, non-gated) which emits a spoken-emotion
 tag (SER) and audio-event tags (AED) in a single pass. Given the audio plus

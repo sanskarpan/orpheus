@@ -1,4 +1,4 @@
-"""Tests for the highlight-reel processor (PRD 06 #361)."""
+"""Tests for the highlight-reel processor (PRD 16 #361)."""
 
 from __future__ import annotations
 

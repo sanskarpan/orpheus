@@ -1,4 +1,4 @@
-"""Tests for the transcript embedding index (PRD 06 #359/#360)."""
+"""Tests for the transcript embedding index (PRD 16 #359/#360)."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Forced alignment: tighten word-level timestamps against the audio (PRD 01).
+"""Forced alignment: tighten word-level timestamps against the audio (PRD 11).
 
 Whisper's word timestamps are approximate — they're derived from decoder
 cross-attention, not from the acoustics. Forced alignment runs a character/

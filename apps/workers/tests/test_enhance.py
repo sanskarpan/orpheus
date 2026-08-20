@@ -1,4 +1,4 @@
-"""Tests for audio enhancement (PRD 04): spectral denoiser + audio.enhance processor."""
+"""Tests for audio enhancement (PRD 14): spectral denoiser + audio.enhance processor."""
 
 from __future__ import annotations
 

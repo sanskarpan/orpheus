@@ -115,7 +115,7 @@ def _resolve_overlaps(spans: list[Span]) -> list[Span]:
 
 class LLMDetector:
     """LLM NER for unstructured PII (PERSON/ORG/ADDRESS/LOCATION), merged with the
-    dependency-free :class:`RegexDetector` for structured PII (PRD 03 §4.5).
+    dependency-free :class:`RegexDetector` for structured PII (PRD 13 §4.5).
 
     The LLM returns entity *texts* (not offsets), which we locate in the source to
     build spans. Any LLM failure degrades to the regex hits alone, so redaction

@@ -1,4 +1,4 @@
-"""Text-to-speech provider (PRD 05) for the speech-to-speech loop.
+"""Text-to-speech provider (PRD 15) for the speech-to-speech loop.
 
 ``get_tts().synth(text, voice)`` returns ``(wav_bytes, sample_rate)``.
 ``ModalTTS`` offloads to the Kokoro Modal service when ``ORPHEUS_MODAL_TTS_URL`` +

@@ -1,4 +1,4 @@
-"""Telephony ingestion (PRD 05 #355) — Twilio Media Streams bridge.
+"""Telephony ingestion (PRD 15 #355) — Twilio Media Streams bridge.
 
 Carriers don't speak WebRTC/PCM16 directly; the standard integration is a media
 gateway (Twilio/Telnyx/LiveKit SIP) that terminates the SIP/RTP call and streams

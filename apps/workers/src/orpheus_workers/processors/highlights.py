@@ -1,4 +1,4 @@
-"""Highlight-reel / clip extraction processor (PRD 06 #361).
+"""Highlight-reel / clip extraction processor (PRD 16 #361).
 
 ``audio.highlights`` asks the LLM to pick the most highlight-worthy moments of a
 transcript (by segment range), maps them to timestamps, and — when

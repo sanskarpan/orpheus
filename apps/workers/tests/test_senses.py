@@ -1,4 +1,4 @@
-"""Tests for the SenseVoice analyzer selection + emotion/events processors (PRD 03)."""
+"""Tests for the SenseVoice analyzer selection + emotion/events processors (PRD 13)."""
 
 from __future__ import annotations
 

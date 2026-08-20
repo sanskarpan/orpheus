@@ -1,4 +1,4 @@
-"""Transcript embedding index: index / semantic-search / ask-AI (PRD 06 #359/#360).
+"""Transcript embedding index: index / semantic-search / ask-AI (PRD 16 #359/#360).
 
 - ``transcript.index`` embeds a transcript's segments (Modal all-MiniLM, or a stub)
   and stores them in the org-scoped ``transcript_embeddings`` table (idempotent per

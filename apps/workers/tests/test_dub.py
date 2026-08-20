@@ -1,4 +1,4 @@
-"""Tests for the dubbing processor (PRD 06 #367) — StubTTS, no local models."""
+"""Tests for the dubbing processor (PRD 16 #367) — StubTTS, no local models."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Tests for telephony ingestion (PRD 05 #355): μ-law codec + Twilio protocol."""
+"""Tests for telephony ingestion (PRD 15 #355): μ-law codec + Twilio protocol."""
 
 from __future__ import annotations
 

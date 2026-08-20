@@ -1,4 +1,4 @@
-"""Text-embedding provider + ranking for the transcript index (PRD 06 #359/#360).
+"""Text-embedding provider + ranking for the transcript index (PRD 16 #359/#360).
 
 ``get_text_embedder().embed(texts)`` returns unit-norm sentence embeddings.
 ``ModalTextEmbedder`` offloads to the Modal all-MiniLM service when

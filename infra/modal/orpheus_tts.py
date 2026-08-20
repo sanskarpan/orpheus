@@ -1,4 +1,4 @@
-"""Orpheus text-to-speech service on Modal GPU (PRD 05 §speech-to-speech).
+"""Orpheus text-to-speech service on Modal GPU (PRD 15 §speech-to-speech).
 
 Runs **Kokoro-82M** (hexgrad, Apache-2.0, non-gated) — a small, high-quality
 neural TTS — behind the same shared-secret HTTPS pattern as the other Modal apps.

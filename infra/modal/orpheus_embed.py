@@ -1,4 +1,4 @@
-"""Orpheus text-embedding service on Modal GPU (PRD 06 #359/#360).
+"""Orpheus text-embedding service on Modal GPU (PRD 16 #359/#360).
 
 Sentence embeddings for the transcript index (semantic search + ask-AI). Runs
 **sentence-transformers all-MiniLM-L6-v2** (MIT, non-gated, 384-d), the same

@@ -1,4 +1,4 @@
-"""Speech emotion + audio-event analysis provider (PRD 03 §4.1-4.3).
+"""Speech emotion + audio-event analysis provider (PRD 13 §4.1-4.3).
 
 ``get_sense_analyzer().analyze(wav_path, segments)`` returns per-segment emotion
 and audio-event labels. ``ModalSenseAnalyzer`` offloads to the Modal GPU service

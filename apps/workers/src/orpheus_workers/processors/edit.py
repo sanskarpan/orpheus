@@ -1,4 +1,4 @@
-"""Audio-edit-by-text processors (PRD 06 §Descript-class, #365).
+"""Audio-edit-by-text processors (PRD 16 §Descript-class, #365).
 
 ``audio.edit`` with ``mode="remove_fillers"`` removes filler words ("um", "uh",
 …) from the media using the transcript's word timestamps: the filler time ranges

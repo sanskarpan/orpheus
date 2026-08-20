@@ -1,4 +1,4 @@
-"""Audio-intelligence processors (PRD 03).
+"""Audio-intelligence processors (PRD 13).
 
 Adds capabilities on top of the existing analysis surface, reusing the
 `text_ops` LLM-analysis pattern and the `redact` span-masking machinery:

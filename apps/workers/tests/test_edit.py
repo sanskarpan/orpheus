@@ -1,4 +1,4 @@
-"""Tests for audio-edit-by-text / filler removal (PRD 06 #365)."""
+"""Tests for audio-edit-by-text / filler removal (PRD 16 #365)."""
 
 from __future__ import annotations
 

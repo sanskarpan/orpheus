@@ -1,7 +1,7 @@
 -- +goose Up
 -- ============================================================================
 -- 0022_transcript_embeddings.sql — transcript embedding index for cross-meeting
--- semantic search + ask-AI-with-citations (PRD 06 #359/#360).
+-- semantic search + ask-AI-with-citations (PRD 16 #359/#360).
 --
 -- One row per transcript segment: the segment text, its timing, and a unit-norm
 -- sentence embedding. Org-scoped + FORCE RLS like every tenant table. Embeddings

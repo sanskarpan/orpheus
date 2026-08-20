@@ -1,4 +1,4 @@
-"""Tests for the speech-to-speech loop (PRD 05 #356): ConverseSession + route."""
+"""Tests for the speech-to-speech loop (PRD 15 #356): ConverseSession + route."""
 
 from __future__ import annotations
 

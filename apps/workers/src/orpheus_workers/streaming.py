@@ -213,7 +213,7 @@ class StreamConfig:
     # window (matching the offline diarizer) gives stable, clusterable geometry
     # even when LocalAgreement only just confirmed a couple of words.
     diarize_window_seconds: float = 1.5
-    # Voice-agent turn-taking events (PRD 05): emit speech_start/speech_end/
+    # Voice-agent turn-taking events (PRD 15): emit speech_start/speech_end/
     # barge_in/backchannel/voicemail alongside transcript events.
     turn_events: bool = False
     # The client sets this (via a bot_state control frame) while the agent's TTS is
@@ -337,7 +337,7 @@ def make_endpoint_detector(config: StreamConfig) -> Any:
     return EnergyEndpointDetector(config)
 
 
-# --- voice-agent turn-taking (PRD 05) ---------------------------------------
+# --- voice-agent turn-taking (PRD 15) ---------------------------------------
 
 # Short acknowledgement tokens that are backchannels ("mm-hm", "yeah") rather than
 # real turns — an agent should not treat them as an interruption/turn.
@@ -662,7 +662,7 @@ class StreamSession:
                     if spk is not None:
                         final_ev["speaker"] = f"S{spk + 1}"
                     events.append(final_ev)
-                    # Voice-agent turn-taking tags (PRD 05).
+                    # Voice-agent turn-taking tags (PRD 15).
                     if self.config.turn_events:
                         if _is_backchannel(red_text):
                             events.append(
@@ -932,7 +932,7 @@ def create_app(
 
     @app.websocket("/v1/stream/converse")
     async def stream_converse(ws: WebSocket) -> None:
-        """Full-duplex speech-to-speech: ASR → LLM → TTS with barge-in (PRD 05).
+        """Full-duplex speech-to-speech: ASR → LLM → TTS with barge-in (PRD 15).
 
         Same PCM16 input as ``/v1/stream/transcribe``; in addition to transcript
         events it emits ``bot_reply`` (agent text), ``tts_audio`` (base64 wav to

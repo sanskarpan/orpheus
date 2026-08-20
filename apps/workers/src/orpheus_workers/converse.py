@@ -1,4 +1,4 @@
-"""Full-duplex speech-to-speech loop (PRD 05 §4, #356).
+"""Full-duplex speech-to-speech loop (PRD 15 §4, #356).
 
 ``ConverseSession`` composes the streaming **ASR** (:class:`StreamSession` with
 turn-taking events) → **LLM** (``llm.get_llm``) → **TTS** (``tts.get_tts``) into a

@@ -1,4 +1,4 @@
-"""Tests for ITN / smart formatting (PRD 01 §4.2)."""
+"""Tests for ITN / smart formatting (PRD 11 §4.2)."""
 
 from __future__ import annotations
 

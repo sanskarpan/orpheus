@@ -1,4 +1,4 @@
-"""Audio enhancement processor (PRD 04).
+"""Audio enhancement processor (PRD 14).
 
 ``audio.enhance`` cleans a source audio artifact and emits a new **enhanced audio
 artifact** plus quality metrics, composable ahead of ``transcribe`` /

@@ -1,4 +1,4 @@
-"""Tests for audio-intelligence processors (PRD 03): chapters + moderation."""
+"""Tests for audio-intelligence processors (PRD 13): chapters + moderation."""
 
 from __future__ import annotations
 

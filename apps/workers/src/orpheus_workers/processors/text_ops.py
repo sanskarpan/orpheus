@@ -314,7 +314,7 @@ async def entities_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
 @register_processor(
     "text.scorecard",
     display_name="Conversation Scorecard",
-    description="Score a sales/support call across coaching dimensions (PRD 06).",
+    description="Score a sales/support call across coaching dimensions (PRD 16).",
     tier="cpu_small",
     timeout_seconds=300,
     cost_per_job_usd=0.003,
@@ -348,7 +348,7 @@ async def scorecard_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
 @register_processor(
     "text.crm",
     display_name="CRM Auto-fill",
-    description="Extract structured CRM fields (contact, deal, next steps) from a call (PRD 06).",
+    description="Extract structured CRM fields (contact, deal, next steps) from a call (PRD 16).",
     tier="cpu_small",
     timeout_seconds=300,
     cost_per_job_usd=0.003,

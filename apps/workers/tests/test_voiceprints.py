@@ -1,4 +1,4 @@
-"""Tests for speaker voiceprints (PRD 03 §4.8): embed, match, enroll, identify."""
+"""Tests for speaker voiceprints (PRD 13 §4.8): embed, match, enroll, identify."""
 
 from __future__ import annotations
 
