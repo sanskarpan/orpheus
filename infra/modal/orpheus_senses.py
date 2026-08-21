@@ -26,16 +26,27 @@ _TOKEN_RE = re.compile(r"<\|([^|>]+)\|>")
 
 # SenseVoice emotion tags → our lowercase label space.
 _EMOTION_MAP = {
-    "HAPPY": "happy", "SAD": "sad", "ANGRY": "angry", "NEUTRAL": "neutral",
-    "FEARFUL": "fearful", "DISGUSTED": "disgusted", "SURPRISED": "surprised",
+    "HAPPY": "happy",
+    "SAD": "sad",
+    "ANGRY": "angry",
+    "NEUTRAL": "neutral",
+    "FEARFUL": "fearful",
+    "DISGUSTED": "disgusted",
+    "SURPRISED": "surprised",
     "EMO_UNKNOWN": "neutral",
 }
 # SenseVoice audio-event tags → friendly labels (others pass through verbatim).
-_EVENT_MAP = {"BGM": "Music", "Speech": "Speech", "Applause": "Applause",
-              "Laughter": "Laughter", "Cry": "Crying", "Cough": "Cough",
-              "Sneeze": "Sneeze", "Breath": "Breath"}
-_NON_EVENTS = set(_EMOTION_MAP) | {"zh", "en", "yue", "ja", "ko", "nospeech",
-                                   "withitn", "woitn"}
+_EVENT_MAP = {
+    "BGM": "Music",
+    "Speech": "Speech",
+    "Applause": "Applause",
+    "Laughter": "Laughter",
+    "Cry": "Crying",
+    "Cough": "Cough",
+    "Sneeze": "Sneeze",
+    "Breath": "Breath",
+}
+_NON_EVENTS = set(_EMOTION_MAP) | {"zh", "en", "yue", "ja", "ko", "nospeech", "withitn", "woitn"}
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -106,8 +117,8 @@ class Senses:
         return {
             "emotion": emotion,
             "emotion_scores": {emotion: 1.0},
-            "events": [{"label": e, "confidence": 1.0} for e in events] or
-            [{"label": "Speech", "confidence": 1.0}],
+            "events": [{"label": e, "confidence": 1.0} for e in events]
+            or [{"label": "Speech", "confidence": 1.0}],
         }
 
     @modal.method()
@@ -137,8 +148,11 @@ class Senses:
             try:
                 res = self._analyze_clip(clip, sr)
             except Exception:  # one segment failing must not sink the batch
-                res = {"emotion": "neutral", "emotion_scores": {"neutral": 1.0},
-                       "events": [{"label": "Speech", "confidence": 1.0}]}
+                res = {
+                    "emotion": "neutral",
+                    "emotion_scores": {"neutral": 1.0},
+                    "events": [{"label": "Speech", "confidence": 1.0}],
+                }
             res["start"] = float(seg.get("start", 0.0))
             res["end"] = float(seg.get("end", len(audio) / sr))
             out.append(res)

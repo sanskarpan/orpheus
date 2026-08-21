@@ -39,7 +39,10 @@ class StubTextEmbedder:
         out = []
         for t in texts:
             digest = hashlib.sha256((t or "").strip().lower().encode()).digest()
-            vec = [struct.unpack("<h", digest[i : i + 2])[0] / 32768.0 for i in range(0, self.dim * 2, 2)]
+            vec = [
+                struct.unpack("<h", digest[i : i + 2])[0] / 32768.0
+                for i in range(0, self.dim * 2, 2)
+            ]
             out.append(_normalize(vec))
         return out
 

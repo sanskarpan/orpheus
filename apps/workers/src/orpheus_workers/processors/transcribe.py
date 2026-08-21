@@ -103,8 +103,15 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 n_ch = 1  # probe best-effort → treat as mono
             if n_ch > 1:
                 result = _transcribe_per_channel(
-                    src_path, n_ch, duration, chunk_seconds, word_timestamps,
-                    topts, params, str(work_dir), job_id,
+                    src_path,
+                    n_ch,
+                    duration,
+                    chunk_seconds,
+                    word_timestamps,
+                    topts,
+                    params,
+                    str(work_dir),
+                    job_id,
                 )
                 _maybe_align(result, wav_path, params, job_id)
                 _maybe_format(result, params)
@@ -114,8 +121,14 @@ async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any
                 return result
 
         result = _transcribe_wav_full(
-            wav_path, duration, chunk_seconds, word_timestamps, topts, params,
-            str(work_dir), job_id,
+            wav_path,
+            duration,
+            chunk_seconds,
+            word_timestamps,
+            topts,
+            params,
+            str(work_dir),
+            job_id,
         )
         _maybe_align(result, wav_path, params, job_id)
         _maybe_format(result, params)
@@ -285,8 +298,14 @@ def _transcribe_per_channel(
             extract_channel_16k_mono(src_path, ch_wav, ch)
             ch_dur = _wav_duration(ch_wav)
             r = _transcribe_wav_full(
-                ch_wav, ch_dur, chunk_seconds, word_timestamps, topts, params,
-                work_dir, f"{job_id}.ch{ch}",
+                ch_wav,
+                ch_dur,
+                chunk_seconds,
+                word_timestamps,
+                topts,
+                params,
+                work_dir,
+                f"{job_id}.ch{ch}",
             )
         finally:
             try:

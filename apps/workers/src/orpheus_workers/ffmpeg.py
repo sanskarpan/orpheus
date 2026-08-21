@@ -119,9 +119,7 @@ def extract_channel_16k_mono(src: str | Path, dst: str | Path, channel_index: in
         timeout=120,
     )
     if out.returncode != 0:
-        raise FFmpegError(
-            f"ffmpeg channel-extract exited {out.returncode}: {out.stderr.strip()}"
-        )
+        raise FFmpegError(f"ffmpeg channel-extract exited {out.returncode}: {out.stderr.strip()}")
 
 
 def mute_ranges(src: str | Path, dst: str | Path, ranges: list[tuple[float, float]]) -> None:

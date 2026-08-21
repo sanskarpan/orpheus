@@ -54,9 +54,7 @@ async def dub_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
 
     if target_language:
         try:
-            text = get_llm().translate(
-                text, target_language, params.get("source_language", "auto")
-            )
+            text = get_llm().translate(text, target_language, params.get("source_language", "auto"))
         except Exception as e:
             logger.warning("worker.dub_translate_failed", job_id=job_id, err=str(e))
             warnings.append("translation_unavailable_dubbed_source_language")

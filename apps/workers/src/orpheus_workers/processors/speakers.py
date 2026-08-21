@@ -52,7 +52,11 @@ async def enroll_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     artifact_id = job["artifact_id"] or params.get("artifact_id")
     if not artifact_id:
         raise ValueError("speaker.enroll requires the source audio artifact")
-    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s", artifact_id, job["org_id"])
+    art = db.fetchrow(
+        "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s",
+        artifact_id,
+        job["org_id"],
+    )
     if art is None:
         raise ValueError(f"artifact {artifact_id} not found")
 
@@ -83,7 +87,11 @@ async def enroll_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
             updated_at = now()
         RETURNING id::text AS id
         """,
-        job["org_id"], name, embedding, len(embedding), embedder.model_version_id,
+        job["org_id"],
+        name,
+        embedding,
+        len(embedding),
+        embedder.model_version_id,
     )
     return {
         "speaker_id": row["id"],

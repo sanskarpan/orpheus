@@ -48,16 +48,22 @@ def _make_wav(path: Path, seconds: float = 2.0):
 class _SenseDB:
     def fetchrow(self, sql, *args):
         if "id, org_id, artifact_id, params" in sql:
-            return {"id": "j1", "org_id": "org-1", "artifact_id": "art-1",
-                    "params": {"source_job_id": "j0"}}
+            return {
+                "id": "j1",
+                "org_id": "org-1",
+                "artifact_id": "art-1",
+                "params": {"source_job_id": "j0"},
+            }
         if "SELECT result FROM jobs" in sql:
-            return {"result": {
-                "segments": [
-                    {"start": 0.0, "end": 1.0, "text": "hello"},
-                    {"start": 1.0, "end": 2.0, "text": "world"},
-                ],
-                "text": "hello world",
-            }}
+            return {
+                "result": {
+                    "segments": [
+                        {"start": 0.0, "end": 1.0, "text": "hello"},
+                        {"start": 1.0, "end": 2.0, "text": "world"},
+                    ],
+                    "text": "hello world",
+                }
+            }
         if "SELECT s3_bucket, s3_key FROM artifacts" in sql:
             return {"s3_bucket": "b", "s3_key": "media/x.wav"}
         raise AssertionError(f"unexpected sql: {sql}")

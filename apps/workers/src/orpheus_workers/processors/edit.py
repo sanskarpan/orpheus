@@ -60,8 +60,9 @@ def plan_filler_edit(
     for seg in transcript.get("segments") or []:
         for w in seg.get("words") or []:
             if _norm(str(w.get("word", ""))) in fillers:
-                ranges.append((max(0.0, float(w.get("start", 0.0)) - pad),
-                               float(w.get("end", 0.0)) + pad))
+                ranges.append(
+                    (max(0.0, float(w.get("start", 0.0)) - pad), float(w.get("end", 0.0)) + pad)
+                )
                 removed += 1
     ranges = _merge(ranges)
 
@@ -75,18 +76,24 @@ def plan_filler_edit(
         for w in seg.get("words") or []:
             if _norm(str(w.get("word", ""))) in fillers:
                 continue
-            new_words.append({
-                **w,
-                "start": shift(float(w.get("start", 0.0))),
-                "end": shift(float(w.get("end", 0.0))),
-            })
+            new_words.append(
+                {
+                    **w,
+                    "start": shift(float(w.get("start", 0.0))),
+                    "end": shift(float(w.get("end", 0.0))),
+                }
+            )
         if new_words:
-            cleaned.append({
-                "start": new_words[0]["start"],
-                "end": new_words[-1]["end"],
-                "text": re.sub(r"\s+", " ", " ".join(str(w.get("word", "")) for w in new_words)).strip(),
-                "words": new_words,
-            })
+            cleaned.append(
+                {
+                    "start": new_words[0]["start"],
+                    "end": new_words[-1]["end"],
+                    "text": re.sub(
+                        r"\s+", " ", " ".join(str(w.get("word", "")) for w in new_words)
+                    ).strip(),
+                    "words": new_words,
+                }
+            )
     return ranges, cleaned, removed
 
 
@@ -120,7 +127,11 @@ async def edit_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     artifact_id = job["artifact_id"] or params.get("artifact_id")
     if not artifact_id:
         raise ValueError("audio.edit requires the source audio artifact")
-    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s", artifact_id, job["org_id"])
+    art = db.fetchrow(
+        "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s",
+        artifact_id,
+        job["org_id"],
+    )
     if art is None:
         raise ValueError(f"artifact {artifact_id} not found")
 

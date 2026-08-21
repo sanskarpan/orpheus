@@ -123,7 +123,11 @@ def _extract_clips(
     artifact_id = job["artifact_id"] or params.get("artifact_id")
     if not artifact_id:
         return
-    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s", artifact_id, job["org_id"])
+    art = db.fetchrow(
+        "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s",
+        artifact_id,
+        job["org_id"],
+    )
     if art is None:
         return
     work_dir.mkdir(parents=True, exist_ok=True)

@@ -123,9 +123,14 @@ class LLMDetector:
     """
 
     _TYPE_MAP = {
-        "person": "PERSON", "name": "PERSON",
-        "org": "ORG", "organization": "ORG", "company": "ORG",
-        "address": "ADDRESS", "location": "LOCATION", "place": "LOCATION",
+        "person": "PERSON",
+        "name": "PERSON",
+        "org": "ORG",
+        "organization": "ORG",
+        "company": "ORG",
+        "address": "ADDRESS",
+        "location": "LOCATION",
+        "place": "LOCATION",
     }
     _LLM_ENTITIES = {"PERSON", "ORG", "ADDRESS", "LOCATION"}
 

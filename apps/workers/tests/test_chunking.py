@@ -98,8 +98,15 @@ def test_transcribe_per_channel_labels_and_separates(tmp_path, monkeypatch):
     monkeypatch.setattr(T, "_transcribe_wav_full", fake_full)
 
     res = _transcribe_per_channel(
-        tmp_path / "src.wav", 2, 5.0, 60, False,
-        {"language": None}, {"channel_labels": ["agent", "customer"]}, str(tmp_path), "j1",
+        tmp_path / "src.wav",
+        2,
+        5.0,
+        60,
+        False,
+        {"language": None},
+        {"channel_labels": ["agent", "customer"]},
+        str(tmp_path),
+        "j1",
     )
     assert res["channels"] == [{"index": 0, "label": "agent"}, {"index": 1, "label": "customer"}]
     # every segment carries its channel; channels are fully separated (no bleed)

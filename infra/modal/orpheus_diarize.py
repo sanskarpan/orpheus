@@ -90,8 +90,12 @@ class Diarizer:
         t0 = time.monotonic()
         raw = base64.b64decode(payload.get("audio_b64") or "")
         if not raw:
-            return {"embedding": [], "dim": 0, "model_version_id": "ecapa-agglomerative-1",
-                    "gpu_seconds": 0.0}
+            return {
+                "embedding": [],
+                "dim": 0,
+                "model_version_id": "ecapa-agglomerative-1",
+                "gpu_seconds": 0.0,
+            }
         audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
@@ -104,7 +108,9 @@ class Diarizer:
             if seg.size and float(np.sqrt(np.mean(seg**2))) >= 0.35 * global_rms:
                 windows.append(seg)
         if not windows:
-            base = audio[:win] if len(audio) >= win else np.pad(audio, (0, max(0, win - len(audio))))
+            base = (
+                audio[:win] if len(audio) >= win else np.pad(audio, (0, max(0, win - len(audio))))
+            )
             windows = [base]
         emb = self._embed(windows)  # [N, D], per-window unit-norm
         mean = emb.mean(axis=0)

@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from orpheus_workers.embeddings import StubTextEmbedder, cosine, get_text_embedder, rank_by_similarity
+from orpheus_workers.embeddings import (
+    StubTextEmbedder,
+    cosine,
+    get_text_embedder,
+    rank_by_similarity,
+)
 from orpheus_workers.processors.transcript_index import ask_proc, index_proc, search_proc
 
 SEG = [
@@ -45,8 +50,12 @@ class _IndexDB:
 
     def fetchrow(self, sql, *a):
         if "id, org_id, artifact_id, params" in sql:
-            return {"id": "idxjob", "org_id": "o", "artifact_id": "art-1",
-                    "params": {"source_job_id": "srcjob"}}
+            return {
+                "id": "idxjob",
+                "org_id": "o",
+                "artifact_id": "art-1",
+                "params": {"source_job_id": "srcjob"},
+            }
         if "SELECT result FROM jobs" in sql:
             return {"result": {"segments": SEG, "text": "..."}}
         raise AssertionError(sql)
@@ -81,12 +90,24 @@ class _SearchDB:
         e = StubTextEmbedder()
         self.query = query
         self.rows = [
-            {"job_id": "j1", "artifact_id": "a1", "segment_index": 0,
-             "start_seconds": 3.0, "end_seconds": 6.0,
-             "text": SEG[1]["text"], "embedding": e.embed([SEG[1]["text"]])[0]},
-            {"job_id": "j2", "artifact_id": "a2", "segment_index": 0,
-             "start_seconds": 0.0, "end_seconds": 3.0,
-             "text": SEG[0]["text"], "embedding": e.embed([SEG[0]["text"]])[0]},
+            {
+                "job_id": "j1",
+                "artifact_id": "a1",
+                "segment_index": 0,
+                "start_seconds": 3.0,
+                "end_seconds": 6.0,
+                "text": SEG[1]["text"],
+                "embedding": e.embed([SEG[1]["text"]])[0],
+            },
+            {
+                "job_id": "j2",
+                "artifact_id": "a2",
+                "segment_index": 0,
+                "start_seconds": 0.0,
+                "end_seconds": 3.0,
+                "text": SEG[0]["text"],
+                "embedding": e.embed([SEG[0]["text"]])[0],
+            },
         ]
 
     def fetchrow(self, sql, *a):

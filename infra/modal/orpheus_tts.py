@@ -73,8 +73,12 @@ class TTS:
         voice = str(payload.get("voice") or DEFAULT_VOICE)
         speed = float(payload.get("speed") or 1.0)
         if not text:
-            return {"audio_b64": "", "sample_rate": SAMPLE_RATE,
-                    "model_version_id": MODEL_VERSION_ID, "gpu_seconds": 0.0}
+            return {
+                "audio_b64": "",
+                "sample_rate": SAMPLE_RATE,
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": 0.0,
+            }
 
         chunks = []
         for _graphemes, _phonemes, audio in self.pipeline(text, voice=voice, speed=speed):
