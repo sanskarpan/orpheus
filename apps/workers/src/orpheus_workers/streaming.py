@@ -899,6 +899,38 @@ def _common_prefix_len(a: list[str], b: list[str]) -> int:
     return n
 
 
+def _cadence_overrides_from_env() -> dict[str, Any]:
+    """Read optional StreamConfig cadence overrides from the environment.
+
+    The re-decode cadences are hardcoded defaults tuned for a machine that can
+    keep up with a 0.25 s partial + 1 s commit re-decode of the working buffer.
+    On a constrained host (few CPUs, or a high-latency remote transcribe backend)
+    that cadence produces a decode backlog that inflates finalize latency, so
+    these knobs let a deployment decode less often. Only set keys are returned,
+    so unset env leaves every default unchanged (fully backward compatible).
+
+    - ``ORPHEUS_STREAMING_MIN_CHUNK_SECONDS``      -> min_chunk_seconds
+    - ``ORPHEUS_STREAMING_PARTIAL_CHUNK_SECONDS``  -> partial_chunk_seconds (0 disables the fast loop)
+    - ``ORPHEUS_STREAMING_MAX_BUFFER_SECONDS``     -> max_buffer_seconds
+    - ``ORPHEUS_STREAMING_VAD_SILENCE_SECONDS``    -> vad_silence_seconds
+    """
+    mapping = {
+        "min_chunk_seconds": "ORPHEUS_STREAMING_MIN_CHUNK_SECONDS",
+        "partial_chunk_seconds": "ORPHEUS_STREAMING_PARTIAL_CHUNK_SECONDS",
+        "max_buffer_seconds": "ORPHEUS_STREAMING_MAX_BUFFER_SECONDS",
+        "vad_silence_seconds": "ORPHEUS_STREAMING_VAD_SILENCE_SECONDS",
+    }
+    out: dict[str, Any] = {}
+    for field_name, env_name in mapping.items():
+        raw = os.environ.get(env_name, "").strip()
+        if raw:
+            try:
+                out[field_name] = float(raw)
+            except ValueError:
+                pass  # ignore a malformed override; keep the default
+    return out
+
+
 def create_app(
     transcriber: Transcriber | None = None,
     partial_transcriber: Transcriber | None = None,
@@ -919,6 +951,7 @@ def create_app(
         "yes",
     )
     embed_fn = embedder or ecapa_embedder
+    cadence = _cadence_overrides_from_env()
     app = FastAPI(title="Orpheus Streaming", version="0.1.0")
 
     @app.get("/health")
@@ -931,6 +964,7 @@ def create_app(
         config = StreamConfig(
             turn_backend=os.environ.get("ORPHEUS_STREAMING_TURN_BACKEND", "energy"),
             diarize=diarize_default,
+            **cadence,
         )
         session: StreamSession | None = None
         redact_cfg: dict[str, Any] | None = None
@@ -1020,6 +1054,7 @@ def create_app(
         config = StreamConfig(
             turn_backend=os.environ.get("ORPHEUS_STREAMING_TURN_BACKEND", "energy"),
             turn_events=True,
+            **cadence,
         )
         session: ConverseSession | None = None
 

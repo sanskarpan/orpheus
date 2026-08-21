@@ -13,6 +13,7 @@ import json
 from orpheus_workers.streaming import (
     StreamConfig,
     StreamSession,
+    _cadence_overrides_from_env,
     create_app,
     pcm16_to_wav_file,
 )
@@ -621,3 +622,35 @@ def test_partials_marked_provisional_when_redacting():
         events += sess.add_audio(_tone(1.0))
     partials = [e for e in events if e["type"] == "partial"]
     assert partials and all(p.get("redacted_provisional") is True for p in partials)
+
+
+def test_cadence_overrides_from_env_empty(monkeypatch):
+    for e in (
+        "ORPHEUS_STREAMING_MIN_CHUNK_SECONDS",
+        "ORPHEUS_STREAMING_PARTIAL_CHUNK_SECONDS",
+        "ORPHEUS_STREAMING_MAX_BUFFER_SECONDS",
+        "ORPHEUS_STREAMING_VAD_SILENCE_SECONDS",
+    ):
+        monkeypatch.delenv(e, raising=False)
+    assert _cadence_overrides_from_env() == {}
+
+
+def test_cadence_overrides_from_env_reads_set_values(monkeypatch):
+    monkeypatch.setenv("ORPHEUS_STREAMING_MIN_CHUNK_SECONDS", "3")
+    monkeypatch.setenv("ORPHEUS_STREAMING_PARTIAL_CHUNK_SECONDS", "0")
+    monkeypatch.delenv("ORPHEUS_STREAMING_MAX_BUFFER_SECONDS", raising=False)
+    monkeypatch.delenv("ORPHEUS_STREAMING_VAD_SILENCE_SECONDS", raising=False)
+    ov = _cadence_overrides_from_env()
+    assert ov == {"min_chunk_seconds": 3.0, "partial_chunk_seconds": 0.0}
+    # and it must actually apply to a StreamConfig
+    cfg = StreamConfig(**ov)
+    assert cfg.min_chunk_seconds == 3.0
+    assert cfg.partial_chunk_seconds == 0.0
+
+
+def test_cadence_overrides_ignores_malformed(monkeypatch):
+    monkeypatch.setenv("ORPHEUS_STREAMING_MIN_CHUNK_SECONDS", "not-a-number")
+    monkeypatch.delenv("ORPHEUS_STREAMING_PARTIAL_CHUNK_SECONDS", raising=False)
+    monkeypatch.delenv("ORPHEUS_STREAMING_MAX_BUFFER_SECONDS", raising=False)
+    monkeypatch.delenv("ORPHEUS_STREAMING_VAD_SILENCE_SECONDS", raising=False)
+    assert _cadence_overrides_from_env() == {}
