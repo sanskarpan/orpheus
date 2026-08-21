@@ -10,6 +10,7 @@ from orpheus_workers.processors.dub import dub_proc
 class _DB:
     def __init__(self):
         self.inserted = None
+        self.params: dict | None = None
 
     def fetchrow(self, sql, *a):
         if "id, org_id, artifact_id, params" in sql:
