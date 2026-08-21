@@ -1,4 +1,4 @@
-// Package handlers — speaker voiceprint (enrolled-profile) management (PRD 03).
+// Package handlers — speaker voiceprint (enrolled-profile) management (PRD 13).
 //
 // Voiceprints are BIOMETRIC data enrolled via the speaker.enroll processor and
 // stored in the org-scoped, FORCE-RLS `speaker_profiles` table. This surface lets

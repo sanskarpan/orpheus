@@ -1,4 +1,4 @@
-"""Tests for forced alignment (PRD 01) — the worker seam + assembly.
+"""Tests for forced alignment (PRD 11) — the worker seam + assembly.
 
 The torch/torchaudio model is never loaded: the modal backend is exercised via a
 monkeypatched HTTP call and the assembly is unit-tested directly.

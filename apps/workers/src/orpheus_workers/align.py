@@ -1,4 +1,4 @@
-"""Forced alignment: tighten word-level timestamps against the audio (PRD 01).
+"""Forced alignment: tighten word-level timestamps against the audio (PRD 11).
 
 Whisper's word timestamps are approximate — they're derived from decoder
 cross-attention, not from the acoustics. Forced alignment runs a character/
@@ -41,9 +41,7 @@ def _segment_tokens(text: str) -> list[str]:
     return _WORD_RE.findall(text or "")
 
 
-def _apply_aligned_segments(
-    transcript: dict[str, Any], aligned: list[dict[str, Any]]
-) -> None:
+def _apply_aligned_segments(transcript: dict[str, Any], aligned: list[dict[str, Any]]) -> None:
     """Replace each segment's ``words`` with the aligned words (in place).
 
     ``aligned`` is parallel to ``transcript['segments']``; each entry carries
@@ -108,9 +106,9 @@ def _align_local(
     worker loads without them. Raises :class:`AlignError` if unavailable.
     """
     try:
-        import torch
-        import torchaudio
-        from torchaudio.pipelines import MMS_FA as bundle
+        import torch  # type: ignore  # optional heavy dep
+        import torchaudio  # type: ignore  # optional heavy dep
+        from torchaudio.pipelines import MMS_FA as bundle  # type: ignore  # optional heavy dep
     except Exception as exc:  # pragma: no cover - optional heavy dep
         raise AlignError(f"local align backend requires torch/torchaudio: {exc}") from exc
 

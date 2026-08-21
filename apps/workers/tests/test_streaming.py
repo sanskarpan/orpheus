@@ -394,8 +394,12 @@ def test_shrinking_hypothesis_does_not_crash():
     def tx(pcm, sr):
         state["n"] += 1
         seq = ["a", "b", "c", "d"] if state["n"] <= 2 else ["a", "b"]
-        return {"words": [{"word": w, "start": i * 0.5, "end": (i + 1) * 0.5}
-                          for i, w in enumerate(seq)], "text": " ".join(seq)}
+        return {
+            "words": [
+                {"word": w, "start": i * 0.5, "end": (i + 1) * 0.5} for i, w in enumerate(seq)
+            ],
+            "text": " ".join(seq),
+        }
 
     sess = StreamSession(transcriber=tx, config=_no_vad())
     sess.add_audio(_tone(1.0))
@@ -412,8 +416,10 @@ def test_buffer_bounded_when_hypothesis_never_agrees():
 
     def tx(pcm, sr):
         state["n"] += 1
-        return {"words": [{"word": f"w{state['n']}", "start": 0.0, "end": 0.5}],
-                "text": f"w{state['n']}"}
+        return {
+            "words": [{"word": f"w{state['n']}", "start": 0.0, "end": 0.5}],
+            "text": f"w{state['n']}",
+        }
 
     sess = StreamSession(transcriber=tx, config=_no_vad(max_buffer_seconds=3.0))
     for _ in range(12):  # 12s of audio, 3s cap

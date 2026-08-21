@@ -1,4 +1,4 @@
-"""Full-duplex speech-to-speech loop (PRD 05 §4, #356).
+"""Full-duplex speech-to-speech loop (PRD 15 §4, #356).
 
 ``ConverseSession`` composes the streaming **ASR** (:class:`StreamSession` with
 turn-taking events) → **LLM** (``llm.get_llm``) → **TTS** (``tts.get_tts``) into a
@@ -96,12 +96,16 @@ class ConverseSession:
             reply = ""
         if not reply:
             # LLM unavailable → surface an empty bot turn rather than hanging.
-            return [{"type": "bot_reply", "text": "", "turn_id": turn_id,
-                     "warnings": ["llm_unavailable"]}]
+            return [
+                {
+                    "type": "bot_reply",
+                    "text": "",
+                    "turn_id": turn_id,
+                    "warnings": ["llm_unavailable"],
+                }
+            ]
         self._history.append(("assistant", reply))
-        events: list[dict[str, Any]] = [
-            {"type": "bot_reply", "text": reply, "turn_id": turn_id}
-        ]
+        events: list[dict[str, Any]] = [{"type": "bot_reply", "text": reply, "turn_id": turn_id}]
         try:
             audio, sr = self.tts.synth(reply, self.voice)
             if audio:

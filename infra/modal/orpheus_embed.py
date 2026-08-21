@@ -1,4 +1,4 @@
-"""Orpheus text-embedding service on Modal GPU (PRD 06 #359/#360).
+"""Orpheus text-embedding service on Modal GPU (PRD 16 #359/#360).
 
 Sentence embeddings for the transcript index (semantic search + ask-AI). Runs
 **sentence-transformers all-MiniLM-L6-v2** (MIT, non-gated, 384-d), the same
@@ -70,8 +70,12 @@ class Embedder:
             texts = []
         texts = [str(t) for t in texts[:_MAX_TEXTS]]
         if not texts:
-            return {"embeddings": [], "dim": 0, "model_version_id": MODEL_VERSION_ID,
-                    "gpu_seconds": 0.0}
+            return {
+                "embeddings": [],
+                "dim": 0,
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": 0.0,
+            }
         # normalize_embeddings=True → unit-norm, so cosine == dot product downstream.
         embs = self.model.encode(
             texts, batch_size=64, normalize_embeddings=True, convert_to_numpy=True

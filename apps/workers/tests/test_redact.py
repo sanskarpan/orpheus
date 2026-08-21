@@ -63,10 +63,17 @@ def test_redact_transcript_masks_multitoken_pii_in_words():
         "text": "call me at 415 555 1234 today",
         "segments": [
             {
-                "start": 0.0, "end": 2.0, "text": "call me at 415 555 1234 today",
+                "start": 0.0,
+                "end": 2.0,
+                "text": "call me at 415 555 1234 today",
                 "words": [
-                    {"word": "call"}, {"word": "me"}, {"word": "at"},
-                    {"word": "415"}, {"word": "555"}, {"word": "1234"}, {"word": "today"},
+                    {"word": "call"},
+                    {"word": "me"},
+                    {"word": "at"},
+                    {"word": "415"},
+                    {"word": "555"},
+                    {"word": "1234"},
+                    {"word": "today"},
                 ],
             }
         ],

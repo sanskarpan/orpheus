@@ -1,4 +1,4 @@
-"""Audio-intelligence processors (PRD 03).
+"""Audio-intelligence processors (PRD 13).
 
 Adds capabilities on top of the existing analysis surface, reusing the
 `text_ops` LLM-analysis pattern and the `redact` span-masking machinery:
@@ -153,8 +153,22 @@ async def chapters_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
 # ORPHEUS_PROFANITY_LEXICON env). Deliberately conservative to avoid false mutes;
 # matched case-insensitively on whole words.
 _BASE_PROFANITY = {
-    "fuck", "fucking", "fucker", "shit", "shitty", "bitch", "bastard", "asshole",
-    "dick", "piss", "cunt", "damn", "crap", "prick", "slut", "whore",
+    "fuck",
+    "fucking",
+    "fucker",
+    "shit",
+    "shitty",
+    "bitch",
+    "bastard",
+    "asshole",
+    "dick",
+    "piss",
+    "cunt",
+    "damn",
+    "crap",
+    "prick",
+    "slut",
+    "whore",
 }
 
 
@@ -340,9 +354,7 @@ def _merge_ranges(ranges: list[tuple[float, float]]) -> list[tuple[float, float]
     return merged
 
 
-def _write_audio_artifact(
-    ctx: dict[str, Any], org_id: str, job_id: str, local_path: str
-) -> str:
+def _write_audio_artifact(ctx: dict[str, Any], org_id: str, job_id: str, local_path: str) -> str:
     """Upload the redacted audio and register it as a tenant-scoped artifact."""
     s3 = ctx["s3"]
     bucket = ctx["bucket"]
@@ -357,7 +369,11 @@ def _write_audio_artifact(
         VALUES (%s,%s,%s,%s,%s,'audio/wav','completed'::probe_status)
         RETURNING id::text
         """,
-        org_id, bucket, key, sha, len(data),
+        org_id,
+        bucket,
+        key,
+        sha,
+        len(data),
     )
     return row["id"]
 
@@ -392,7 +408,11 @@ async def audio_redact_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     artifact_id = job["artifact_id"] or params.get("artifact_id")
     if not artifact_id:
         raise ValueError("audio.redact requires the source audio artifact")
-    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s", artifact_id, job["org_id"])
+    art = db.fetchrow(
+        "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s",
+        artifact_id,
+        job["org_id"],
+    )
     if art is None:
         raise ValueError(f"artifact {artifact_id} not found")
 
@@ -433,7 +453,11 @@ def _fetch_source_wav(ctx: dict[str, Any], job: dict, params: dict, tag: str) ->
     artifact_id = job["artifact_id"] or params.get("artifact_id")
     if not artifact_id:
         raise ValueError(f"{tag} requires the source audio artifact")
-    art = db.fetchrow("SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s", artifact_id, job["org_id"])
+    art = db.fetchrow(
+        "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s",
+        artifact_id,
+        job["org_id"],
+    )
     if art is None:
         raise ValueError(f"artifact {artifact_id} not found")
     work_dir.mkdir(parents=True, exist_ok=True)

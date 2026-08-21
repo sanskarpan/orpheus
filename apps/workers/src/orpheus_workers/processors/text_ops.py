@@ -41,9 +41,7 @@ def _load_transcript(ctx: dict[str, Any], job: dict, params: dict) -> dict:
     org_id = job.get("org_id")
     src_job = params.get("source_job_id")
     if src_job:
-        row = db.fetchrow(
-            "SELECT result FROM jobs WHERE id = %s AND org_id = %s", src_job, org_id
-        )
+        row = db.fetchrow("SELECT result FROM jobs WHERE id = %s AND org_id = %s", src_job, org_id)
         if row and row["result"]:
             r = row["result"]
             return r if isinstance(r, dict) else json.loads(r)
@@ -52,7 +50,8 @@ def _load_transcript(ctx: dict[str, Any], job: dict, params: dict) -> dict:
     if art_id:
         art = db.fetchrow(
             "SELECT s3_bucket, s3_key FROM artifacts WHERE id = %s AND org_id = %s",
-            art_id, org_id,
+            art_id,
+            org_id,
         )
         if art is not None:
             work = Path(ctx["work_dir"])
@@ -314,7 +313,7 @@ async def entities_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
 @register_processor(
     "text.scorecard",
     display_name="Conversation Scorecard",
-    description="Score a sales/support call across coaching dimensions (PRD 06).",
+    description="Score a sales/support call across coaching dimensions (PRD 16).",
     tier="cpu_small",
     timeout_seconds=300,
     cost_per_job_usd=0.003,
@@ -348,7 +347,7 @@ async def scorecard_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
 @register_processor(
     "text.crm",
     display_name="CRM Auto-fill",
-    description="Extract structured CRM fields (contact, deal, next steps) from a call (PRD 06).",
+    description="Extract structured CRM fields (contact, deal, next steps) from a call (PRD 16).",
     tier="cpu_small",
     timeout_seconds=300,
     cost_per_job_usd=0.003,

@@ -1,4 +1,4 @@
-"""Audio enhancement engine (PRD 04) — noise suppression + related front-ends.
+"""Audio enhancement engine (PRD 14) — noise suppression + related front-ends.
 
 ``get_enhancer().enhance(wav_in, wav_out, mode)`` cleans a 16-bit PCM wav and
 returns quality metrics. ``ModalEnhancer`` offloads the neural modes to the Modal

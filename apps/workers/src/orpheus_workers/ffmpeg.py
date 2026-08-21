@@ -88,7 +88,7 @@ def convert_to_wav_16k_mono(src: str | Path, dst: str | Path) -> None:
 
 
 def extract_channel_16k_mono(src: str | Path, dst: str | Path, channel_index: int) -> None:
-    """Extract a single audio channel to a 16kHz mono 16-bit wav (PRD 03 §4.7).
+    """Extract a single audio channel to a 16kHz mono 16-bit wav (PRD 13 §4.7).
 
     Uses a ``pan`` filter to isolate channel ``channel_index`` (0-based) with no
     downmix bleed from the other channels, so per-channel transcription keeps
@@ -119,14 +119,12 @@ def extract_channel_16k_mono(src: str | Path, dst: str | Path, channel_index: in
         timeout=120,
     )
     if out.returncode != 0:
-        raise FFmpegError(
-            f"ffmpeg channel-extract exited {out.returncode}: {out.stderr.strip()}"
-        )
+        raise FFmpegError(f"ffmpeg channel-extract exited {out.returncode}: {out.stderr.strip()}")
 
 
 def mute_ranges(src: str | Path, dst: str | Path, ranges: list[tuple[float, float]]) -> None:
     """Write ``src`` to ``dst`` (16-bit PCM wav) with each [start, end] second range
-    silenced — audio PII "beep"/mute redaction (PRD 03 §4.5).
+    silenced — audio PII "beep"/mute redaction (PRD 13 §4.5).
 
     Ranges are applied with a single ``volume=0`` filter gated by an ``enable``
     expression, so any number of spans are muted in one pass. An empty range list
@@ -145,7 +143,7 @@ def mute_ranges(src: str | Path, dst: str | Path, ranges: list[tuple[float, floa
 
 def cut_ranges(src: str | Path, dst: str | Path, ranges: list[tuple[float, float]]) -> None:
     """Write ``src`` to ``dst`` (16-bit PCM wav) with each [start, end] second range
-    **removed** and the remaining audio concatenated (PRD 06 filler-word removal).
+    **removed** and the remaining audio concatenated (PRD 16 filler-word removal).
 
     Uses ``aselect`` to drop the sample ranges then ``asetpts`` to close the gaps,
     so the output is genuinely shorter (Descript-style), not just silenced. An

@@ -1,4 +1,4 @@
-"""Tests for audio-edit-by-text / filler removal (PRD 06 #365)."""
+"""Tests for audio-edit-by-text / filler removal (PRD 16 #365)."""
 
 from __future__ import annotations
 
@@ -22,7 +22,9 @@ def _tr():
         {"word": "uh", "start": 1.5, "end": 2.0},
         {"word": "again", "start": 2.0, "end": 2.5},
     ]
-    return {"segments": [{"start": 0.0, "end": 2.5, "text": "hello um world uh again", "words": words}]}
+    return {
+        "segments": [{"start": 0.0, "end": 2.5, "text": "hello um world uh again", "words": words}]
+    }
 
 
 def test_plan_filler_edit_drops_and_reindexes():
@@ -39,9 +41,19 @@ def test_plan_filler_edit_drops_and_reindexes():
 
 
 def test_plan_filler_edit_no_fillers():
-    tr = {"segments": [{"start": 0, "end": 1, "text": "clean speech",
-                        "words": [{"word": "clean", "start": 0, "end": 0.5},
-                                  {"word": "speech", "start": 0.5, "end": 1.0}]}]}
+    tr = {
+        "segments": [
+            {
+                "start": 0,
+                "end": 1,
+                "text": "clean speech",
+                "words": [
+                    {"word": "clean", "start": 0, "end": 0.5},
+                    {"word": "speech", "start": 0.5, "end": 1.0},
+                ],
+            }
+        ]
+    }
     ranges, cleaned, removed = plan_filler_edit(tr, _DEFAULT_FILLERS)
     assert removed == 0 and ranges == []
     assert cleaned[0]["text"] == "clean speech"
@@ -71,8 +83,12 @@ class _EditDB:
 
     def fetchrow(self, sql, *args):
         if "id, org_id, artifact_id, params" in sql:
-            return {"id": "j1", "org_id": "org-1", "artifact_id": "art-1",
-                    "params": {"source_job_id": "j0", "mode": "remove_fillers"}}
+            return {
+                "id": "j1",
+                "org_id": "org-1",
+                "artifact_id": "art-1",
+                "params": {"source_job_id": "j0", "mode": "remove_fillers"},
+            }
         if "SELECT result FROM jobs" in sql:
             return {"result": self.transcript}
         if "SELECT s3_bucket, s3_key FROM artifacts" in sql:

@@ -1,4 +1,4 @@
-"""Tests for audio-intelligence processors (PRD 03): chapters + moderation."""
+"""Tests for audio-intelligence processors (PRD 13): chapters + moderation."""
 
 from __future__ import annotations
 
@@ -43,10 +43,12 @@ def _ctx(transcript, params, tmp_path):
 
 
 def test_build_chapters_maps_indices_to_timestamps():
-    data = {"chapters": [
-        {"start_index": 0, "title": "Intro", "summary": "hi"},
-        {"start_index": 2, "title": "Roadmap", "summary": "plans"},
-    ]}
+    data = {
+        "chapters": [
+            {"start_index": 0, "title": "Intro", "summary": "hi"},
+            {"start_index": 2, "title": "Roadmap", "summary": "plans"},
+        ]
+    }
     chs = _build_chapters(data, SEGMENTS)
     assert [c["title"] for c in chs] == ["Intro", "Roadmap"]
     assert chs[0]["start"] == 0.0 and chs[0]["end"] == 10.0  # runs to seg before next
@@ -54,10 +56,12 @@ def test_build_chapters_maps_indices_to_timestamps():
 
 
 def test_build_chapters_forces_start_at_zero_and_dedupes():
-    data = {"chapters": [
-        {"start_index": 2, "title": "B"},
-        {"start_index": 2, "title": "dup"},  # deduped
-    ]}
+    data = {
+        "chapters": [
+            {"start_index": 2, "title": "B"},
+            {"start_index": 2, "title": "dup"},  # deduped
+        ]
+    }
     chs = _build_chapters(data, SEGMENTS)
     assert chs[0]["start"] == 0.0  # a chapter is forced at segment 0
     assert len(chs) == 2 and chs[0]["title"] == "Introduction"
@@ -149,7 +153,9 @@ def test_pii_time_ranges_word_level():
     tr = {
         "segments": [
             {
-                "start": 0.0, "end": 2.0, "text": "email alice@example.com now",
+                "start": 0.0,
+                "end": 2.0,
+                "text": "email alice@example.com now",
                 "words": [
                     {"word": "email", "start": 0.0, "end": 0.4},
                     {"word": "alice@example.com", "start": 0.4, "end": 1.5},
@@ -198,10 +204,12 @@ class _RedactS3:
 
     def download_file(self, bucket, key, dst):
         from pathlib import Path
+
         Path(dst).write_bytes(b"RIFFfake-wav-bytes")
 
     def upload_file(self, bucket, key, src, content_type=None):
         from pathlib import Path
+
         self.uploaded[key] = Path(src).read_bytes()
         return len(self.uploaded[key])
 
@@ -213,6 +221,7 @@ async def test_audio_redact_proc_mutes_pii_and_writes_artifact(tmp_path, monkeyp
 
     def fake_mute(src, dst, ranges):
         from pathlib import Path
+
         captured["ranges"] = ranges
         Path(dst).write_bytes(b"RIFFmuted")
 
@@ -221,7 +230,9 @@ async def test_audio_redact_proc_mutes_pii_and_writes_artifact(tmp_path, monkeyp
     tr = {
         "segments": [
             {
-                "start": 0.0, "end": 2.0, "text": "reach me at bob@corp.com please",
+                "start": 0.0,
+                "end": 2.0,
+                "text": "reach me at bob@corp.com please",
                 "words": [
                     {"word": "reach", "start": 0.0, "end": 0.3},
                     {"word": "me", "start": 0.3, "end": 0.5},

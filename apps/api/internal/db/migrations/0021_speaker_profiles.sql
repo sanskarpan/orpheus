@@ -1,7 +1,7 @@
 -- +goose Up
 -- ============================================================================
 -- 0021_speaker_profiles.sql — persistent speaker enrollment / voiceprints
--- (PRD 03 §4.8).
+-- (PRD 13 §4.8).
 --
 -- Stores per-tenant enrolled speaker voiceprints (mean-normalized ECAPA
 -- embeddings) so a returning speaker can be recognized across jobs. Voiceprints

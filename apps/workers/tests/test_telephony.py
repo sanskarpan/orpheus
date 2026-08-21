@@ -1,4 +1,4 @@
-"""Tests for telephony ingestion (PRD 05 #355): μ-law codec + Twilio protocol."""
+"""Tests for telephony ingestion (PRD 15 #355): μ-law codec + Twilio protocol."""
 
 from __future__ import annotations
 
@@ -75,8 +75,10 @@ def test_twilio_route_e2e_bridges_to_s2s():
     from orpheus_workers.streaming import create_app
 
     def complete_tx(pcm, sr):
-        ws = [{"word": w, "start": i * 0.5, "end": (i + 1) * 0.5, "confidence": 0.9}
-              for i, w in enumerate(["hello", "there", "friend."])]
+        ws = [
+            {"word": w, "start": i * 0.5, "end": (i + 1) * 0.5, "confidence": 0.9}
+            for i, w in enumerate(["hello", "there", "friend."])
+        ]
         return {"words": ws, "text": "hello there friend."}
 
     app = create_app(transcriber=complete_tx, partial_transcriber=complete_tx)
@@ -110,9 +112,15 @@ def test_twilio_route_e2e_bridges_to_s2s():
 def test_twilio_clear_and_parse():
     assert twilio_clear("S1") == {"event": "clear", "streamSid": "S1"}
     assert parse_twilio_frame({"event": "start", "start": {"streamSid": "S9"}}) == {
-        "kind": "start", "stream_sid": "S9"}
+        "kind": "start",
+        "stream_sid": "S9",
+    }
     assert parse_twilio_frame({"event": "media", "media": {"payload": "abc"}}) == {
-        "kind": "media", "payload": "abc"}
+        "kind": "media",
+        "payload": "abc",
+    }
     assert parse_twilio_frame({"event": "dtmf", "dtmf": {"digit": "5"}}) == {
-        "kind": "dtmf", "digit": "5"}
+        "kind": "dtmf",
+        "digit": "5",
+    }
     assert parse_twilio_frame({"event": "stop"}) == {"kind": "stop"}

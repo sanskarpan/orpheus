@@ -1,4 +1,4 @@
-"""Text-embedding provider + ranking for the transcript index (PRD 06 #359/#360).
+"""Text-embedding provider + ranking for the transcript index (PRD 16 #359/#360).
 
 ``get_text_embedder().embed(texts)`` returns unit-norm sentence embeddings.
 ``ModalTextEmbedder`` offloads to the Modal all-MiniLM service when
@@ -39,7 +39,10 @@ class StubTextEmbedder:
         out = []
         for t in texts:
             digest = hashlib.sha256((t or "").strip().lower().encode()).digest()
-            vec = [struct.unpack("<h", digest[i : i + 2])[0] / 32768.0 for i in range(0, self.dim * 2, 2)]
+            vec = [
+                struct.unpack("<h", digest[i : i + 2])[0] / 32768.0
+                for i in range(0, self.dim * 2, 2)
+            ]
             out.append(_normalize(vec))
         return out
 

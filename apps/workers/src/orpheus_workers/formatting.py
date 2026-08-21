@@ -1,4 +1,4 @@
-"""Inverse text normalization (ITN) + smart formatting for transcripts (PRD 01 §4.2).
+"""Inverse text normalization (ITN) + smart formatting for transcripts (PRD 11 §4.2).
 
 Rewrites spoken-form ASR output into written form — "twenty twenty six" → "2026",
 "five dollars" → "$5", "three thirty pm" → "3:30 pm", "twenty percent" → "20%",

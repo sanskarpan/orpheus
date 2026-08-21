@@ -74,7 +74,7 @@ type Config struct {
 	RateLimitFailClosed bool `envconfig:"RATE_LIMIT_FAIL_CLOSED" default:"false"`
 
 	// TelephonyEnabled turns on the Twilio Media Streams telephony feature
-	// (PRD 05 #355): the /telephony/* relay + TwiML + token endpoints. Off by
+	// (PRD 15 #355): the /telephony/* relay + TwiML + token endpoints. Off by
 	// default because it requires an external provisioned phone number; when
 	// false the routes are not mounted at all (404) and the frontend hides any
 	// telephony surface. Set ORPHEUS_TELEPHONY_ENABLED=true to enable.

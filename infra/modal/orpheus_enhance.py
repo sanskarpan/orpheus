@@ -1,4 +1,4 @@
-"""Orpheus audio-enhancement service on Modal GPU (PRD 04).
+"""Orpheus audio-enhancement service on Modal GPU (PRD 14).
 
 Neural, Krisp-class enhancement with open, non-gated models:
 - ``denoise`` / ``dereverb`` / ``telephony`` — **SpeechBrain MetricGAN+** speech
@@ -127,8 +127,13 @@ class Enhancer:
         mode = str(payload.get("mode", "denoise")).lower()
         warnings = []
         if not raw:
-            return {"audio_b64": "", "metrics": {}, "warnings": ["empty_audio"],
-                    "model_version_id": MODEL_VERSION_ID, "gpu_seconds": 0.0}
+            return {
+                "audio_b64": "",
+                "metrics": {},
+                "warnings": ["empty_audio"],
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": 0.0,
+            }
 
         audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
         if audio.ndim > 1:

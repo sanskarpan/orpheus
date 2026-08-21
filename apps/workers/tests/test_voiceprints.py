@@ -1,4 +1,4 @@
-"""Tests for speaker voiceprints (PRD 03 §4.8): embed, match, enroll, identify."""
+"""Tests for speaker voiceprints (PRD 13 §4.8): embed, match, enroll, identify."""
 
 from __future__ import annotations
 
@@ -62,6 +62,7 @@ def test_match_profile_threshold_and_dim_guard():
         {"id": "3", "name": "WrongDim", "embedding": [1.0, 0.0, 0.0]},  # skipped
     ]
     m = match_profile(emb, profs, threshold=0.5)
+    assert m is not None
     assert m["name"] == "Alice" and m["score"] == 1.0
     # below threshold → no match
     assert match_profile([0.0, 1.0], profs[:1], threshold=0.5) is None
@@ -78,6 +79,7 @@ def test_cosine_guards():
 class _EnrollDB:
     def __init__(self):
         self.inserted = None
+        self.params: dict | None = None
 
     def fetchrow(self, sql, *args):
         if "id, org_id, artifact_id, params" in sql:
@@ -118,6 +120,7 @@ async def test_enroll_inserts_voiceprint(tmp_path):
     res = await enroll_proc(ctx, "j1")
     assert res["speaker_id"] == "spk-1" and res["name"] == "Alice"
     # INSERT args: (org_id, name, embedding, dim, model_version_id)
+    assert db.inserted is not None
     org_id, name, embedding, dim, _mv = db.inserted
     assert org_id == "org-1" and name == "Alice"
     assert dim == len(embedding) == StubEmbedder.dim
@@ -150,6 +153,7 @@ async def test_identify_matches_enrolled_speaker(tmp_path):
 async def test_identify_no_profiles_is_empty(tmp_path):
     wav = tmp_path / "call.wav"
     _make_wav(wav)
-    out = _identify_speakers(_IdentifyDB([]), wav, [{"start": 0, "end": 1, "speaker": "S1"}],
-                             "org-1", tmp_path, "j1")
+    out = _identify_speakers(
+        _IdentifyDB([]), wav, [{"start": 0, "end": 1, "speaker": "S1"}], "org-1", tmp_path, "j1"
+    )
     assert out == {}

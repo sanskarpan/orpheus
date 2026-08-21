@@ -110,9 +110,8 @@ def partial_whisper_transcriber(pcm: bytes, sample_rate: int) -> dict:
     the commit model), so a deployment can run e.g. ``tiny.en`` for partials and
     ``large-v3-turbo`` for finals.
     """
-    model_size = (
-        os.environ.get("ORPHEUS_STREAMING_PARTIAL_MODEL")
-        or os.environ.get("ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en")
+    model_size = os.environ.get("ORPHEUS_STREAMING_PARTIAL_MODEL") or os.environ.get(
+        "ORPHEUS_WORKER_WHISPER_MODEL", "tiny.en"
     )
     return _run_whisper_pcm(pcm, sample_rate, model_size)
 
@@ -136,10 +135,10 @@ def ecapa_embedder(pcm: bytes, sample_rate: int) -> list[float] | None:
     global _ecapa_model
     try:
         import numpy as np
-        import torch
+        import torch  # type: ignore  # optional heavy dep
 
         if _ecapa_model is None:
-            from speechbrain.inference.speaker import EncoderClassifier
+            from speechbrain.inference.speaker import EncoderClassifier  # type: ignore  # optional heavy dep
 
             source = os.environ.get(
                 "ORPHEUS_STREAMING_EMBED_MODEL", "speechbrain/spkrec-ecapa-voxceleb"
@@ -213,7 +212,7 @@ class StreamConfig:
     # window (matching the offline diarizer) gives stable, clusterable geometry
     # even when LocalAgreement only just confirmed a couple of words.
     diarize_window_seconds: float = 1.5
-    # Voice-agent turn-taking events (PRD 05): emit speech_start/speech_end/
+    # Voice-agent turn-taking events (PRD 15): emit speech_start/speech_end/
     # barge_in/backchannel/voicemail alongside transcript events.
     turn_events: bool = False
     # The client sets this (via a bot_state control frame) while the agent's TTS is
@@ -247,10 +246,45 @@ SilenceProbe = Callable[[float], bool]
 # Words that, when they end an utterance, signal the speaker is mid-thought — so
 # a pause after them should NOT end the turn (they're waiting to continue).
 _DANGLING_WORDS = {
-    "and", "but", "or", "so", "because", "the", "a", "an", "to", "of", "for",
-    "in", "on", "at", "with", "my", "your", "our", "their", "his", "her", "its",
-    "is", "are", "was", "were", "that", "which", "as", "if", "when", "while",
-    "i", "we", "you", "they", "he", "she", "it",
+    "and",
+    "but",
+    "or",
+    "so",
+    "because",
+    "the",
+    "a",
+    "an",
+    "to",
+    "of",
+    "for",
+    "in",
+    "on",
+    "at",
+    "with",
+    "my",
+    "your",
+    "our",
+    "their",
+    "his",
+    "her",
+    "its",
+    "is",
+    "are",
+    "was",
+    "were",
+    "that",
+    "which",
+    "as",
+    "if",
+    "when",
+    "while",
+    "i",
+    "we",
+    "you",
+    "they",
+    "he",
+    "she",
+    "it",
 }
 
 
@@ -319,9 +353,7 @@ class ModalEndpointDetector(SemanticEndpointDetector):
         try:
             import httpx
 
-            resp = httpx.post(
-                url, json={"token": token, "text": tail_text}, timeout=2.0
-            )
+            resp = httpx.post(url, json={"token": token, "text": tail_text}, timeout=2.0)
             resp.raise_for_status()
             return bool(resp.json().get("complete"))
         except Exception:
@@ -337,21 +369,53 @@ def make_endpoint_detector(config: StreamConfig) -> Any:
     return EnergyEndpointDetector(config)
 
 
-# --- voice-agent turn-taking (PRD 05) ---------------------------------------
+# --- voice-agent turn-taking (PRD 15) ---------------------------------------
 
 # Short acknowledgement tokens that are backchannels ("mm-hm", "yeah") rather than
 # real turns — an agent should not treat them as an interruption/turn.
 _BACKCHANNEL_WORDS = {
-    "mm", "mmm", "mhm", "mmhm", "uhhuh", "uhuh", "hmm", "yeah", "yep", "yup",
-    "ok", "okay", "right", "sure", "gotcha", "totally", "exactly", "yes", "no",
-    "aha", "ah", "oh", "wow", "nice", "cool", "true",
+    "mm",
+    "mmm",
+    "mhm",
+    "mmhm",
+    "uhhuh",
+    "uhuh",
+    "hmm",
+    "yeah",
+    "yep",
+    "yup",
+    "ok",
+    "okay",
+    "right",
+    "sure",
+    "gotcha",
+    "totally",
+    "exactly",
+    "yes",
+    "no",
+    "aha",
+    "ah",
+    "oh",
+    "wow",
+    "nice",
+    "cool",
+    "true",
 }
 # Phrases that signal an answering machine / voicemail greeting.
 _VOICEMAIL_CUES = (
-    "leave a message", "after the tone", "after the beep", "at the tone",
-    "you've reached", "you have reached", "is not available", "please record",
-    "record your message", "voicemail", "unavailable to take your call",
-    "please leave your", "not available to take",
+    "leave a message",
+    "after the tone",
+    "after the beep",
+    "at the tone",
+    "you've reached",
+    "you have reached",
+    "is not available",
+    "please record",
+    "record your message",
+    "voicemail",
+    "unavailable to take your call",
+    "please leave your",
+    "not available to take",
 )
 
 
@@ -460,6 +524,7 @@ class StreamSession:
         text = " ".join(w["word"] for w in ws).strip()
         if not self._redact_enabled():
             return text, abs_words
+        assert self.redact is not None  # guaranteed by _redact_enabled()
         from .redact import _mask_for, get_detector
 
         entities = self.redact.get("entities") or ["EMAIL", "PHONE", "SSN", "CREDIT_CARD"]
@@ -547,8 +612,10 @@ class StreamSession:
             if self.config.bot_speaking:
                 # user talked over the agent's TTS → interruption
                 events.append({"type": "barge_in", "turn_id": self._turn_id, "time": now})
-        elif not speech and self._in_speech and self._trailing_silence(
-            self.config.vad_silence_seconds
+        elif (
+            not speech
+            and self._in_speech
+            and self._trailing_silence(self.config.vad_silence_seconds)
         ):
             self._in_speech = False
             events.append({"type": "speech_end", "time": now})
@@ -648,8 +715,11 @@ class StreamSession:
                     if spk is not None and spk != self._active_speaker:
                         self._active_speaker = spk
                         events.append(
-                            {"type": "speaker_update", "speaker": f"S{spk + 1}",
-                             "turn_id": self._turn_id}
+                            {
+                                "type": "speaker_update",
+                                "speaker": f"S{spk + 1}",
+                                "turn_id": self._turn_id,
+                            }
                         )
                     final_ev: dict[str, Any] = {
                         "type": "final",
@@ -662,12 +732,11 @@ class StreamSession:
                     if spk is not None:
                         final_ev["speaker"] = f"S{spk + 1}"
                     events.append(final_ev)
-                    # Voice-agent turn-taking tags (PRD 05).
+                    # Voice-agent turn-taking tags (PRD 15).
                     if self.config.turn_events:
                         if _is_backchannel(red_text):
                             events.append(
-                                {"type": "backchannel", "text": red_text,
-                                 "turn_id": self._turn_id}
+                                {"type": "backchannel", "text": red_text, "turn_id": self._turn_id}
                             )
                         if not self._voicemail_emitted and _looks_voicemail(
                             " ".join(self._final_texts)
@@ -763,6 +832,7 @@ class StreamSession:
         """
         if not self._diarize_enabled():
             return None
+        assert self.embedder is not None  # guaranteed by _diarize_enabled()
         import numpy as np
 
         sr = self.config.sample_rate
@@ -843,7 +913,11 @@ def create_app(
     """
     tx = transcriber or whisper_transcriber
     partial_tx = partial_transcriber or partial_whisper_transcriber
-    diarize_default = os.environ.get("ORPHEUS_STREAMING_DIARIZE", "").strip() in ("1", "true", "yes")
+    diarize_default = os.environ.get("ORPHEUS_STREAMING_DIARIZE", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
     embed_fn = embedder or ecapa_embedder
     app = FastAPI(title="Orpheus Streaming", version="0.1.0")
 
@@ -932,7 +1006,7 @@ def create_app(
 
     @app.websocket("/v1/stream/converse")
     async def stream_converse(ws: WebSocket) -> None:
-        """Full-duplex speech-to-speech: ASR → LLM → TTS with barge-in (PRD 05).
+        """Full-duplex speech-to-speech: ASR → LLM → TTS with barge-in (PRD 15).
 
         Same PCM16 input as ``/v1/stream/transcribe``; in addition to transcript
         events it emits ``bot_reply`` (agent text), ``tts_audio`` (base64 wav to
@@ -953,8 +1027,10 @@ def create_app(
             nonlocal session
             if session is None:
                 asr = StreamSession(
-                    transcriber=tx, partial_transcriber=partial_tx,
-                    embedder=embed_fn, config=config,
+                    transcriber=tx,
+                    partial_transcriber=partial_tx,
+                    embedder=embed_fn,
+                    config=config,
                 )
                 session = ConverseSession(asr=asr, llm=get_llm(), tts=get_tts())
             return session
@@ -1050,8 +1126,10 @@ def create_app(
                 if p["kind"] == "start":
                     stream_sid = p.get("stream_sid")
                     asr = StreamSession(
-                        transcriber=tx, partial_transcriber=partial_tx,
-                        embedder=embed_fn, config=config,
+                        transcriber=tx,
+                        partial_transcriber=partial_tx,
+                        embedder=embed_fn,
+                        config=config,
                     )
                     session = ConverseSession(asr=asr, llm=get_llm(), tts=get_tts())
                 elif p["kind"] == "media" and session is not None:

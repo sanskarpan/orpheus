@@ -1,4 +1,4 @@
-"""Tests for audio enhancement (PRD 04): spectral denoiser + audio.enhance processor."""
+"""Tests for audio enhancement (PRD 14): spectral denoiser + audio.enhance processor."""
 
 from __future__ import annotations
 
@@ -71,6 +71,7 @@ def test_gpu_only_mode_degrades_with_warning(tmp_path):
 class _EnhDB:
     def __init__(self):
         self.inserted = None
+        self.params: dict | None = None
 
     def fetchrow(self, sql, *args):
         if "id, org_id, artifact_id, params" in sql:
