@@ -1,18 +1,18 @@
 import "server-only";
 import { randomBytes, scryptSync, timingSafeEqual, createCipheriv, createDecipheriv, createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import Database from "better-sqlite3";
 
 /* ================================================================== *
- * Local user-account store (the app-level auth layer that sits in
- * front of the machine-to-machine API).
+ * User-account store (the app-level auth layer that sits in front of
+ * the machine-to-machine API).
  *
  * A user logs in here with email + password; the account holds the
  * org's provisioned API key (encrypted at rest). The API key is never
  * exposed to the browser — the BFF reads it server-side to call /v1.
  *
- * SQLite keeps this fully local with zero extra infrastructure.
+ * Storage is Cloudflare D1 (serverless SQLite over HTTP) so the store
+ * works on serverless hosts (Vercel) that have no persistent local
+ * disk. All lookups are async. Config via CLOUDFLARE_ACCOUNT_ID,
+ * CLOUDFLARE_API_TOKEN, D1_DATABASE_ID.
  * ================================================================== */
 
 export interface Account {
@@ -21,44 +21,66 @@ export interface Account {
   name: string;
   org_id: string;
   org_key: string; // decrypted; only returned by server-side lookups
-  /** The API-key id of the owner key (org_key). Used to label/protect it in the
-   * keys UI by exact id rather than an ambiguous 9-char prefix. May be absent on
-   * accounts created before this column existed. */
   org_key_id?: string;
   is_platform_admin: boolean;
   created_at: string;
 }
 
-const DB_DIR = path.join(process.cwd(), ".data");
-const DB_PATH = path.join(DB_DIR, "accounts.db");
+/* ---- Cloudflare D1 HTTP client ---- */
 
-let _db: Database.Database | null = null;
-
-function db(): Database.Database {
-  if (_db) return _db;
-  mkdirSync(DB_DIR, { recursive: true });
-  const d = new Database(DB_PATH);
-  d.pragma("journal_mode = WAL");
-  d.exec(`
-    CREATE TABLE IF NOT EXISTS accounts (
-      id                TEXT PRIMARY KEY,
-      email             TEXT NOT NULL UNIQUE,
-      password_hash     TEXT NOT NULL,
-      name              TEXT NOT NULL,
-      org_id            TEXT NOT NULL,
-      org_key_enc       TEXT NOT NULL,
-      is_platform_admin INTEGER NOT NULL DEFAULT 0,
-      created_at        TEXT NOT NULL
+function d1Config(): { acct: string; token: string; db: string } {
+  const acct = process.env.CLOUDFLARE_ACCOUNT_ID;
+  const token = process.env.CLOUDFLARE_API_TOKEN;
+  const db = process.env.D1_DATABASE_ID;
+  if (!acct || !token || !db) {
+    throw new Error(
+      "Account store is not configured: set CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_API_TOKEN, D1_DATABASE_ID.",
     );
-  `);
-  // Additive migration for accounts created before the owner-key id was tracked.
-  try {
-    d.exec("ALTER TABLE accounts ADD COLUMN org_key_id TEXT");
-  } catch {
-    // Column already exists — SQLite has no idempotent ADD COLUMN.
   }
-  _db = d;
-  return d;
+  return { acct, token, db };
+}
+
+async function d1Query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
+  const { acct, token, db } = d1Config();
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${acct}/d1/database/${db}/query`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ sql, params }),
+      cache: "no-store",
+    },
+  );
+  const body = (await res.json()) as {
+    success: boolean;
+    result?: { results?: T[] }[];
+    errors?: { message: string }[];
+  };
+  if (!res.ok || !body.success) {
+    const msg = body.errors?.map((e) => e.message).join("; ") || `HTTP ${res.status}`;
+    throw new Error(`D1 query failed: ${msg}`);
+  }
+  return body.result?.[0]?.results ?? [];
+}
+
+let _schemaReady: Promise<void> | null = null;
+function ensureSchema(): Promise<void> {
+  if (!_schemaReady) {
+    _schemaReady = d1Query(
+      `CREATE TABLE IF NOT EXISTS accounts (
+         id                TEXT PRIMARY KEY,
+         email             TEXT NOT NULL UNIQUE,
+         password_hash     TEXT NOT NULL,
+         name              TEXT NOT NULL,
+         org_id            TEXT NOT NULL,
+         org_key_enc       TEXT NOT NULL,
+         org_key_id        TEXT,
+         is_platform_admin INTEGER NOT NULL DEFAULT 0,
+         created_at        TEXT NOT NULL
+       );`,
+    ).then(() => undefined);
+  }
+  return _schemaReady;
 }
 
 /* ---- password hashing (scrypt, no native dep) ---- */
@@ -110,13 +132,15 @@ function adminEmails(): Set<string> {
   );
 }
 
-function countAccounts(): number {
-  return (db().prepare("SELECT COUNT(*) AS n FROM accounts").get() as { n: number }).n;
+async function countAccounts(): Promise<number> {
+  const rows = await d1Query<{ n: number }>("SELECT COUNT(*) AS n FROM accounts");
+  return rows[0]?.n ?? 0;
 }
 
 /** The first account created, or any configured email, is a platform admin. */
-export function resolvePlatformAdmin(email: string): boolean {
-  return countAccounts() === 0 || adminEmails().has(email.toLowerCase());
+export async function resolvePlatformAdmin(email: string): Promise<boolean> {
+  if (adminEmails().has(email.toLowerCase())) return true;
+  return (await countAccounts()) === 0;
 }
 
 /* ---- account CRUD ---- */
@@ -141,16 +165,18 @@ function rowToAccount(r: Row): Account {
     org_id: r.org_id,
     org_key: decrypt(r.org_key_enc),
     org_key_id: r.org_key_id ?? undefined,
-    is_platform_admin: r.is_platform_admin === 1,
+    is_platform_admin: Number(r.is_platform_admin) === 1,
     created_at: r.created_at,
   };
 }
 
-export function emailExists(email: string): boolean {
-  return !!db().prepare("SELECT 1 FROM accounts WHERE email = ?").get(email.toLowerCase());
+export async function emailExists(email: string): Promise<boolean> {
+  await ensureSchema();
+  const rows = await d1Query("SELECT 1 AS ok FROM accounts WHERE email = ?", [email.toLowerCase()]);
+  return rows.length > 0;
 }
 
-export function createAccount(input: {
+export async function createAccount(input: {
   id: string;
   email: string;
   password: string;
@@ -160,7 +186,8 @@ export function createAccount(input: {
   org_key_id?: string;
   is_platform_admin: boolean;
   created_at: string;
-}): Account {
+}): Promise<Account> {
+  await ensureSchema();
   const row: Row = {
     id: input.id,
     email: input.email.toLowerCase(),
@@ -172,41 +199,43 @@ export function createAccount(input: {
     created_at: input.created_at,
     password_hash: hashPassword(input.password),
   };
-  db()
-    .prepare(
-      `INSERT INTO accounts (id, email, password_hash, name, org_id, org_key_enc, org_key_id, is_platform_admin, created_at)
-       VALUES (@id, @email, @password_hash, @name, @org_id, @org_key_enc, @org_key_id, @is_platform_admin, @created_at)`,
-    )
-    .run(row);
+  await d1Query(
+    `INSERT INTO accounts (id, email, password_hash, name, org_id, org_key_enc, org_key_id, is_platform_admin, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [row.id, row.email, row.password_hash, row.name, row.org_id, row.org_key_enc, row.org_key_id, row.is_platform_admin, row.created_at],
+  );
   return rowToAccount(row);
 }
 
 /** Backfill/repair the stored owner-key id for an account. */
-export function setOrgKeyId(accountId: string, keyId: string): void {
-  db().prepare("UPDATE accounts SET org_key_id = ? WHERE id = ?").run(keyId, accountId);
+export async function setOrgKeyId(accountId: string, keyId: string): Promise<void> {
+  await d1Query("UPDATE accounts SET org_key_id = ? WHERE id = ?", [keyId, accountId]);
 }
 
-export function getAccountById(id: string): Account | null {
+export async function getAccountById(id: string): Promise<Account | null> {
   try {
-    const r = db().prepare("SELECT * FROM accounts WHERE id = ?").get(id) as Row | undefined;
-    return r ? rowToAccount(r) : null;
+    await ensureSchema();
+    const rows = await d1Query<Row>("SELECT * FROM accounts WHERE id = ?", [id]);
+    return rows[0] ? rowToAccount(rows[0]) : null;
   } catch {
     // Corrupt org_key_enc or a rotated SESSION_SECRET makes decrypt() throw.
-    // Treat as "no account" so callers run the stale-session recovery path
-    // instead of 500-ing with no way out.
+    // Treat as "no account" so callers run the stale-session recovery path.
     return null;
   }
 }
 
 /** Verify email + password; returns the account on success, null otherwise. */
-export function authenticate(email: string, password: string): Account | null {
-  const r = db().prepare("SELECT * FROM accounts WHERE email = ?").get(email.toLowerCase()) as Row | undefined;
+export async function authenticate(email: string, password: string): Promise<Account | null> {
+  await ensureSchema();
+  const rows = await d1Query<Row>("SELECT * FROM accounts WHERE email = ?", [email.toLowerCase()]);
+  const r = rows[0];
   if (!r) return null;
   if (!verifyPassword(password, r.password_hash)) return null;
   return rowToAccount(r);
 }
 
-export function findByEmail(email: string): Account | null {
-  const r = db().prepare("SELECT * FROM accounts WHERE email = ?").get(email.toLowerCase()) as Row | undefined;
-  return r ? rowToAccount(r) : null;
+export async function findByEmail(email: string): Promise<Account | null> {
+  await ensureSchema();
+  const rows = await d1Query<Row>("SELECT * FROM accounts WHERE email = ?", [email.toLowerCase()]);
+  return rows[0] ? rowToAccount(rows[0]) : null;
 }
