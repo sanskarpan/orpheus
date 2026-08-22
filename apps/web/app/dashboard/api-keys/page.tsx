@@ -30,7 +30,7 @@ export default async function ApiKeysPage() {
     if (matches.length === 1) {
       ownerKeyId = matches[0].id;
       try {
-        setOrgKeyId(account.id, ownerKeyId);
+        await setOrgKeyId(account.id, ownerKeyId);
       } catch {
         // Non-fatal: labelling still works this render via ownerKeyId.
       }
