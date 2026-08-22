@@ -178,11 +178,15 @@ class Diarizer:
             k = 1
         else:
             best_k, best_s = 1, -1.0
-            for cand in range(2, min(max_speakers, len(emb)) + 1):
+            # silhouette_score requires 2 <= n_labels <= n_samples - 1, so the
+            # candidate k must stay below len(emb): a k == n_samples run yields one
+            # label per window and raises ValueError. Cap the search at len(emb)-1.
+            for cand in range(2, min(max_speakers, len(emb) - 1) + 1):
                 labels = AgglomerativeClustering(
                     n_clusters=cand, metric="cosine", linkage="average"
                 ).fit_predict(emb)
-                if len(set(labels)) < 2:
+                n_labels = len(set(labels))
+                if n_labels < 2 or n_labels >= len(emb):
                     continue
                 s = silhouette_score(emb, labels, metric="cosine")
                 if s > best_s:
