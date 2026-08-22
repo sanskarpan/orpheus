@@ -72,7 +72,7 @@ export async function signUp(_prev: unknown, formData: FormData): Promise<FormRe
   if (!name) return { error: "Enter your name." };
   if (!EMAIL_RE.test(email)) return { error: "Enter a valid email address." };
   if (password.length < 8) return { error: "Password must be at least 8 characters." };
-  if (emailExists(email)) return { error: "An account with that email already exists — try logging in." };
+  if (await emailExists(email)) return { error: "An account with that email already exists — try logging in." };
 
   const orgName = workspace || `${name}'s Workspace`;
 
@@ -89,7 +89,7 @@ export async function signUp(_prev: unknown, formData: FormData): Promise<FormRe
 
   const orgKeyId = await resolveOwnerKeyId(provisioned.api_key, provisioned.key_prefix);
 
-  const account = createAccount({
+  const account = await createAccount({
     id: randomUUID(),
     email,
     password,
@@ -97,7 +97,7 @@ export async function signUp(_prev: unknown, formData: FormData): Promise<FormRe
     org_id: provisioned.org_id,
     org_key: provisioned.api_key,
     org_key_id: orgKeyId,
-    is_platform_admin: resolvePlatformAdmin(email),
+    is_platform_admin: await resolvePlatformAdmin(email),
     created_at: new Date().toISOString(),
   });
 
@@ -113,7 +113,7 @@ export async function signIn(_prev: unknown, formData: FormData): Promise<FormRe
   if (!EMAIL_RE.test(email)) return { error: "Enter a valid email address." };
   if (!password) return { error: "Enter your password." };
 
-  const account = authenticate(email, password);
+  const account = await authenticate(email, password);
   if (!account) return { error: "Incorrect email or password." };
 
   await openSession(account.id);
@@ -126,7 +126,7 @@ export async function signIn(_prev: unknown, formData: FormData): Promise<FormRe
  */
 export async function demoLogin(): Promise<FormResult> {
   const email = "demo@orpheus.local";
-  let account = findByEmail(email);
+  let account = await findByEmail(email);
 
   if (!account) {
     let provisioned: ProvisionResponse;
@@ -139,7 +139,7 @@ export async function demoLogin(): Promise<FormResult> {
       return { error: e instanceof Error ? e.message : "Couldn't set up the demo account." };
     }
     const orgKeyId = await resolveOwnerKeyId(provisioned.api_key, provisioned.key_prefix);
-    account = createAccount({
+    account = await createAccount({
       id: randomUUID(),
       email,
       password: `demo-${randomUUID()}`, // random; demo is entered via this button only
@@ -147,7 +147,7 @@ export async function demoLogin(): Promise<FormResult> {
       org_id: provisioned.org_id,
       org_key: provisioned.api_key,
       org_key_id: orgKeyId,
-      is_platform_admin: resolvePlatformAdmin(email),
+      is_platform_admin: await resolvePlatformAdmin(email),
       created_at: new Date().toISOString(),
     });
   }

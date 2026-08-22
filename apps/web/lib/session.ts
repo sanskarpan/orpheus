@@ -39,7 +39,7 @@ export async function getAccount(): Promise<Account | null> {
   try {
     const s = await getSession();
     if (!s.userId) return null;
-    return getAccountById(s.userId);
+    return await getAccountById(s.userId);
   } catch {
     // A malformed/undecryptable cookie must resolve to "signed out", never a crash.
     return null;
