@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Nav } from "@/components/Nav";
+import { MobileNav } from "@/components/MobileNav";
 import { LiveClock } from "@/components/LiveClock";
 import { signOut } from "@/app/actions/auth";
 
@@ -31,8 +32,8 @@ export function Shell({
 }) {
   return (
     <div className="flex min-h-screen">
-      {/* Left rail */}
-      <aside className="fixed inset-y-0 left-0 z-20 flex w-64 flex-col border-r border-hairline bg-panel/60 backdrop-blur-sm">
+      {/* Left rail — hidden below md; the mobile drawer takes over there. */}
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 flex-col border-r border-hairline bg-panel/60 backdrop-blur-sm md:flex">
         <div className="flex items-center gap-2.5 px-5 py-5">
           <div className="flex h-7 w-7 items-center justify-center rounded-md border border-brass/40 bg-brass/10">
             <span className="font-display text-lg font-extrabold leading-none text-brass">O</span>
@@ -80,11 +81,14 @@ export function Shell({
       </aside>
 
       {/* Main column */}
-      <div className="ml-64 flex min-h-screen flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-hairline bg-ground/70 px-8 backdrop-blur-md">
-          <Link href="/dashboard" className="label transition-colors hover:text-ink-mid">
-            orpheus · studio console
-          </Link>
+      <div className="flex min-h-screen flex-1 flex-col md:ml-64">
+        <header className="sticky top-0 z-10 flex h-14 items-center justify-between border-b border-hairline bg-ground/70 px-4 backdrop-blur-md md:px-8">
+          <div className="flex items-center gap-3">
+            <MobileNav admin={admin} />
+            <Link href="/dashboard" className="label transition-colors hover:text-ink-mid">
+              orpheus · studio console
+            </Link>
+          </div>
           <div className="flex items-center gap-4">
             <span className="hidden items-center gap-1.5 text-2xs font-mono text-ink-lo sm:flex">
               <span className="h-1.5 w-1.5 rounded-full bg-ok" /> API live
@@ -93,7 +97,7 @@ export function Shell({
           </div>
         </header>
 
-        <main className="flex-1 px-8 py-8">{children}</main>
+        <main className="flex-1 px-4 py-8 md:px-8">{children}</main>
       </div>
     </div>
   );
