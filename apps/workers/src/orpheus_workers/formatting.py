@@ -156,7 +156,11 @@ def _year_like(tokens: list[str]) -> int | None:
         else:
             return None
     if len(vals) == 2 and 10 <= vals[0] <= 99 and 0 <= vals[1] <= 99:
-        return vals[0] * 100 + vals[1]
+        year = vals[0] * 100 + vals[1]
+        # Only a plausible 4-digit year; otherwise "fifty fifty" -> 5050 instead
+        # of being left as two ordinary numbers.
+        if 1000 <= year <= 2999:
+            return year
     return None
 
 
@@ -262,6 +266,22 @@ def _apply_itn_tokens(tokens: list[_Tok]) -> list[_Tok]:
             while run and _clean(run[-1].text) == "and":
                 run.pop()
                 j -= 1
+            # Compound ordinal: a number run immediately followed by an ordinal
+            # word ("twenty first" -> "21st", "one hundred first" -> "101st").
+            nxt_clean = _clean(tokens[j].text) if j < len(tokens) else ""
+            if nxt_clean in _ORDINAL_WORDS:
+                base = _year_like([t.text for t in run]) or _words_to_int([t.text for t in run])
+                if base is not None:
+                    out.append(
+                        _Tok(
+                            _ordinal(base + _ORDINAL_WORDS[nxt_clean]),
+                            run[0].start,
+                            tokens[j].end,
+                            run[0].confidence,
+                        )
+                    )
+                    i = j + 1
+                    continue
             following = tokens[j].text if j < len(tokens) else None
             written, consumed = _run_written_form(run, following)
             if written is not None:
