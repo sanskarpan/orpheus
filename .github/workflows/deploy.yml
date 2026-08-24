@@ -1,0 +1,119 @@
+name: deploy
+
+# Continuous deployment. Runs after the CI workflow ("orpheus-monorepo")
+# completes successfully on main, and deploys only the components whose paths
+# changed in the merged commit. Can also be dispatched manually (optionally
+# forcing every component).
+on:
+  workflow_run:
+    workflows: ["orpheus-monorepo"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Deploy all components regardless of changed paths"
+        type: boolean
+        default: false
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Gate on CI success (for workflow_run) and compute which components changed.
+  changes:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+      modal: ${{ steps.f.outputs.modal }}
+      frontend: ${{ steps.f.outputs.frontend }}
+      backend: ${{ steps.f.outputs.backend }}
+    steps:
+      - id: sha
+        run: echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.sha.outputs.sha }}
+          fetch-depth: 2
+      - id: f
+        env:
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          if [ "${FORCE}" = "true" ]; then
+            echo "force: deploying all components"
+            printf 'modal=true\nfrontend=true\nbackend=true\n' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CHANGED="$(git diff --name-only HEAD~1 HEAD || git show --name-only --pretty=format: HEAD)"
+          echo "changed files:"; echo "${CHANGED}"
+          has() { echo "${CHANGED}" | grep -qE "$1"; }
+          echo "modal=$(has '^infra/modal/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$(has '^apps/web/' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "backend=$(has '^apps/(api|workers)/|^packages/|^postgres/|^scripts/deploy-backend.sh' && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  deploy-modal:
+    needs: changes
+    if: needs.changes.outputs.modal == 'true'
+    runs-on: ubuntu-latest
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install --quiet modal
+      - name: Deploy Modal services
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          for f in infra/modal/orpheus_*.py; do
+            echo "==> modal deploy $f"
+            modal deploy "$f"
+          done
+
+  deploy-frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --global vercel@latest
+      - name: Build & deploy to Vercel (production)
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"
+
+  deploy-backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    # Self-hosted runner on the Oracle VM (label: orpheus-vm). Only push-to-main
+    # deploys reach it; PR CI runs on GitHub-hosted runners.
+    runs-on: [self-hosted, orpheus-vm]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Deploy backend (build + migrate + restart on the VM)
+        run: bash scripts/deploy-backend.sh
