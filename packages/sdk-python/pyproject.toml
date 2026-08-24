@@ -40,3 +40,6 @@ packages = ["src/orpheus_sdk"]
 [tool.ruff]
 line-length = 100
 target-version = "py39"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
