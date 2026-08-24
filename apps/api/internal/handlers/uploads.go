@@ -270,10 +270,12 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 
 	actualSize, actualContentType, err := h.S3.HeadObject(r.Context(), key)
 	if err != nil {
+		h.abandonFinalizedUpload(r.Context(), p.OrgID, key, sessionID)
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to probe uploaded object")
 		return
 	}
 	if actualSize != sizeBytes {
+		h.abandonFinalizedUpload(r.Context(), p.OrgID, key, sessionID)
 		writeProblem(w, http.StatusConflict, "validation", "Uploaded size mismatch")
 		return
 	}
@@ -284,6 +286,7 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	// abort/delete the object so we don't retain junk.
 	header, err := h.S3.GetObjectRange(r.Context(), key, 512)
 	if err != nil {
+		h.abandonFinalizedUpload(r.Context(), p.OrgID, key, sessionID)
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to read uploaded object")
 		return
 	}
@@ -310,6 +313,7 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 	// audio → same cached transcript). Computed by streaming the object.
 	contentSHA, err := h.S3.ObjectSHA256(r.Context(), key)
 	if err != nil {
+		h.abandonFinalizedUpload(r.Context(), p.OrgID, key, sessionID)
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to hash uploaded content")
 		return
 	}
@@ -356,6 +360,22 @@ func (h *UploadHandler) Complete(w http.ResponseWriter, r *http.Request) {
 		SizeBytes:   actualSize,
 		ContentType: actualContentType,
 		CreatedAt:   time.Now(),
+	})
+}
+
+// abandonFinalizedUpload tears down an upload that CompleteMultipartUpload
+// already materialised in S3 but that Complete then had to reject (size
+// mismatch) or could not finish probing/reading/hashing. It deletes the
+// finalised object so tenant bytes are not orphaned and marks the session
+// `failed` so it reaches a terminal state instead of lingering `pending`.
+// Both steps are best-effort — the caller is already returning an error to
+// the client — so errors here are swallowed, matching the S3 cleanup done
+// on the content-validation branches above.
+func (h *UploadHandler) abandonFinalizedUpload(ctx context.Context, orgID, key, sessionID string) {
+	_ = h.S3.DeleteObject(ctx, key)
+	_ = h.DB.WithTenant(ctx, orgID, func(ctx context.Context) error {
+		_, err := dbtx.Exec(ctx, h.DB, `UPDATE upload_sessions SET status = 'failed' WHERE id = $1`, sessionID)
+		return err
 	})
 }
 
