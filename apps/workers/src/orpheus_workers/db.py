@@ -154,8 +154,11 @@ class WorkerDB:
         )
 
     def mark_job_dead_letter(self, job_id: str, error: str) -> None:
+        # Guard on status = 'running' (mirroring requeue_job_for_retry) so a job
+        # that has already durably reached a terminal state — most importantly
+        # 'completed' — is never overwritten with a dead-letter error.
         self.execute(
-            "UPDATE jobs SET status = 'dead_letter'::job_status, result = %s, completed_at = now() WHERE id = %s",
+            "UPDATE jobs SET status = 'dead_letter'::job_status, result = %s, completed_at = now() WHERE id = %s AND status = 'running'::job_status",
             json.dumps({"error": error, "dead_letter": True}),
             job_id,
         )
