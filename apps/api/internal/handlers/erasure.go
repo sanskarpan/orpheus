@@ -86,6 +86,12 @@ func (h *ErasureHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "validation", "artifact_id or job_id required")
 		return
 	}
+	// The id is cast to uuid in the WHERE clauses below; a malformed value
+	// would otherwise surface as a 500 rather than a client error.
+	if _, err := uuid.Parse(targetID); err != nil {
+		writeProblem(w, http.StatusBadRequest, "validation", "artifact_id or job_id must be a valid UUID")
+		return
+	}
 
 	id := uuid.NewString()
 	now := time.Now()
