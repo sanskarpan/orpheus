@@ -16,6 +16,21 @@ type FormResult = { error: string } | void;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** Demo one-click login is a dev convenience and MUST be explicitly enabled —
+ * it authenticates as a real provisioned org owner, so it stays off in prod
+ * unless ORPHEUS_ENABLE_DEMO=true. */
+const DEMO_ENABLED = process.env.ORPHEUS_ENABLE_DEMO === "true";
+
+/** Only allow same-site, absolute post-auth redirects. Rejects protocol-relative
+ * ("//host") and backslash-smuggled targets so `next` can't become an open
+ * redirect to an attacker origin. */
+function safeNext(next: string): string {
+  if (!next.startsWith("/") || next.startsWith("//") || next.startsWith("/\\")) {
+    return "/dashboard";
+  }
+  return next;
+}
+
 function adminKey(): string | null {
   return process.env.ORPHEUS_ADMIN_KEY?.trim() || null;
 }
@@ -102,7 +117,7 @@ export async function signUp(_prev: unknown, formData: FormData): Promise<FormRe
   });
 
   await openSession(account.id);
-  redirect(next);
+  redirect(safeNext(next));
 }
 
 export async function signIn(_prev: unknown, formData: FormData): Promise<FormResult> {
@@ -117,7 +132,7 @@ export async function signIn(_prev: unknown, formData: FormData): Promise<FormRe
   if (!account) return { error: "Incorrect email or password." };
 
   await openSession(account.id);
-  redirect(next);
+  redirect(safeNext(next));
 }
 
 /**
@@ -125,6 +140,9 @@ export async function signIn(_prev: unknown, formData: FormData): Promise<FormRe
  * the first time. Purely for local development convenience.
  */
 export async function demoLogin(): Promise<FormResult> {
+  if (!DEMO_ENABLED) {
+    return { error: "Demo access is disabled. Create an account or log in." };
+  }
   const email = "demo@orpheus.local";
   let account = await findByEmail(email);
 
