@@ -15,6 +15,17 @@ def test_itn_numbers_currency_percent_time_ordinal():
     assert "1999" in format_text("released in nineteen ninety nine")
 
 
+def test_already_written_times_are_not_corrupted():
+    # Regression (#575): modern ASR emits written-form times, and the clock rule
+    # must not seize a fragment of one — "3.30pm" was being rewritten to
+    # "3.30:00 pm" by matching its "30pm" tail as hour=30.
+    assert format_text("the meeting is at 3.30pm") == "The meeting is at 3.30pm"
+    # an already-correct colon time is left alone
+    assert format_text("call me at 3:30 pm") == "Call me at 3:30 pm"
+    # spoken/spaced forms still normalize to a colon time
+    assert "3:30 pm" in format_text("the meeting is at three thirty pm")
+
+
 def test_truecasing():
     assert format_text("hello world. how are you") == "Hello world. How are you"
     assert format_text("i think i am right") == "I think I am right"
