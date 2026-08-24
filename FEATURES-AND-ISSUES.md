@@ -18,8 +18,8 @@
 - [x] **Modern model tier** (large-v3-turbo on GPU) — #389 · PR #461
 - [x] **Custom vocabulary / keyterm biasing** (`initial_prompt`/`vocabulary`) — #391 · PR #458
 - [x] **Cold-start** mitigation (warmup + upload-signal prewarm) — #394, #480 · PR #458, #481
-- [ ] **Forced-aligned word timestamps** (WhisperX/wav2vec2) — 🟡 partial: DTW word timestamps by default; MMS_FA forced alignment via the deployed `orpheus-align` Modal service is wired + opt-in (`params.alignment=forced`, needs `word_timestamps=true`) but not yet in the API contract/UI — #298
-- [ ] **Inverse text normalization (ITN) / smart formatting** config — 🟡 partial: a rule-engine ITN exists (`params.formatting`), but `large-v3-turbo` already emits written-form text so it double-normalizes (clock-format bug reproduced) and punctuation restoration is a stub; needs a fix before exposure — #392-adjacent
+- [x] **Forced-aligned word timestamps** — MMS_FA via the deployed `orpheus-align` Modal service, opt-in `params.alignment=forced`; params exposed in the API contract (PR #611) + a live acceptance test (PR #628). Accuracy-vs-ground-truth benchmark is out-of-scope (needs a labeled corpus) — #298
+- [x] **Inverse text normalization (ITN) / smart formatting** config — rule-engine ITN + truecasing + punctuation restoration (PR #626); clock double-normalization fixed (PR #575) and compound-ordinal / plausible-year edge cases (PR #632); opt-in `params.formatting` — #392-adjacent
 - [x] **VAD-segmented long-file chunking** — VAD is the **default** long-file mode (energy VAD cuts at pauses; `chunking=fixed` opt-out); tested — #395
 - [ ] **Code-switching** mid-utterance — 🟡 partial: an opt-in VAD-segmented multilang path exists (one language per segment)
 
@@ -93,7 +93,7 @@
 
 ## A9. Developer experience / API
 - [x] **List-envelope standardized** (`{data, has_more, next_cursor}`) — #442 · PR #469
-- [ ] **Official client SDKs** (Python/JS/Go) — 🟡 partial: all three exist (`packages/sdk-{python,typescript,go}`); missing the `transcribe()` upload-and-poll helper (Py/TS), CI codegen from OpenAPI, and Py/TS tests — #444
+- [ ] **Official client SDKs** (Python/JS/Go) — 🟡 partial: Python `transcribe()` upload-and-poll helper + tests + CI shipped (PR #630); TS/Go helpers and OpenAPI CI codegen pending — #444
 - [ ] **OpenAI/Deepgram-compatible endpoint** — #445
 - [ ] **Job-create callback URL** + upload-and-poll helper — 🟡 partial: webhook callbacks live; Go SDK has `WaitForCompletion`, Py/TS helper pending
 - [ ] **MCP server** for transcript retrieval / agents — #447
@@ -132,9 +132,9 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [x] Real cost metering + hard budget caps (#302) — *AWS, OpenAI*
 - [x] Subtitles/captions export (SRT/VTT) (#304) — *all*
 - [x] Custom vocabulary / keyterm biasing (#305) — *all APIs*
-- [ ] Accurate word-level timestamps (**forced alignment**) (#298) — 🟡 partial (DTW) — *WhisperX, Parakeet, NeMo NFA*
-- [ ] Punctuation + smart formatting + **ITN** (#299) — 🟡 partial — *all*
-- [ ] Multi-language **client SDKs** (#303) — 🟡 partial: all three exist; `transcribe()` helper + CI codegen + Py/TS tests pending — *all*
+- [x] Accurate word-level timestamps (**forced alignment**) (#298) — MMS_FA via Modal, opt-in; params exposed + live acceptance test — *WhisperX, Parakeet, NeMo NFA*
+- [x] Punctuation + smart formatting + **ITN** (#299) — ITN + punctuation + truecasing; edge cases fixed — *all*
+- [ ] Multi-language **client SDKs** (#303) — 🟡 partial: Python `transcribe()` helper + tests + CI shipped; TS/Go + OpenAPI codegen pending — *all*
 
 ## P1 — Competitive
 
@@ -158,7 +158,7 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [x] PII redaction (text + audio "beep") (#313) — `text.redact` + `audio.redact` (beep/silence) live; regex default, ML-NER opt-in — *AssemblyAI, AWS, Deepgram*
 - [ ] Code-switching mid-utterance (#321) — 🟡 partial: opt-in multilang path (one language per segment) — *Soniox, Deepgram, Gladia*
 - [ ] Multichannel / stereo per-channel (#322) — 🟡 partial: per-channel transcribe path exists — *Gladia, Speechmatics, AWS*
-- [ ] Profanity filter / content moderation (#323) — 🟡 partial: `text.moderate` lexicon profanity live; LLM moderation categories are a stub — *Deepgram, AssemblyAI, AWS*
+- [x] Profanity filter / content moderation (#323) — `text.moderate`: lexicon profanity + LLM category scoring (hate/harassment/sexual/violence/self_harm), verified live — *Deepgram, AssemblyAI, AWS*
 
 **Platform / infra / enterprise**
 - [x] Async callbacks + webhooks (#324) — *all*
