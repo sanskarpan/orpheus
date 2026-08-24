@@ -1,9 +1,11 @@
 # Orpheus — Features & Issues (Checklist)
 
-> **Compiled:** 2026-08-11 · **Checklist updated:** 2026-08-14 · Sibling to [`docs/COMPETITIVE_ANALYSIS.md`](docs/COMPETITIVE_ANALYSIS.md). PRDs for every unchecked item live in [`docs/prd/`](docs/prd/).
+> **Compiled:** 2026-08-11 · **Checklist updated:** 2026-08-14 · **Status re-verified:** 2026-08-24 · Sibling to [`docs/COMPETITIVE_ANALYSIS.md`](docs/COMPETITIVE_ANALYSIS.md). PRDs for every unchecked item live in [`docs/prd/`](docs/prd/).
 > **Method:** source-cited codebase audit + market research across API vendors (Deepgram, AssemblyAI, OpenAI, Gladia, Speechmatics, Rev, ElevenLabs, Google/AWS/Azure), dictation apps (Wispr Flow, Superwhisper, VoiceInk, Talon…), meeting SaaS (Otter, Fireflies, Descript, tl;dv, Fathom, Grain…), OSS (Whisper family, NeMo Parakeet/Canary, FunASR/SenseVoice, Kyutai/Moshi, Voxtral, MMS…), and realtime-voice stacks (Soniox, Cartesia, Deepgram Flux, Krisp, LiveKit, Pipecat, Vapi, Retell).
 
 **Legend:** `- [x]` shipped · `- [ ]` not done · **🟡 partial** = some of it shipped, rest tracked. Closed GitHub issues are the source of truth; PR/issue refs are inline. **Releases:** v0.1.0 (stabilization) · v0.2.0 (real GPU audio-intelligence + streaming rewrite) · further intelligence processors on `main` since.
+
+> **2026-08-24 re-verification note.** Status re-audited against the **live 31-processor catalog** (`GET /v1/processors`) and the 8 deployed Modal services. Many rows previously `- [ ]` are in fact shipped as real processors (`audio.emotion`, `audio.events`, `audio.chapters`, `speaker.enroll`, `audio.enhance`, `audio.edit`, `audio.dub`, `audio.redact`, `text.crm`, `text.scorecard`, `text.moderate`, `transcript.ask/index/search`); those are flipped below with the processor name cited. **Evidence bar:** a row is `- [x]` when a matching processor is live in the catalog and (for the ones spot-checked this pass — `transcribe`, `audio.enhance`, `audio.emotion`, `text.summarize`) returns a real result end-to-end; **realtime/streaming** variants of a shipped batch capability stay open. **Deployment caveat:** the LLM service (`orpheus-llm` vLLM) is deployed but **not yet wired into the worker** in the live deploy, so LLM-over-transcript processors (summarize/ask/scorecard/crm/highlights and the LLM path of `text.moderate`) currently run on a **stub LLM** live — the feature code is shipped; only the backend wiring is pending.
 
 ---
 
@@ -16,10 +18,10 @@
 - [x] **Modern model tier** (large-v3-turbo on GPU) — #389 · PR #461
 - [x] **Custom vocabulary / keyterm biasing** (`initial_prompt`/`vocabulary`) — #391 · PR #458
 - [x] **Cold-start** mitigation (warmup + upload-signal prewarm) — #394, #480 · PR #458, #481
-- [ ] **Forced-aligned word timestamps** (WhisperX/wav2vec2) — 🟡 partial: word timestamps exist (DTW), not forced-aligned — #298
-- [ ] **Inverse text normalization (ITN) / smart formatting** config — #392-adjacent
-- [ ] **VAD-segmented long-file chunking** (batch still fixed 60 s windows) — #395
-- [ ] **Code-switching** mid-utterance (auto-detect yes; single-language per pass)
+- [ ] **Forced-aligned word timestamps** (WhisperX/wav2vec2) — 🟡 partial: DTW word timestamps by default; MMS_FA forced alignment via the deployed `orpheus-align` Modal service is wired + opt-in (`params.alignment=forced`, needs `word_timestamps=true`) but not yet in the API contract/UI — #298
+- [ ] **Inverse text normalization (ITN) / smart formatting** config — 🟡 partial: a rule-engine ITN exists (`params.formatting`), but `large-v3-turbo` already emits written-form text so it double-normalizes (clock-format bug reproduced) and punctuation restoration is a stub; needs a fix before exposure — #392-adjacent
+- [x] **VAD-segmented long-file chunking** — VAD is the **default** long-file mode (energy VAD cuts at pauses; `chunking=fixed` opt-out); tested — #395
+- [ ] **Code-switching** mid-utterance — 🟡 partial: an opt-in VAD-segmented multilang path exists (one language per segment)
 
 ## A2. Streaming
 - [x] **O(n²) window re-transcription → LocalAgreement-2** incremental decoding — #397, #398 · PR #482
@@ -40,11 +42,11 @@
 - [x] **Topic detection + key phrases** (`text.topics`) — #317 · PR #486
 - [x] **Entity detection** (`text.entities`) — #318 · PR #486
 - [x] **Speaker embeddings/ID** (ECAPA) — #320 · PR #479
-- [ ] **PII redaction upgrade** — 🟡 partial: regex default; ML-NER (Presidio) opt-in — #A3-pii
-- [ ] **Emotion recognition** (SenseVoice/SpeechBrain/Qwen-Audio) — #368
-- [ ] **Audio-event detection** (laughter/music/applause) — #369
-- [ ] **Auto-chapters** as first-class output — 🟡 partial: `summarize` has a `chapters` mode
-- [ ] **Speaker enrollment** (persistent voiceprint across sessions)
+- [ ] **PII redaction upgrade** — 🟡 partial: text (`text.redact`) + **audio beep/silence** (`audio.redact`) redaction are live; regex default with ML-NER (Presidio) opt-in — #A3-pii
+- [x] **Emotion recognition** — `audio.emotion` (SenseVoice on Modal): per-segment labels + scores (verified live) — #368
+- [x] **Audio-event detection** — `audio.events` (laughter/music/applause as time spans) — #369
+- [x] **Auto-chapters** as first-class output — `audio.chapters` (structured timestamped chapters); `text.summarize` also has a `chapters` mode
+- [x] **Speaker enrollment** (persistent voiceprint across sessions) — `speaker.enroll` (consent-gated ECAPA voiceprint)
 
 ## A4. Cost / billing / metering
 - [x] **GPU-seconds metering** (real cost = gpu_seconds × rate) — #413 · PR #465
@@ -83,17 +85,17 @@
 - [ ] **Marketplace sandbox** for third-party processor code — #432
 
 ## A8. Data / storage / lifecycle
-- [ ] **Transcript store / search / retrieval** surface — #433
-- [ ] **Semantic search / knowledge base** over transcripts — #434
+- [x] **Transcript store / search / retrieval** surface — `transcript.index` + `transcript.search` (org-scoped semantic index) — #433
+- [x] **Semantic search / knowledge base** over transcripts — `transcript.search` + `transcript.ask` (grounded Q&A with citations; LLM-backed) — #434
 - [ ] **Data residency / region selection** — #435
-- [ ] **Retention policies / per-tenant TTLs**
+- [ ] **Retention policies / per-tenant TTLs** — 🟡 partial: the API runs a retention sweeper; per-tenant TTL config pending
 - [ ] **Streaming/transcoded artifact delivery** (signed-URL only today)
 
 ## A9. Developer experience / API
 - [x] **List-envelope standardized** (`{data, has_more, next_cursor}`) — #442 · PR #469
-- [ ] **Official client SDKs** (Python/JS/Go) — #444
+- [ ] **Official client SDKs** (Python/JS/Go) — 🟡 partial: all three exist (`packages/sdk-{python,typescript,go}`); missing the `transcribe()` upload-and-poll helper (Py/TS), CI codegen from OpenAPI, and Py/TS tests — #444
 - [ ] **OpenAI/Deepgram-compatible endpoint** — #445
-- [ ] **Job-create callback URL** + upload-and-poll helper
+- [ ] **Job-create callback URL** + upload-and-poll helper — 🟡 partial: webhook callbacks live; Go SDK has `WaitForCompletion`, Py/TS helper pending
 - [ ] **MCP server** for transcript retrieval / agents — #447
 - [ ] **Processor SDK** for third parties
 
@@ -105,12 +107,12 @@
 
 ## A11. Product / UX gaps
 - [ ] **Meeting bot / auto-join + live notes** — #454
-- [ ] **Action items / decisions / highlights** — 🟡 partial: chapters via summarize
-- [ ] **Noise suppression / echo / voice isolation** (Krisp-class)
-- [ ] **Audio-edit-by-text** (Descript-style)
-- [ ] **TTS / dubbing / voice cloning**
+- [x] **Action items / decisions / highlights** — `text.summarize` `action_items` mode + `audio.highlights` (LLM-picked moments); LLM-backed
+- [x] **Noise suppression / echo / voice isolation** (Krisp-class) — `audio.enhance` (denoise/dereverb/isolate on Modal, verified live)
+- [x] **Audio-edit-by-text** (Descript-style) — `audio.edit` (transcript-driven filler removal → shorter clean clip)
+- [ ] **TTS / dubbing / voice cloning** — 🟡 partial: `audio.dub` + `orpheus-tts` (Kokoro) synth/overdub live; voice cloning pending
 - [ ] **Collaboration** (comments, clips, sharing)
-- [ ] **CRM / conversation-intelligence**
+- [x] **CRM / conversation-intelligence** — `text.crm` (structured CRM fields) + `text.scorecard` (coaching dimensions); LLM-backed
 - [ ] **Dictation / voice-typing client + AI cleanup**
 - [ ] **Caption styling / burn-in**
 
@@ -132,7 +134,7 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [x] Custom vocabulary / keyterm biasing (#305) — *all APIs*
 - [ ] Accurate word-level timestamps (**forced alignment**) (#298) — 🟡 partial (DTW) — *WhisperX, Parakeet, NeMo NFA*
 - [ ] Punctuation + smart formatting + **ITN** (#299) — 🟡 partial — *all*
-- [ ] Multi-language **client SDKs** (#303) — *all*
+- [ ] Multi-language **client SDKs** (#303) — 🟡 partial: all three exist; `transcribe()` helper + CI codegen + Py/TS tests pending — *all*
 
 ## P1 — Competitive
 
@@ -152,11 +154,11 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [x] Topic detection / key phrases (#317) — *AssemblyAI, Gladia*
 - [x] Entity detection (#318) — *AssemblyAI, Deepgram*
 - [x] LLM-over-transcript (Q&A / custom summaries / RAG) (#319) — *AssemblyAI LeMUR, Otter*
-- [x] Speaker identification / enrollment (embeddings) (#320) — 🟡 enrollment pending — *Speechmatics, SpeechBrain*
-- [ ] PII redaction (text + audio "beep") (#313) — 🟡 partial (regex text) — *AssemblyAI, AWS, Deepgram*
-- [ ] Code-switching mid-utterance (#321) — *Soniox, Deepgram, Gladia*
-- [ ] Multichannel / stereo per-channel (#322) — *Gladia, Speechmatics, AWS*
-- [ ] Profanity filter / content moderation (#323) — *Deepgram, AssemblyAI, AWS*
+- [x] Speaker identification / enrollment (embeddings) (#320) — enrollment shipped (`speaker.enroll`) — *Speechmatics, SpeechBrain*
+- [x] PII redaction (text + audio "beep") (#313) — `text.redact` + `audio.redact` (beep/silence) live; regex default, ML-NER opt-in — *AssemblyAI, AWS, Deepgram*
+- [ ] Code-switching mid-utterance (#321) — 🟡 partial: opt-in multilang path (one language per segment) — *Soniox, Deepgram, Gladia*
+- [ ] Multichannel / stereo per-channel (#322) — 🟡 partial: per-channel transcribe path exists — *Gladia, Speechmatics, AWS*
+- [ ] Profanity filter / content moderation (#323) — 🟡 partial: `text.moderate` lexicon profanity live; LLM moderation categories are a stub — *Deepgram, AssemblyAI, AWS*
 
 **Platform / infra / enterprise**
 - [x] Async callbacks + webhooks (#324) — *all*
@@ -176,7 +178,7 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [x] Transparent per-second, GPU-metered pricing (#333) ⭐
 - [x] Content-addressed result cache (#336) ⭐
 - [x] GDPR erasure saga (#337)
-- [ ] Self-host / on-prem / air-gapped (#334) — 🟡 partial (posture) ⭐ — *Speechmatics, Rev, Azure*
+- [ ] Self-host / on-prem / air-gapped (#334) — 🟡 partial: the full compose stack now runs on a self-managed VM (proven); no packaged/air-gapped distribution ⭐ — *Speechmatics, Rev, Azure*
 - [ ] Processor marketplace w/ **sandboxed 3rd-party code** (#432) — 🟡 partial (metadata-only) ⭐
 
 **Dictation "flow" layer**
@@ -189,10 +191,10 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [ ] Sub-700 ms "flow" latency (#344) — *Wispr*
 
 **Audio enhancement (Krisp-class)**
-- [ ] AI noise suppression (#345) — *Krisp, LiveKit*
+- [x] AI noise suppression (#345) — `audio.enhance` (denoise) — *Krisp, LiveKit*
 - [ ] Background Voice Cancellation (#346) — *Krisp BVC, LiveKit*
-- [ ] Echo cancellation / de-reverb (#347) — *Krisp*
-- [ ] Voice isolation (#348) — *Krisp*
+- [x] Echo cancellation / de-reverb (#347) — `audio.enhance` (dereverb) — *Krisp*
+- [x] Voice isolation (#348) — `audio.enhance` (isolate) — *Krisp*
 - [ ] Accent conversion (#349) — *Krisp*
 - [ ] Telephony-optimized (8 kHz) denoise (#350) — *LiveKit, Krisp*
 
@@ -201,30 +203,30 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [ ] Backchannel detection (#352) — *Vapi, Retell*
 - [ ] Active-listening / addressed-only mode (#353) — *Speechmatics Flow*
 - [ ] Voicemail detection (#354) — *Vapi, Retell*
-- [ ] Call transfer / DTMF / SIP-RTP-WebRTC ingestion (#355) — *Vapi, Retell, LiveKit*
+- [ ] Call transfer / DTMF / SIP-RTP-WebRTC ingestion (#355) — 🟡 partial: Twilio Media Streams telephony relay exists behind `ORPHEUS_TELEPHONY_ENABLED` — *Vapi, Retell, LiveKit*
 - [ ] Full-duplex / speech-to-speech (#356) — *Kyutai Moshi, Seamless*
 
 **Meeting & media-intelligence**
 - [ ] Meeting bot / auto-join (#357) — *Otter, Fireflies, tl;dv*
-- [ ] Live notes + action items + decisions (#358) — *meeting tools*
-- [ ] Cross-meeting / semantic search + KB (#359) — *Otter, Fireflies, Fathom*
-- [ ] Ask-AI / chat over transcript(s) (#360) — *Otter, Fireflies, Fathom*
-- [ ] Highlight reels / clips / soundbites (#361) — *Grain*
+- [ ] Live notes + action items + decisions (#358) — 🟡 partial: action items via `text.summarize`; no live meeting capture — *meeting tools*
+- [x] Cross-meeting / semantic search + KB (#359) — `transcript.index` + `transcript.search` — *Otter, Fireflies, Fathom*
+- [x] Ask-AI / chat over transcript(s) (#360) — `transcript.ask` (grounded, cited; LLM-backed) — *Otter, Fireflies, Fathom*
+- [x] Highlight reels / clips / soundbites (#361) — `audio.highlights` — *Grain*
 - [ ] Collaboration (comments, sharing) (#362) — *meeting tools*
-- [ ] Conversation intelligence (scorecards) (#363) — *Grain, tl;dv, Gong*
-- [ ] CRM auto-fill / field sync (#364) — *tl;dv, Fathom*
-- [ ] Audio-edit-by-text (#365) — *Descript*
-- [ ] Filler-word removal as edit / multitrack (#366) — *Descript*
-- [ ] Overdub / voice clone / TTS / dubbing (#367) — *Descript, ElevenLabs*
+- [x] Conversation intelligence (scorecards) (#363) — `text.scorecard` (LLM-backed) — *Grain, tl;dv, Gong*
+- [x] CRM auto-fill / field sync (#364) — `text.crm` (LLM-backed) — *tl;dv, Fathom*
+- [x] Audio-edit-by-text (#365) — `audio.edit` — *Descript*
+- [ ] Filler-word removal as edit / multitrack (#366) — 🟡 partial: `audio.edit` removes filler words; multitrack pending — *Descript*
+- [ ] Overdub / voice clone / TTS / dubbing (#367) — 🟡 partial: `audio.dub` + `orpheus-tts` (Kokoro) live; voice cloning pending — *Descript, ElevenLabs*
 
 **Model / deployment differentiators**
-- [ ] Emotion recognition (#368) — *SenseVoice, SpeechBrain, Qwen-Audio*
-- [ ] Audio-event detection (#369) — *SenseVoice, sherpa-onnx*
+- [x] Emotion recognition (#368) — `audio.emotion` (SenseVoice) — *SenseVoice, SpeechBrain, Qwen-Audio*
+- [x] Audio-event detection (#369) — `audio.events` — *SenseVoice, sherpa-onnx*
 - [ ] Speech-to-speech translation (#370) — *Soniox, Seamless*
 - [ ] On-device / edge model artifacts (#371) — *whisper.cpp, WhisperKit, Moonshine*
 - [ ] 1000+ languages (#372) — *Meta MMS*
 - [ ] Human transcription tier (#373) — *Rev.com*
-- [ ] Forced alignment to external reference text (#374) — *WhisperX, NeMo NFA*
+- [ ] Forced alignment to external reference text (#374) — 🟡 partial: MMS_FA alignment to the produced transcript exists; alignment to an external reference text pending — *WhisperX, NeMo NFA*
 - [ ] Zero-data-retention / privacy mode (#375) — 🟡 partial (erasure) — *Wispr, Willow*
 - [ ] Custom AI prompt templates / named modes (#376) — 🟡 partial (composable jobs) — *Superwhisper*
 
@@ -237,7 +239,7 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [ ] Programmable command grammars + scripting (#382) — *Talon, Dragon* (app UX)
 - [ ] Ambient/background sound injection for agents (#383) — *Vapi*
 - [ ] AI QA auto-scoring of calls (#384) — *Retell*
-- [ ] Watched-folders / URL ingest / per-app modes (#385) — dictation apps (app UX)
+- [ ] Watched-folders / URL ingest / per-app modes (#385) — 🟡 partial: `ingest.url` (SSRF-checked URL ingest) live; watched-folders/per-app pending — dictation apps (app UX)
 
 ---
 
