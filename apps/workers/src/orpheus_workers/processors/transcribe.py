@@ -23,6 +23,65 @@ logger = structlog.get_logger(__name__)
 
 DEFAULT_CHUNK_SECONDS = 60
 
+# JSON Schema for the `params` object, mirrored into the DB catalog and returned
+# by GET /v1/processors/transcribe. It is the single source of truth for the
+# transcribe params: the web console renders its form from this schema (falling
+# back to a curated map only when a processor ships no schema). Params stay
+# opaque on the wire, so this is descriptive, not enforced at submit time.
+_TRANSCRIBE_INPUT_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "model": {
+            "type": "string",
+            "title": "Model",
+            "description": "Whisper model (e.g. large-v3-turbo); blank uses the server default.",
+        },
+        "language": {
+            "type": "string",
+            "title": "Language",
+            "description": "ISO code (e.g. en); blank auto-detects.",
+        },
+        "word_timestamps": {
+            "type": "boolean",
+            "title": "Word timestamps",
+            "description": "Return per-word start/end times.",
+            "default": False,
+        },
+        "chunking": {
+            "type": "string",
+            "enum": ["vad", "fixed"],
+            "title": "Chunking",
+            "description": "Long-file segmentation: VAD (cuts at pauses) or fixed windows.",
+            "default": "vad",
+        },
+        "alignment": {
+            "type": "string",
+            "enum": ["", "forced"],
+            "title": "Alignment",
+            "description": "Word-timestamp source: whisper DTW (blank) or MMS forced alignment.",
+            "default": "",
+        },
+        "formatting": {
+            "type": "boolean",
+            "title": "Smart formatting",
+            "description": "Inverse text normalization + truecasing (numbers, dates, times).",
+            "default": False,
+        },
+        "multilang": {
+            "type": "boolean",
+            "title": "Multilingual",
+            "description": "VAD-segment and transcribe each segment in its own language.",
+            "default": False,
+        },
+        "per_channel": {
+            "type": "boolean",
+            "title": "Per channel",
+            "description": "Transcribe each audio channel separately.",
+            "default": False,
+        },
+    },
+}
+
 
 @register_processor(
     "transcribe",
@@ -33,6 +92,7 @@ DEFAULT_CHUNK_SECONDS = 60
     cost_per_job_usd=0.02,
     model_id="whisper",
     model_version_id=f"whisper-{os.environ.get('ORPHEUS_WORKER_WHISPER_MODEL', 'tiny.en')}",
+    input_schema=_TRANSCRIBE_INPUT_SCHEMA,
 )
 async def transcribe_artifact(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     """Download the artifact, transcribe with whisper, return the result.
@@ -335,6 +395,10 @@ def _maybe_format(result: dict[str, Any], params: dict) -> None:
     Runs before redaction so PII regexes see normalized ("written") numbers.
     """
     fmt = params.get("formatting")
+    # Accept a plain `formatting: true` (the UI checkbox) as sugar for the rich
+    # {enabled, itn, truecase, ...} dict, which still works as before.
+    if fmt is True:
+        fmt = {"enabled": True}
     if isinstance(fmt, dict) and fmt.get("enabled"):
         format_transcript(result, fmt)
 
