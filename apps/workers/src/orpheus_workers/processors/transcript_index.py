@@ -21,6 +21,7 @@ import structlog
 
 from ..embeddings import get_text_embedder, rank_by_similarity
 from ..llm import get_llm
+from ..redact import maybe_redact
 from . import register_processor
 from .text_ops import _load_transcript, _MAX_INPUT_CHARS, _params
 
@@ -49,6 +50,10 @@ async def index_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
         raise ValueError(f"job {job_id} not found")
     params = _params(job)
     transcript = _load_transcript(ctx, job, params)
+    # PRD 08: redact PII before segment text is embedded + persisted, so the
+    # stored index never holds raw PII and transcript.ask can't forward it to the
+    # external LLM.
+    maybe_redact(transcript, params)
     segments = transcript.get("segments") or []
     src_job = _source_job_id(job, params)
     artifact_id = job["artifact_id"] or params.get("artifact_id")
@@ -118,7 +123,9 @@ def _fetch_candidates(db: Any, org_id: str, job_ids: list[str] | None) -> list[d
     )
 
 
-def _retrieve(ctx: dict[str, Any], job_id: str, default_k: int) -> tuple[list[dict], str, Any]:
+def _retrieve(
+    ctx: dict[str, Any], job_id: str, default_k: int
+) -> tuple[list[dict], str, Any, dict]:
     db = ctx["db"]
     job = db.fetchrow("SELECT id, org_id, params FROM jobs WHERE id = %s", job_id)
     if job is None:
@@ -132,10 +139,10 @@ def _retrieve(ctx: dict[str, Any], job_id: str, default_k: int) -> tuple[list[di
     embedder = get_text_embedder()
     qvec = embedder.embed([query])
     if not qvec:
-        return [], query, embedder
+        return [], query, embedder, params
     candidates = _fetch_candidates(db, job["org_id"], job_ids)
     hits = rank_by_similarity(qvec[0], candidates, top_k)
-    return hits, query, embedder
+    return hits, query, embedder, params
 
 
 @register_processor(
@@ -150,7 +157,7 @@ def _retrieve(ctx: dict[str, Any], job_id: str, default_k: int) -> tuple[list[di
     model_version_id="all-minilm-l6-v2-1",
 )
 async def search_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
-    hits, query, embedder = _retrieve(ctx, job_id, default_k=10)
+    hits, query, embedder, _ = _retrieve(ctx, job_id, default_k=10)
     results = [
         {
             "job_id": h.get("job_id"),
@@ -177,7 +184,7 @@ async def search_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
     model_version_id="all-minilm-l6-v2-1",
 )
 async def ask_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
-    hits, query, embedder = _retrieve(ctx, job_id, default_k=6)
+    hits, query, embedder, params = _retrieve(ctx, job_id, default_k=6)
     if not hits:
         return {
             "query": query,
@@ -186,9 +193,17 @@ async def ask_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
             "model_version_id": embedder.model_version_id,
         }
 
+    # PRD 08: redact PII in the retrieved excerpts before the (external) LLM sees
+    # them. Defence-in-depth over index-time redaction — the stored rows may have
+    # been indexed without a redact policy — gated on the same params.redact the
+    # text processors use. Runs on a copy, so citations below reuse the masked text.
+    excerpts = {"segments": [{"text": str(h.get("text", "") or "")} for h in hits]}
+    maybe_redact(excerpts, params)
+    texts = [seg["text"] for seg in excerpts["segments"]]
+
     context = "\n".join(
-        f"[{i}] (job {h.get('job_id')}, {float(h.get('start_seconds', 0.0)):.0f}s) {h.get('text', '')}"
-        for i, h in enumerate(hits)
+        f"[{i}] (job {h.get('job_id')}, {float(h.get('start_seconds', 0.0)):.0f}s) {t}"
+        for i, (h, t) in enumerate(zip(hits, texts, strict=False))
     )[:_MAX_INPUT_CHARS]
     llm = get_llm()
     system = (
@@ -206,10 +221,10 @@ async def ask_proc(ctx: dict[str, Any], job_id: str) -> dict[str, Any]:
             "n": i,
             "job_id": h.get("job_id"),
             "start": round(float(h.get("start_seconds", 0.0)), 3),
-            "text": h.get("text", ""),
+            "text": t,
             "score": h.get("score"),
         }
-        for i, h in enumerate(hits)
+        for i, (h, t) in enumerate(zip(hits, texts, strict=False))
     ]
     return {
         "query": query,
