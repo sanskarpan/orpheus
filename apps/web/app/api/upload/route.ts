@@ -27,6 +27,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Missing file" }, { status: 400 });
   }
 
+  // Guard before buffering into memory: reject oversized uploads by their
+  // declared size rather than OOM-ing the server reading arrayBuffer().
+  const MAX_UPLOAD_BYTES = 500 * 1024 * 1024; // 500 MB — matches the client-side guard
+  if (file.size > MAX_UPLOAD_BYTES) {
+    return NextResponse.json(
+      { error: `File too large — max ${Math.floor(MAX_UPLOAD_BYTES / (1024 * 1024))} MB.` },
+      { status: 413 },
+    );
+  }
+
   const buf = Buffer.from(await file.arrayBuffer());
   if (buf.length === 0) {
     return NextResponse.json({ error: "That file is empty." }, { status: 400 });
