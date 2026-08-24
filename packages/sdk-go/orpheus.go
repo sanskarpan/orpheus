@@ -14,12 +14,18 @@ package orpheus
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -188,6 +194,127 @@ func (s *UploadsService) Get(ctx context.Context, id string) (*UploadSession, er
 		return nil, err
 	}
 	return &u, nil
+}
+
+// Complete finalizes a multipart upload with the collected part ETags and
+// returns the created Artifact.
+func (s *UploadsService) Complete(ctx context.Context, id string, parts []CompletedPart) (*Artifact, error) {
+	var a Artifact
+	path := "/v1/uploads/" + url.PathEscape(id) + "/complete"
+	if err := s.c.do(ctx, http.MethodPost, path, CompleteUploadRequest{Parts: parts}, &a); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
+// putBytes PUTs raw bytes to a presigned URL (S3/R2) and returns the ETag.
+func (c *Client) putBytes(ctx context.Context, rawURL string, data []byte, contentType string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
+	if err != nil {
+		return "", fmt.Errorf("orpheus: build upload PUT: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("orpheus: upload PUT failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return "", fmt.Errorf("orpheus: upload PUT %d: %s", resp.StatusCode, string(b))
+	}
+	return strings.Trim(resp.Header.Get("ETag"), `"`), nil
+}
+
+// UploadFile uploads a local file end-to-end (create session, PUT each presigned
+// part, complete) and returns the finalized Artifact.
+func (c *Client) UploadFile(ctx context.Context, path string) (*Artifact, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("orpheus: read file: %w", err)
+	}
+	ct := mime.TypeByExtension(filepath.Ext(path))
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	sum := sha256.Sum256(data)
+	sess, err := c.Uploads.Create(ctx, CreateUploadRequest{
+		Filename:    filepath.Base(path),
+		ContentType: ct,
+		SizeBytes:   int64(len(data)),
+		SHA256:      hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		return nil, err
+	}
+	parts := make([]CompletedPart, 0, len(sess.Parts))
+	for _, p := range sess.Parts {
+		start := (p.PartNumber - 1) * sess.PartSize
+		end := start + sess.PartSize
+		if end > len(data) {
+			end = len(data)
+		}
+		etag, err := c.putBytes(ctx, p.URL, data[start:end], ct)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, CompletedPart{PartNumber: p.PartNumber, ETag: etag})
+	}
+	return c.Uploads.Complete(ctx, sess.ID, parts)
+}
+
+// TranscribeOptions tunes a Transcribe call.
+type TranscribeOptions struct {
+	// Params are extra transcribe params (e.g. {"language":"en","tier":"accurate"}).
+	Params map[string]any
+	// Version is the transcribe processor version (default "1.0.0").
+	Version string
+	// Poll is the completion poll interval (default 2s). The overall timeout is
+	// governed by the ctx deadline.
+	Poll time.Duration
+}
+
+// Transcribe uploads an audio file and transcribes it, waiting for completion.
+// Returns the completed Job (Job.Result holds the transcript); a non-completed
+// terminal state is returned as an error along with the Job.
+func (c *Client) Transcribe(ctx context.Context, path string, opts *TranscribeOptions) (*Job, error) {
+	if opts == nil {
+		opts = &TranscribeOptions{}
+	}
+	version := opts.Version
+	if version == "" {
+		version = "1.0.0"
+	}
+	artifact, err := c.UploadFile(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	var params json.RawMessage
+	if len(opts.Params) > 0 {
+		if params, err = json.Marshal(opts.Params); err != nil {
+			return nil, fmt.Errorf("orpheus: marshal params: %w", err)
+		}
+	}
+	job, err := c.Jobs.Create(ctx, CreateJobRequest{
+		ArtifactID: artifact.ID,
+		Processor:  ProcessorRef{Name: "transcribe", Version: version},
+		Params:     params,
+	})
+	if err != nil {
+		return nil, err
+	}
+	poll := opts.Poll
+	if poll <= 0 {
+		poll = 2 * time.Second
+	}
+	job, err = c.Jobs.WaitForCompletion(ctx, job.ID, poll)
+	if err != nil {
+		return nil, err
+	}
+	if job.Status != "completed" {
+		return job, fmt.Errorf("orpheus: transcribe job %s ended %s", job.ID, job.Status)
+	}
+	return job, nil
 }
 
 // ── Artifacts ────────────────────────────────────────────────────────

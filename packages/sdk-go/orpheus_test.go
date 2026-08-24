@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -182,5 +185,63 @@ func TestUploadsAndArtifacts(t *testing.T) {
 	a, err := c.Artifacts.Get(ctx, "art-1")
 	if err != nil || a.ContentType != "audio/wav" || a.SizeBytes != 1234 {
 		t.Fatalf("Artifacts.Get = %+v, %v", a, err)
+	}
+}
+
+func TestTranscribe_UploadsAndWaits(t *testing.T) {
+	dir := t.TempDir()
+	wav := filepath.Join(dir, "clip.wav")
+	if err := os.WriteFile(wav, []byte("RIFFxxxxWAVEfmt "), 0o600); err != nil {
+		t.Fatalf("write wav: %v", err)
+	}
+
+	var putBody []byte
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "up1", "status": "pending", "part_size": 8 << 20,
+				"parts": []map[string]any{{"part_number": 1, "url": srv.URL + "/put"}},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/put":
+			putBody, _ = io.ReadAll(r.Body)
+			w.Header().Set("ETag", `"etag1"`)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/uploads/up1/complete":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "art1"})
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/jobs":
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "job1", "status": "queued"})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/jobs/job1":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "job1", "status": "completed",
+				"result": map[string]any{"text": "hello world"},
+			})
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, WithAPIKey("k"))
+	job, err := c.Transcribe(context.Background(), wav, &TranscribeOptions{
+		Params: map[string]any{"language": "en"}, Poll: 5 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Transcribe: %v", err)
+	}
+	if job.Status != "completed" {
+		t.Fatalf("status = %q, want completed", job.Status)
+	}
+	if string(putBody) != "RIFFxxxxWAVEfmt " {
+		t.Fatalf("PUT body = %q", string(putBody))
+	}
+	var res struct {
+		Text string `json:"text"`
+	}
+	_ = json.Unmarshal(job.Result, &res)
+	if res.Text != "hello world" {
+		t.Fatalf("result text = %q", res.Text)
 	}
 }

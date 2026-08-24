@@ -34,6 +34,17 @@ type CreateUploadRequest struct {
 }
 
 // UploadPart is one presigned multipart part.
+// CompletedPart is a finalized upload part: its number and the S3/R2 ETag.
+type CompletedPart struct {
+	PartNumber int    `json:"part_number"`
+	ETag       string `json:"etag"`
+}
+
+// CompleteUploadRequest finalizes a multipart upload.
+type CompleteUploadRequest struct {
+	Parts []CompletedPart `json:"parts"`
+}
+
 type UploadPart struct {
 	PartNumber int    `json:"part_number"`
 	URL        string `json:"url"`
