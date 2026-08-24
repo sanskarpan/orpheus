@@ -19,6 +19,8 @@ from .errors import (
     BadRequestError,
     ConflictError,
     ErrorField,
+    JobFailedError,
+    JobTimeoutError,
     NotFoundError,
     OrpheusAPIError,
     OrpheusConnectionError,
@@ -68,6 +70,8 @@ __all__ = [
     "PayloadTooLargeError",
     "RateLimitError",
     "ServerError",
+    "JobFailedError",
+    "JobTimeoutError",
     "Problem",
     "ErrorField",
     # models
