@@ -32,7 +32,29 @@ type Phase = "idle" | "uploading" | "uploaded" | "submitting" | "running" | "don
 
 const TERMINAL = new Set(["completed", "failed", "canceled", "dead_letter"]);
 
-export function UploadStudio({ processors }: { processors: ProcessorOption[] }) {
+// Client-side upload ceiling — surfaced before the request so oversized files
+// fail fast with a clear message instead of a slow server rejection.
+const MAX_BYTES = 500 * 1024 * 1024;
+
+// Lightweight grouping for the processor picker, derived from the name since the
+// catalog doesn't ship a category. Order here is the order groups render in.
+const CATEGORY_ORDER = ["Transcription", "Understanding", "Clean-up", "Redaction & moderation", "Utilities"] as const;
+
+function categorize(name: string): string {
+  if (name.includes("transcribe")) return "Transcription";
+  if (name.includes("redact") || name.includes("moderate")) return "Redaction & moderation";
+  if (name.includes("enhance") || name.includes("edit") || name === "slice") return "Clean-up";
+  if (name.startsWith("text.") || name.startsWith("audio.")) return "Understanding";
+  return "Utilities";
+}
+
+export function UploadStudio({
+  processors,
+  initialProc,
+}: {
+  processors: ProcessorOption[];
+  initialProc?: string;
+}) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -42,8 +64,12 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
   const [error, setError] = useState<string | null>(null);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
   const [job, setJob] = useState<Job | null>(null);
+  const [query, setQuery] = useState("");
 
-  const defaultProc = processors.find((p) => p.name.includes("transcribe")) ?? processors[0];
+  const defaultProc =
+    (initialProc ? processors.find((p) => p.name === initialProc) : undefined) ??
+    processors.find((p) => p.name.includes("transcribe")) ??
+    processors[0];
   const [proc, setProc] = useState<string>(defaultProc?.name ?? "");
   const selected = processors.find((p) => p.name === proc) ?? defaultProc;
   const version = selected?.versions?.[0]?.version ?? "1.0.0";
@@ -52,9 +78,43 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
     () => fieldsForProcessor(selected?.name ?? "", selected?.input_schema),
     [selected?.name, selected?.input_schema],
   );
+  const basicFields = useMemo(() => fields.filter((f) => !f.advanced), [fields]);
+  const advancedFields = useMemo(() => fields.filter((f) => f.advanced), [fields]);
   const [params, setParams] = useState<ParamValues>(() =>
     initValues(fieldsForProcessor(defaultProc?.name ?? "", defaultProc?.input_schema)),
   );
+
+  // Filter by the search box, then bucket into ordered categories for the picker.
+  const grouped = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const matches = processors.filter((p) => {
+      if (!q) return true;
+      return (
+        (p.display_name ?? "").toLowerCase().includes(q) ||
+        (p.description ?? "").toLowerCase().includes(q) ||
+        p.name.toLowerCase().includes(q)
+      );
+    });
+    const byCat = new Map<string, ProcessorOption[]>();
+    for (const p of matches) {
+      const cat = categorize(p.name);
+      const arr = byCat.get(cat) ?? [];
+      arr.push(p);
+      byCat.set(cat, arr);
+    }
+    const ordered: { category: string; items: ProcessorOption[] }[] = [];
+    for (const cat of CATEGORY_ORDER) {
+      const items = byCat.get(cat);
+      if (items?.length) ordered.push({ category: cat, items });
+    }
+    // Any category not in CATEGORY_ORDER (defensive) falls to the end.
+    for (const [cat, items] of byCat) {
+      if (!CATEGORY_ORDER.includes(cat as (typeof CATEGORY_ORDER)[number]) && items.length) {
+        ordered.push({ category: cat, items });
+      }
+    }
+    return ordered;
+  }, [processors, query]);
 
   const selectProc = (name: string) => {
     setProc(name);
@@ -67,8 +127,12 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
     setFile(f);
     setArtifact(null);
     setJob(null);
-    setError(null);
     setPhase("idle");
+    if (f && f.size > MAX_BYTES) {
+      setError(`File too large — max ${MAX_BYTES / (1024 * 1024)} MB.`);
+    } else {
+      setError(null);
+    }
   };
 
   const onDrop = useCallback((e: React.DragEvent) => {
@@ -78,8 +142,17 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
     if (f) pickFile(f);
   }, []);
 
-  async function upload() {
-    if (!file) return;
+  const tooLarge = !!file && file.size > MAX_BYTES;
+
+  // Uploads the file and returns the stored artifact (or null on failure) so the
+  // caller can chain a job without waiting on async state.
+  async function upload(): Promise<Artifact | null> {
+    if (!file) return null;
+    if (file.size > MAX_BYTES) {
+      setError(`File too large — max ${MAX_BYTES / (1024 * 1024)} MB.`);
+      setPhase("error");
+      return null;
+    }
     setPhase("uploading");
     setError(null);
     try {
@@ -88,16 +161,19 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
       const res = await fetch("/api/upload", { method: "POST", body: fd });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Upload failed");
-      setArtifact(body.artifact as Artifact);
+      const art = body.artifact as Artifact;
+      setArtifact(art);
       setPhase("uploaded");
+      return art;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setPhase("error");
+      return null;
     }
   }
 
-  async function run() {
-    if (!artifact || !selected) return;
+  async function run(art: Artifact | null = artifact) {
+    if (!art || !selected) return;
     const missing = validateValues(fields, params);
     if (missing.length) {
       setError(`Please fill required: ${missing.join(", ")}.`);
@@ -110,7 +186,7 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
     let created;
     try {
       created = await createJobAction({
-        artifact_id: artifact.id,
+        artifact_id: art.id,
         processor: { name: selected.name, version },
         params: Object.keys(built).length ? built : undefined,
       });
@@ -131,6 +207,21 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
     }
     setPhase("running");
     poll(created.data.id);
+  }
+
+  // One-click happy path: store the file, then immediately queue the job on the
+  // freshly returned artifact. Validate params up front so we don't upload only
+  // to stall on a missing required field.
+  async function uploadAndRun() {
+    if (!file || tooLarge) return;
+    const missing = validateValues(fields, params);
+    if (missing.length) {
+      setError(`Please fill required: ${missing.join(", ")}.`);
+      setPhase("error");
+      return;
+    }
+    const art = await upload();
+    if (art) await run(art);
   }
 
   // Poll to completion. Transient errors (rate limits, blips) are tolerated —
@@ -176,6 +267,9 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
       <div className="space-y-5 lg:col-span-2">
         {/* Dropzone */}
         <div
+          role="button"
+          tabIndex={0}
+          aria-label="Upload audio file"
           onDragOver={(e) => {
             e.preventDefault();
             setDragging(true);
@@ -183,8 +277,14 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
           onClick={() => inputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              inputRef.current?.click();
+            }
+          }}
           className={clsx(
-            "panel flex cursor-pointer flex-col items-center justify-center gap-3 border-dashed px-6 py-10 text-center transition-colors",
+            "panel flex cursor-pointer flex-col items-center justify-center gap-3 border-dashed px-6 py-10 text-center transition-colors focus:outline-none focus-visible:border-brass focus-visible:ring-1 focus-visible:ring-brass",
             dragging ? "border-brass bg-brass/5" : "border-hairline-2 hover:border-brass/40",
           )}
         >
@@ -207,8 +307,8 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
             </div>
           ) : (
             <div>
-              <div className="font-medium text-ink-hi">Drop audio here</div>
-              <div className="mt-0.5 text-xs text-ink-lo">or click to browse — WAV, MP3, M4A, FLAC…</div>
+              <div className="font-medium text-ink-hi">Drop audio or video here</div>
+              <div className="mt-0.5 text-xs text-ink-lo">or click to browse — WAV, MP3, M4A, FLAC, MP4… (max 500 MB)</div>
             </div>
           )}
         </div>
@@ -216,33 +316,49 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
         {/* Processor picker */}
         <div className="panel p-5">
           <div className="label mb-3">Processor</div>
-          <div className="space-y-2">
-            {processors.map((p) => {
-              const active = p.name === proc;
-              return (
-                <button
-                  key={p.name}
-                  type="button"
-                  onClick={() => selectProc(p.name)}
-                  disabled={busy}
-                  className={clsx(
-                    "w-full rounded-md border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
-                    active ? "border-brass/50 bg-brass/10" : "border-hairline hover:border-hairline-2 hover:bg-panel-2",
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className={clsx("text-sm font-medium", active ? "text-brass" : "text-ink-hi")}>
-                      {p.display_name || p.name}
-                    </span>
-                    {active && (
-                      <span className="font-mono text-2xs text-ink-lo">v{version}</span>
-                    )}
-                  </div>
-                  {p.description && <div className="mt-0.5 line-clamp-1 text-xs text-ink-lo">{p.description}</div>}
-                </button>
-              );
-            })}
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter processors…"
+            aria-label="Filter processors"
+            className="input mb-3"
+          />
+          <div className="space-y-4">
+            {grouped.map((group) => (
+              <div key={group.category} className="space-y-2">
+                <div className="label text-ink-lo">{group.category}</div>
+                {group.items.map((p) => {
+                  const active = p.name === proc;
+                  return (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => selectProc(p.name)}
+                      disabled={busy}
+                      className={clsx(
+                        "w-full rounded-md border px-3 py-2.5 text-left transition-colors disabled:opacity-50",
+                        active
+                          ? "border-brass/50 bg-brass/10"
+                          : "border-hairline hover:border-hairline-2 hover:bg-panel-2",
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className={clsx("text-sm font-medium", active ? "text-brass" : "text-ink-hi")}>
+                          {p.display_name || p.name}
+                        </span>
+                        {active && <span className="font-mono text-2xs text-ink-lo">v{version}</span>}
+                      </div>
+                      {p.description && <div className="mt-0.5 line-clamp-1 text-xs text-ink-lo">{p.description}</div>}
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
             {processors.length === 0 && <div className="text-sm text-ink-lo">No processors available.</div>}
+            {processors.length > 0 && grouped.length === 0 && (
+              <div className="text-sm text-ink-lo">No processors match “{query}”.</div>
+            )}
           </div>
         </div>
 
@@ -259,17 +375,50 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
               <span className="font-mono text-2xs text-ink-lo">{selected.tier}</span>
             ) : null}
           </div>
-          <ProcessorParamsForm fields={fields} values={params} onChange={setParams} disabled={busy} />
+          {fields.length === 0 ? (
+            <ProcessorParamsForm fields={fields} values={params} onChange={setParams} disabled={busy} />
+          ) : (
+            <div className="space-y-4">
+              {basicFields.length > 0 ? (
+                <ProcessorParamsForm fields={basicFields} values={params} onChange={setParams} disabled={busy} />
+              ) : (
+                <p className="text-xs text-ink-lo">Runs on sensible defaults — tweak advanced options below if needed.</p>
+              )}
+              {advancedFields.length > 0 && (
+                <details className="rounded-md border border-hairline bg-ground/40 px-3 py-2">
+                  <summary className="label cursor-pointer select-none text-ink-mid">Advanced options</summary>
+                  <div className="mt-3">
+                    <ProcessorParamsForm fields={advancedFields} values={params} onChange={setParams} disabled={busy} />
+                  </div>
+                </details>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Action */}
-        {!artifact ? (
-          <button onClick={upload} disabled={!file || busy} className="btn-brass w-full py-2.5">
-            {phase === "uploading" ? "Uploading…" : "Upload"}
+        {/* Action — single primary path: store the file and run the job in one click. */}
+        {phase === "done" ? (
+          <button onClick={() => run()} disabled className="btn-brass w-full py-2.5">
+            Done
+          </button>
+        ) : artifact && !busy ? (
+          // Upload already succeeded (e.g. run failed after storing) — offer a plain re-run.
+          <button onClick={() => run()} disabled={!selected} className="btn-brass w-full py-2.5">
+            {`Run ${selected?.display_name ?? "processor"}`}
           </button>
         ) : (
-          <button onClick={run} disabled={busy || phase === "done"} className="btn-brass w-full py-2.5">
-            {phase === "submitting" || phase === "running" ? "Processing…" : `Run ${selected?.display_name ?? "processor"}`}
+          <button
+            onClick={uploadAndRun}
+            disabled={!file || busy || tooLarge}
+            className="btn-brass w-full py-2.5"
+          >
+            {phase === "uploading"
+              ? "Storing…"
+              : phase === "submitting"
+                ? "Queuing…"
+                : phase === "running"
+                  ? "Processing…"
+                  : `Upload & Run ${selected?.display_name ?? "processor"}`}
           </button>
         )}
 
@@ -309,7 +458,7 @@ export function UploadStudio({ processors }: { processors: ProcessorOption[] }) 
                 <WaveBars bars={40} className="h-full" />
               </div>
               <p className="mt-3 text-sm text-ink-mid">
-                {phase === "submitting" ? "Queuing job…" : `Press “Run ${selected?.display_name}” to process.`}
+                {phase === "submitting" ? "Queuing job…" : "Stored — starting the job…"}
               </p>
             </Stage>
           )}
