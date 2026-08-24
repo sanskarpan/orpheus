@@ -77,6 +77,12 @@ _TRANSCRIBE_INPUT_SCHEMA: dict[str, Any] = {
             "description": "Word-timestamp source: whisper DTW (blank) or MMS forced alignment.",
             "default": "",
         },
+        "reference_text": {
+            "type": "string",
+            "title": "Reference text",
+            "description": "With alignment=forced, force-align this supplied transcript to "
+            "the audio instead of the ASR output.",
+        },
         "formatting": {
             "type": "boolean",
             "title": "Smart formatting",
@@ -436,6 +442,19 @@ def _maybe_align(result: dict[str, Any], wav_path: Path, params: dict, job_id: s
     if str(params.get("alignment", "")).strip().lower() != "forced":
         return
     from ..align import AlignError, align_transcript
+
+    ref = params.get("reference_text")
+    if isinstance(ref, str) and ref.strip():
+        # Forced alignment to a caller-supplied reference transcript instead of
+        # the ASR output: replace the segments with one covering the whole clip.
+        try:
+            with wave.open(str(wav_path)) as wf:
+                duration = wf.getnframes() / float(wf.getframerate() or 1)
+        except Exception:
+            segs = result.get("segments") or [{}]
+            duration = float(segs[-1].get("end", 0.0) or 0.0)
+        result["segments"] = [{"start": 0.0, "end": duration, "text": ref.strip(), "words": []}]
+        result["text"] = ref.strip()
 
     try:
         align_transcript(wav_path, result, language=result.get("language"))
