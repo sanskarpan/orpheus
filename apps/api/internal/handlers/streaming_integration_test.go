@@ -85,6 +85,15 @@ func TestStreamingSession_Lifecycle(t *testing.T) {
 		t.Fatalf("List = %+v, want the one session", listResp.Data)
 	}
 
+	// The relay meters the audio and moves the session to 'closing' before
+	// finalize is permitted — a mid-stream finalize is rejected (409) so a
+	// client cannot close the session or zero out the bill before the relay has
+	// metered it. Simulate the relay's server-side metering here.
+	if _, err := svc.Exec(ctx,
+		`UPDATE streaming_sessions SET status='closing', audio_seconds=30 WHERE id=$1`, created.ID); err != nil {
+		t.Fatalf("relay pre-finalize update: %v", err)
+	}
+
 	// Finalize.
 	frec := httptest.NewRecorder()
 	h.Finalize(frec, withURLParam(withPrincipal(httptest.NewRequest(http.MethodPost, "/v1/streaming/sessions/"+created.ID+"/finalize",
