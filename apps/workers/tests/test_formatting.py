@@ -15,6 +15,19 @@ def test_itn_numbers_currency_percent_time_ordinal():
     assert "1999" in format_text("released in nineteen ninety nine")
 
 
+def test_itn_compound_ordinals_and_implausible_years():
+    # Compound ordinals: a number run + trailing ordinal word combine.
+    assert format_text("the twenty first item") == "The 21st item"
+    assert format_text("thirty second place") == "32nd place"
+    assert format_text("the one hundred first customer") == "The 101st customer"
+    # A pair of tens is not a year unless it lands in a plausible range, so
+    # "fifty fifty" is not misread as 5050.
+    assert "5050" not in format_text("a fifty fifty split")
+    # Real years still normalize.
+    assert "2026" in format_text("in twenty twenty six")
+    assert "1984" in format_text("nineteen eighty four")
+
+
 def test_already_written_times_are_not_corrupted():
     # Regression (#575): modern ASR emits written-form times, and the clock rule
     # must not seize a fragment of one — "3.30pm" was being rewritten to
