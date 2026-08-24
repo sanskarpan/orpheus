@@ -279,7 +279,13 @@ def _apply_itn_tokens(tokens: list[_Tok]) -> list[_Tok]:
     return out
 
 
-_TIME_RE = re.compile(r"\b(\d{1,2})[:\s]?(\d{2})?\s*(a\.?m\.?|p\.?m\.?|o'?clock)\b", re.IGNORECASE)
+# The leading (?<![.\d]) rejects a digit-run that is part of a larger number —
+# without it "3.30pm" would match its "30pm" tail as hour=30 and be rewritten to
+# "3.30:00 pm". Modern ASR already emits written-form times, so this rule must
+# only fire on spoken/spaced forms and leave already-written times alone.
+_TIME_RE = re.compile(
+    r"(?<![.\d])\b(\d{1,2})[:\s]?(\d{2})?\s*(a\.?m\.?|p\.?m\.?|o'?clock)\b", re.IGNORECASE
+)
 
 
 def _format_times(text: str) -> str:
@@ -287,6 +293,11 @@ def _format_times(text: str) -> str:
 
     def repl(m: re.Match) -> str:
         hh, mm, mer = m.group(1), m.group(2) or "00", m.group(3).lower().replace(".", "")
+        # Only reformat a plausible 12-hour clock value; leave anything else
+        # untouched so a bogus hour (or a fragment of an already-written time)
+        # is never corrupted.
+        if not 1 <= int(hh) <= 12 or int(mm) >= 60:
+            return m.group(0)
         if mer.startswith("o"):
             return f"{int(hh)}:00"
         return f"{int(hh)}:{mm} {mer}"
