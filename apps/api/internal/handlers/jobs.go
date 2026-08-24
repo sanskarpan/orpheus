@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -864,7 +865,10 @@ func (h *JobHandler) BulkCreate(w http.ResponseWriter, r *http.Request) {
 			`, id, p.OrgID, j.ArtifactID, paramsArg, now)
 			return err
 		}); err != nil {
-			resp.Rejected = append(resp.Rejected, BulkRejection{Index: i, Reason: "insert failed: " + err.Error()})
+			// Keep the raw DB error server-side (it can name schema
+			// objects/constraints); the client gets a generic reason.
+			slog.Error("orpheus_api.bulk_job_insert_failed", "index", i, "org_id", p.OrgID, "err", err)
+			resp.Rejected = append(resp.Rejected, BulkRejection{Index: i, Reason: "insert failed"})
 			continue
 		}
 
