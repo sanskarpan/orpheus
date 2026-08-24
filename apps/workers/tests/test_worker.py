@@ -125,7 +125,10 @@ async def test_on_message_acks_when_processor_unknown() -> None:
     await worker._on_message(msg)
     msg.ack.assert_awaited_once()
     db.mark_job_completed.assert_not_called()
-    db.mark_job_failed.assert_not_called()
+    # claim_job already flipped the job to 'running'; an unknown processor must
+    # terminalize it (failed) so the org's concurrency slot is released rather
+    # than leaked forever.
+    db.mark_job_failed.assert_called_once_with("j-1", "unknown processor: does-not-exist")
     db.enqueue_outbox.assert_not_called()
 
 
