@@ -8,6 +8,7 @@ interface NavItem {
   href: string;
   label: string;
   icon: string; // single glyph, rendered in mono
+  hint?: string; // optional secondary description, surfaced as a tooltip
 }
 
 interface NavGroup {
@@ -21,7 +22,7 @@ const WORKSPACE: NavGroup = {
     { href: "/dashboard", label: "Overview", icon: "◈" },
     { href: "/dashboard/upload", label: "Upload & Run", icon: "↥" },
     { href: "/dashboard/jobs", label: "Jobs", icon: "≣" },
-    { href: "/dashboard/artifacts", label: "Artifacts", icon: "♪" },
+    { href: "/dashboard/artifacts", label: "Files", icon: "♪" },
     { href: "/dashboard/usage", label: "Usage", icon: "▟" },
   ],
 };
@@ -30,9 +31,9 @@ const PLATFORM: NavGroup = {
   title: "Platform",
   items: [
     { href: "/dashboard/processors", label: "Processors", icon: "⚙" },
-    { href: "/dashboard/voiceprints", label: "Voiceprints", icon: "◉" },
+    { href: "/dashboard/voiceprints", label: "Speakers", icon: "◉" },
     { href: "/dashboard/api-keys", label: "API Keys", icon: "⚿" },
-    { href: "/dashboard/webhooks", label: "Webhooks", icon: "⇄" },
+    { href: "/dashboard/webhooks", label: "Webhooks", icon: "⇄", hint: "Event notifications" },
     { href: "/dashboard/streaming", label: "Streaming", icon: "≈" },
   ],
 };
@@ -63,6 +64,8 @@ function Group({ group, pathname }: { group: NavGroup; pathname: string }) {
             <li key={item.href}>
               <Link
                 href={item.href}
+                title={item.hint}
+                aria-label={item.hint ? `${item.label} — ${item.hint}` : undefined}
                 className={clsx(
                   "group flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
                   active
