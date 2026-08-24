@@ -93,19 +93,6 @@
   }
 }
 
-/* staggered page-load reveal helper */
-.reveal > * {
-  animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.reveal > *:nth-child(1) { animation-delay: 0.02s; }
-.reveal > *:nth-child(2) { animation-delay: 0.06s; }
-.reveal > *:nth-child(3) { animation-delay: 0.1s; }
-.reveal > *:nth-child(4) { animation-delay: 0.14s; }
-.reveal > *:nth-child(5) { animation-delay: 0.18s; }
-.reveal > *:nth-child(6) { animation-delay: 0.22s; }
-.reveal > *:nth-child(7) { animation-delay: 0.26s; }
-.reveal > *:nth-child(8) { animation-delay: 0.3s; }
-
 /* animated waveform bars (hero + running meters) */
 .wavebars {
   display: flex;
@@ -119,5 +106,36 @@
   border-radius: 2px;
   background: linear-gradient(180deg, var(--brass), var(--brass-deep));
   transform-origin: center;
-  animation: wave 1.1s ease-in-out infinite;
+}
+
+/* Decorative + entrance motion only runs when the user hasn't asked to reduce it. */
+@media (prefers-reduced-motion: no-preference) {
+  /* staggered page-load reveal helper */
+  .reveal > * {
+    animation: rise-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .reveal > *:nth-child(1) { animation-delay: 0.02s; }
+  .reveal > *:nth-child(2) { animation-delay: 0.06s; }
+  .reveal > *:nth-child(3) { animation-delay: 0.1s; }
+  .reveal > *:nth-child(4) { animation-delay: 0.14s; }
+  .reveal > *:nth-child(5) { animation-delay: 0.18s; }
+  .reveal > *:nth-child(6) { animation-delay: 0.22s; }
+  .reveal > *:nth-child(7) { animation-delay: 0.26s; }
+  .reveal > *:nth-child(8) { animation-delay: 0.3s; }
+
+  .wavebars > span {
+    animation: wave 1.1s ease-in-out infinite;
+  }
+}
+
+/* Reduced motion: settle everything — no entrance transforms, no infinite loops. */
+@media (prefers-reduced-motion: reduce) {
+  .reveal > *,
+  .animate-rise-in {
+    animation: none !important;
+  }
+  .wavebars > span,
+  .animate-meter-pulse {
+    animation: none !important;
+  }
 }
