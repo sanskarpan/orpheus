@@ -226,7 +226,7 @@ Each item: **feature** (issue#) — *who ships it*. Checked = shipped in Orpheus
 - [ ] On-device / edge model artifacts (#371) — *whisper.cpp, WhisperKit, Moonshine*
 - [ ] 1000+ languages (#372) — *Meta MMS*
 - [ ] Human transcription tier (#373) — *Rev.com*
-- [ ] Forced alignment to external reference text (#374) — 🟡 partial: MMS_FA alignment to the produced transcript exists; alignment to an external reference text pending — *WhisperX, NeMo NFA*
+- [x] Forced alignment to external reference text (#374) — `params.reference_text` force-aligns a supplied transcript to the audio (MMS_FA) — *WhisperX, NeMo NFA*
 - [ ] Zero-data-retention / privacy mode (#375) — 🟡 partial (erasure) — *Wispr, Willow*
 - [ ] Custom AI prompt templates / named modes (#376) — 🟡 partial (composable jobs) — *Superwhisper*
 
