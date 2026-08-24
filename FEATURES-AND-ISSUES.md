@@ -63,7 +63,7 @@
 - [ ] **In-app autoscaling** (consume the JetStream queue-depth gauge) — #421
 - [ ] **Dynamic concurrency** (static `worker_concurrency`/`per_org_concurrency`)
 - [ ] **Model registry wired to runtime loading** (S3/sha256) — #423
-- [ ] **Multi-model routing / per-tier engine** — 🟡 partial: per-request model + Modal backends
+- [x] **Multi-model routing / per-tier engine** — per-request `model` + `tier` presets (fast/balanced/accurate) → distil-large-v3 / large-v3-turbo / large-v3, honored by the Modal endpoint — #634
 
 ## A6. Reliability / correctness
 - [x] Prior stabilization bugs (API-key prefix collision, webhook ListDeliveries, test-fire body, redirect loop, pagination 404, null-safety, upload edges)
