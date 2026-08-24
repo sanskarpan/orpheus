@@ -118,7 +118,14 @@ sudo journalctl -u orpheus-api -f
 ```
 
 Config comes from the EnvironmentFile `~/.config/alfred/orpheus-backend.env` (infra + Modal URLs +
-R2 + `ORPHEUS_OTEL_TRACES_EXPORTER=none`). Rebuild the API with
+R2 + `ORPHEUS_OTEL_TRACES_EXPORTER=none` + the LLM backend, below).
+
+**LLM backend:** LLM-over-transcript processors (summarize/translate/ask/scorecard/crm/highlights/…)
+use the deployed `orpheus-llm` vLLM service (Qwen2.5-3B). Wire it with
+`ORPHEUS_LLM_PROVIDER=openai-compat`, `ORPHEUS_LLM_BASE_URL=https://sanskarpandey2004--orpheus-llm-serve.modal.run/v1`,
+`ORPHEUS_LLM_MODEL=orpheus-llm`, `ORPHEUS_LLM_API_KEY=<shared secret>` (vLLM is `--api-key`-gated on
+the shared secret). Without these the worker falls back to a deterministic **stub LLM**
+(`model_version_id: stub-llm-1`). Rebuild the API with
 `GOFLAGS= /usr/local/go/bin/go build -o /home/ubuntu/alfred/bin/orpheus-api ./apps/api/cmd/api`
 then `sudo systemctl restart orpheus-api`. An admin key is minted with
 `/home/ubuntu/alfred/bin/orpheus-bootstrap-admin "<dsn>"`.
