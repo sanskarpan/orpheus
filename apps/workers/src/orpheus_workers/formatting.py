@@ -340,6 +340,26 @@ def _words_from_tokens(tokens: list[_Tok]) -> list[dict[str, Any]]:
     return out
 
 
+_TERMINAL_PUNCT = ".!?…"
+
+
+def _restore_punctuation(text: str) -> str:
+    """Ensure a sentence-like segment ends with terminal punctuation.
+
+    Conservative and deterministic: append a period only when the text ends on a
+    word character, so already-punctuated output (modern ASR, or a trailing
+    ``.``/``?``/``!``/closing quote) is left untouched. Intra-sentence punctuation
+    is left to the ASR model — this restores the common missing sentence-final
+    stop for unpunctuated model or streaming output.
+    """
+    stripped = text.rstrip()
+    if not stripped:
+        return text
+    if stripped[-1].isalnum():
+        return stripped + "."
+    return text
+
+
 def format_text(
     text: str, itn: bool = True, punctuation: bool = False, truecase: bool = True
 ) -> str:
@@ -351,6 +371,8 @@ def format_text(
         text = _format_times(text)
     if truecase:
         text = _truecase(text)
+    if punctuation:
+        text = _restore_punctuation(text)
     return text
 
 
@@ -375,7 +397,8 @@ def format_transcript(transcript: dict, opts: dict) -> dict:
             seg["words"] = _words_from_tokens(toks)
             new_text = " ".join(t.text for t in toks)
             new_text = _format_times(new_text)
-            seg["text"] = _truecase(new_text) if do_truecase else new_text
+            new_text = _truecase(new_text) if do_truecase else new_text
+            seg["text"] = _restore_punctuation(new_text) if punctuation else new_text
         else:
             seg["text"] = format_text(
                 seg.get("text", ""), itn=itn, punctuation=punctuation, truecase=do_truecase
