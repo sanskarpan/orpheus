@@ -21,6 +21,7 @@ APP_NAME = "orpheus-diarize"
 CACHE_DIR = "/cache"
 WINDOW_S = 1.5
 HOP_S = 0.75
+MAX_AUDIO_BYTES = 300 * 1024 * 1024  # reject decoded audio larger than ~300 MB
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -135,8 +136,41 @@ class Diarizer:
         from sklearn.metrics import silhouette_score
 
         t0 = time.monotonic()
-        raw = base64.b64decode(payload["audio_b64"])
-        audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        try:
+            raw = base64.b64decode(payload.get("audio_b64") or "")
+        except Exception:
+            return {
+                "error": "invalid or unreadable audio",
+                "turns": [],
+                "num_speakers": 0,
+                "model_version_id": "ecapa-agglomerative-1",
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
+        if len(raw) > MAX_AUDIO_BYTES:
+            return {
+                "error": "audio exceeds maximum size",
+                "turns": [],
+                "num_speakers": 0,
+                "model_version_id": "ecapa-agglomerative-1",
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
+        if not raw:  # missing/empty audio → clean empty result, not a 500
+            return {
+                "turns": [],
+                "num_speakers": 0,
+                "model_version_id": "ecapa-agglomerative-1",
+                "gpu_seconds": 0.0,
+            }
+        try:
+            audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        except Exception:
+            return {
+                "error": "invalid or unreadable audio",
+                "turns": [],
+                "num_speakers": 0,
+                "model_version_id": "ecapa-agglomerative-1",
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
         num_speakers = int(payload.get("num_speakers") or 0)
