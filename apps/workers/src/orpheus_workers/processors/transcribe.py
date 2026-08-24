@@ -23,6 +23,14 @@ logger = structlog.get_logger(__name__)
 
 DEFAULT_CHUNK_SECONDS = 60
 
+# Friendly speed/accuracy tiers → a concrete faster-whisper model. Used when the
+# caller sets `params.tier` and no explicit `params.model`.
+_TIER_MODELS = {
+    "fast": "distil-large-v3",
+    "balanced": "large-v3-turbo",
+    "accurate": "large-v3",
+}
+
 # JSON Schema for the `params` object, mirrored into the DB catalog and returned
 # by GET /v1/processors/transcribe. It is the single source of truth for the
 # transcribe params: the web console renders its form from this schema (falling
@@ -35,6 +43,14 @@ _TRANSCRIBE_INPUT_SCHEMA: dict[str, Any] = {
             "type": "string",
             "title": "Model",
             "description": "Whisper model (e.g. large-v3-turbo); blank uses the server default.",
+        },
+        "tier": {
+            "type": "string",
+            "enum": ["", "fast", "balanced", "accurate"],
+            "title": "Tier",
+            "description": "Speed/accuracy preset when no explicit model is given "
+            "(fast=distil-large-v3, balanced=large-v3-turbo, accurate=large-v3).",
+            "default": "",
         },
         "language": {
             "type": "string",
@@ -213,6 +229,12 @@ def _transcribe_opts(params: dict[str, Any]) -> dict[str, Any]:
     ``initial_prompt`` (str) bias recognition toward domain terms.
     """
     model = params.get("model")
+    if not (isinstance(model, str) and model.strip()):
+        # A friendly speed/accuracy tier maps to a concrete model when the caller
+        # didn't name one. An explicit `model` always wins.
+        tier = str(params.get("tier", "")).strip().lower()
+        if tier in _TIER_MODELS:
+            model = _TIER_MODELS[tier]
     model_size = (
         model
         if isinstance(model, str) and model.strip()
