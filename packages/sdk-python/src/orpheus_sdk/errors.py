@@ -132,6 +132,29 @@ class ServerError(OrpheusAPIError):
     """5xx - the server failed to fulfil an apparently valid request."""
 
 
+class JobFailedError(OrpheusError):
+    """A polled job reached a terminal non-success state (failed/canceled/dead_letter)."""
+
+    def __init__(self, job: Any, message: Optional[str] = None) -> None:
+        self.job = job
+        status = getattr(job, "status", "unknown")
+        err = getattr(job, "error", None)
+        detail = f": {getattr(err, 'message', err)}" if err is not None else ""
+        super().__init__(message or f"job {getattr(job, 'id', '?')} {status}{detail}")
+
+
+class JobTimeoutError(OrpheusError):
+    """A polled job did not reach a terminal state within the wait timeout."""
+
+    def __init__(self, job: Any, timeout: float) -> None:
+        self.job = job
+        self.timeout = timeout
+        super().__init__(
+            f"job {getattr(job, 'id', '?')} still {getattr(job, 'status', '?')} "
+            f"after {timeout:.0f}s"
+        )
+
+
 _STATUS_TO_ERROR = {
     400: BadRequestError,
     401: AuthenticationError,
