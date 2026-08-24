@@ -24,6 +24,7 @@ import modal
 APP_NAME = "orpheus-align"
 CACHE_DIR = "/cache"
 MODEL_VERSION_ID = "torchaudio-mms_fa-1"
+MAX_AUDIO_BYTES = 300 * 1024 * 1024  # reject decoded audio larger than ~300 MB
 _WORD_RE = re.compile("[^\\W_]+(?:['\u2019][^\\W_]+)?", re.UNICODE)
 
 image = (
@@ -109,14 +110,37 @@ class Aligner:
 
         t0 = time.monotonic()
         segments = payload.get("segments") or []
-        raw = base64.b64decode(payload.get("audio_b64") or "")
+        try:
+            raw = base64.b64decode(payload.get("audio_b64") or "")
+        except Exception:
+            return {
+                "error": "invalid or unreadable audio",
+                "segments": [{"words": []} for _ in segments],
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
+        if len(raw) > MAX_AUDIO_BYTES:
+            return {
+                "error": "audio exceeds maximum size",
+                "segments": [{"words": []} for _ in segments],
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
         if not raw or not segments:  # nothing to align → clean empty result, not a 500
             return {
                 "segments": [{"words": []} for _ in segments],
                 "model_version_id": MODEL_VERSION_ID,
                 "gpu_seconds": round(time.monotonic() - t0, 4),
             }
-        audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        try:
+            audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        except Exception:  # malformed/non-audio bytes → clean error, not a 500
+            return {
+                "error": "invalid or unreadable audio",
+                "segments": [{"words": []} for _ in segments],
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
         waveform = self.torch.from_numpy(audio).float()
         if waveform.ndim > 1:
             waveform = waveform.mean(dim=1)
