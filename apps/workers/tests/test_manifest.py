@@ -44,6 +44,19 @@ def test_known_manifest_values() -> None:
     assert summ.cacheable is False  # summaries are not cache-reusable
 
 
+def test_transcribe_input_schema_advertises_params() -> None:
+    # The transcribe params must be discoverable via the manifest (mirrored to
+    # the catalog and GET /v1/processors/transcribe, which drives the web form).
+    m = get_manifest("transcribe")
+    assert m is not None
+    props = m.input_schema.get("properties", {})
+    for key in ("model", "language", "word_timestamps", "chunking", "alignment", "formatting"):
+        assert key in props, f"transcribe input_schema missing {key!r}"
+    assert props["formatting"]["type"] == "boolean"
+    assert props["alignment"]["enum"] == ["", "forced"]
+    assert props["chunking"]["enum"] == ["vad", "fixed"]
+
+
 def test_register_processor_defaults() -> None:
     @register_processor("test.dummy-manifest")
     async def _dummy(ctx, job_id):  # pragma: no cover - never invoked
