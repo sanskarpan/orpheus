@@ -38,9 +38,15 @@ def test_punctuation_restoration():
     tr = {
         "text": "",
         "segments": [
-            {"start": 0.0, "end": 0.5, "text": "hi there",
-             "words": [{"word": "hi", "start": 0.0, "end": 0.2, "confidence": 0.9},
-                       {"word": "there", "start": 0.2, "end": 0.5, "confidence": 0.9}]},
+            {
+                "start": 0.0,
+                "end": 0.5,
+                "text": "hi there",
+                "words": [
+                    {"word": "hi", "start": 0.0, "end": 0.2, "confidence": 0.9},
+                    {"word": "there", "start": 0.2, "end": 0.5, "confidence": 0.9},
+                ],
+            },
         ],
     }
     out = format_transcript(dict(tr), {"enabled": True, "punctuation": True})
