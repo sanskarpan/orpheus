@@ -124,7 +124,7 @@ func TestE2E_TranscribeLong(t *testing.T) {
 	setup.SeedOrg(t, ctx, pool, orgID)
 	setup.SeedUser(t, ctx, pool, orgID)
 	setup.CleanupOrgData(t, pool, orgID)
-	processorID, processorVersionID := setup.SeedProcessor(t, ctx, pool, tlTestProcessorName, tlTestProcessorVersion)
+	setup.SeedProcessor(t, ctx, pool, tlTestProcessorName, tlTestProcessorVersion)
 
 	phrase := "the quick brown fox jumps over the lazy dog"
 	wavPath := filepath.Join(t.TempDir(), "test.wav")
@@ -146,8 +146,6 @@ func TestE2E_TranscribeLong(t *testing.T) {
 		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanCancel()
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM artifacts WHERE id = $1`, artifactID)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM processor_versions WHERE id = $1`, processorVersionID)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM processors WHERE id = $1`, processorID)
 	})
 
 	apiKey := setup.SeedAPIKey(t, ctx, pool, orgID)

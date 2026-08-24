@@ -82,7 +82,7 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 	setup.SeedOrg(t, ctx, pool, orgID)
 	setup.SeedUser(t, ctx, pool, orgID)
 	setup.CleanupOrgData(t, pool, orgID)
-	processorID, processorVersionID := setup.SeedProcessor(t, ctx, pool, emTestProcessorName, emTestProcessorVersion)
+	setup.SeedProcessor(t, ctx, pool, emTestProcessorName, emTestProcessorVersion)
 
 	wav := setup.BuildWAV(1, 8000, 1)
 	setup.EnsureBucket(t, ctx, s3Endpoint, s3Bucket, s3AccessKey, s3SecretKey)
@@ -95,8 +95,6 @@ func TestE2E_ExtractMetadata(t *testing.T) {
 		cleanCtx, cleanCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cleanCancel()
 		_, _ = pool.Exec(cleanCtx, `DELETE FROM artifacts WHERE id = $1`, artifactID)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM processor_versions WHERE id = $1`, processorVersionID)
-		_, _ = pool.Exec(cleanCtx, `DELETE FROM processors WHERE id = $1`, processorID)
 	})
 
 	apiKey := setup.SeedAPIKey(t, ctx, pool, orgID)

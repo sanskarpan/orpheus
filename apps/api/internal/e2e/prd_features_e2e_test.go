@@ -81,7 +81,7 @@ func TestE2E_PRDFeatures(t *testing.T) {
 	setup.SeedOrg(t, ctx, pool, orgID)
 	setup.SeedUser(t, ctx, pool, orgID)
 	setup.CleanupOrgData(t, pool, orgID)
-	procID, verID := setup.SeedProcessor(t, ctx, pool, "transcribe", "1.0.0")
+	setup.SeedProcessor(t, ctx, pool, "transcribe", "1.0.0")
 	t.Cleanup(func() {
 		c, cc := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cc()
@@ -93,8 +93,6 @@ func TestE2E_PRDFeatures(t *testing.T) {
 		_, _ = pool.Exec(c, `DELETE FROM webhook_endpoints WHERE org_id=$1`, orgID)
 		_, _ = pool.Exec(c, `DELETE FROM jobs WHERE org_id=$1`, orgID)
 		_, _ = pool.Exec(c, `DELETE FROM artifacts WHERE org_id=$1`, orgID)
-		_, _ = pool.Exec(c, `DELETE FROM processor_versions WHERE id=$1`, verID)
-		_, _ = pool.Exec(c, `DELETE FROM processors WHERE id=$1`, procID)
 	})
 
 	// 12s WAV so diarization spans the seeded transcript.

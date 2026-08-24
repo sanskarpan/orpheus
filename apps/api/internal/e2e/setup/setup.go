@@ -162,11 +162,20 @@ func SeedAPIKey(t *testing.T, ctx context.Context, pool *db.DB, orgID string) st
 
 // SeedProcessor inserts a (processors, processor_versions) pair
 // and returns the two ids.
+//
+// It is safe to run against a live catalog: the worker's startup sync (from
+// in-code manifests) may already have registered a real processor of this
+// name, so SeedProcessor upserts and returns the actual catalog id. It
+// registers a t.Cleanup that removes ONLY the rows this call actually created
+// — a pre-existing catalog processor (or version) is left intact so the shared
+// catalog the API validates job submissions against is not corrupted for the
+// running worker or other tests.
 func SeedProcessor(t *testing.T, ctx context.Context, pool *db.DB, name, version string) (processorID, versionID string) {
 	t.Helper()
-	// Idempotent: the worker's startup catalog sync (from in-code manifests)
-	// may already have registered this processor, so upsert and return the
-	// actual catalog id rather than blindly inserting.
+
+	// Record pre-existence before upserting so cleanup only deletes what we add.
+	procPreexisted := existsRow(ctx, pool, `SELECT 1 FROM processors WHERE name = $1`, name)
+
 	processorID = uuid.NewString()
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO processors (id, name, display_name, tier, timeout_seconds) VALUES ($1, $2, $3, 'cpu_tiny', 60)
@@ -175,6 +184,10 @@ func SeedProcessor(t *testing.T, ctx context.Context, pool *db.DB, name, version
 	).Scan(&processorID); err != nil {
 		t.Fatalf("upsert processor: %v", err)
 	}
+
+	verPreexisted := existsRow(ctx, pool,
+		`SELECT 1 FROM processor_versions WHERE processor_id = $1 AND version = $2`, processorID, version)
+
 	versionID = uuid.NewString()
 	if err := pool.QueryRow(ctx,
 		`INSERT INTO processor_versions (id, processor_id, version, model_id, model_version_id) VALUES ($1, $2, $3, $4, $5)
@@ -183,7 +196,27 @@ func SeedProcessor(t *testing.T, ctx context.Context, pool *db.DB, name, version
 	).Scan(&versionID); err != nil {
 		t.Fatalf("upsert processor_version: %v", err)
 	}
+
+	// Remove only rows this call created; a pre-existing catalog row is the
+	// worker's, not ours, and deleting it would break the live catalog.
+	t.Cleanup(func() {
+		cctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if !verPreexisted {
+			_, _ = pool.Exec(cctx, `DELETE FROM processor_versions WHERE id = $1`, versionID)
+		}
+		if !procPreexisted {
+			_, _ = pool.Exec(cctx, `DELETE FROM processors WHERE id = $1`, processorID)
+		}
+	})
 	return processorID, versionID
+}
+
+// existsRow reports whether the given single-column existence query returns a
+// row. Any error (including no rows) is treated as "does not exist".
+func existsRow(ctx context.Context, pool *db.DB, query string, args ...any) bool {
+	var one int
+	return pool.QueryRow(ctx, query, args...).Scan(&one) == nil
 }
 
 // SeedArtifact inserts a fresh artifacts row pointing at the
