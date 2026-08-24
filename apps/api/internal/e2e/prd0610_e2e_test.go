@@ -72,15 +72,13 @@ func TestE2E_PRD0610(t *testing.T) {
 	setup.SeedOrg(t, ctx, pool, orgID)
 	setup.SeedUser(t, ctx, pool, orgID)
 	setup.CleanupOrgData(t, pool, orgID)
-	procID, verID := setup.SeedProcessor(t, ctx, pool, "transcribe", "1.0.0")
+	setup.SeedProcessor(t, ctx, pool, "transcribe", "1.0.0")
 	t.Cleanup(func() {
 		c, cc := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cc()
 		for _, tbl := range []string{"job_result_cache", "bundle_items", "bundles", "batches", "delivery_destinations", "erasure_requests", "webhook_deliveries", "webhook_endpoints", "usage_rollup_hourly", "budgets", "jobs", "artifacts", "upload_sessions", "outbox"} {
 			_, _ = pool.Exec(c, "DELETE FROM "+tbl+" WHERE org_id=$1", orgID)
 		}
-		_, _ = pool.Exec(c, `DELETE FROM processor_versions WHERE id=$1`, verID)
-		_, _ = pool.Exec(c, `DELETE FROM processors WHERE id=$1`, procID)
 		_, _ = pool.Exec(c, `DELETE FROM organizations WHERE id=$1`, orgID)
 	})
 
