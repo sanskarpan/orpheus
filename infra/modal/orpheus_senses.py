@@ -22,6 +22,7 @@ import modal
 APP_NAME = "orpheus-senses"
 CACHE_DIR = "/cache"
 MODEL_VERSION_ID = "sensevoice-small-1"
+MAX_AUDIO_BYTES = 300 * 1024 * 1024  # reject decoded audio larger than ~300 MB
 _TOKEN_RE = re.compile(r"<\|([^|>]+)\|>")
 
 # SenseVoice emotion tags → our lowercase label space.
@@ -130,11 +131,34 @@ class Senses:
         import soundfile as sf
 
         t0 = time.monotonic()
-        raw = base64.b64decode(payload.get("audio_b64") or "")
         segments = payload.get("segments") or []
+        try:
+            raw = base64.b64decode(payload.get("audio_b64") or "")
+        except Exception:
+            return {
+                "error": "invalid or unreadable audio",
+                "segments": [],
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
+        if len(raw) > MAX_AUDIO_BYTES:
+            return {
+                "error": "audio exceeds maximum size",
+                "segments": [],
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
         if not raw:
             return {"segments": [], "model_version_id": MODEL_VERSION_ID, "gpu_seconds": 0.0}
-        audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        try:
+            audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        except Exception:  # malformed/non-audio bytes → clean error, not a 500
+            return {
+                "error": "invalid or unreadable audio",
+                "segments": [],
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
 
