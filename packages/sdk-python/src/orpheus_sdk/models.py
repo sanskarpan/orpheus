@@ -167,7 +167,13 @@ class Job:
 
     @property
     def is_terminal(self) -> bool:
-        return self.status in ("succeeded", "failed", "canceled")
+        """True once the job has reached a final state (won't change further)."""
+        return self.status in ("completed", "failed", "canceled", "dead_letter")
+
+    @property
+    def succeeded(self) -> bool:
+        """True when the job finished successfully (status ``completed``)."""
+        return self.status == "completed"
 
 
 @dataclass
