@@ -16,13 +16,22 @@ minting API keys). Exactly one of ``api_key`` / ``bearer_token`` must be given.
 
 from __future__ import annotations
 
+import hashlib
+import mimetypes
+import os
 import platform
+import time
 from typing import Any, Dict, Iterator, List, Optional, Union
 
 import httpx
 
 from . import __version__
-from .errors import OrpheusConnectionError, error_from_response
+from .errors import (
+    JobFailedError,
+    JobTimeoutError,
+    OrpheusConnectionError,
+    error_from_response,
+)
 from .models import (
     APIKey,
     Artifact,
@@ -103,6 +112,18 @@ class _Transport:
         if not response.is_success:
             raise error_from_response(response.status_code, body, dict(response.headers))
         return body
+
+    def put_bytes(self, url: str, data: bytes, *, content_type: str) -> str:
+        """PUT raw bytes to a presigned URL (S3/R2) and return the ETag."""
+        try:
+            response = self._client.put(url, content=data, headers={"Content-Type": content_type})
+        except httpx.HTTPError as exc:  # transport-level failure
+            raise OrpheusConnectionError(str(exc)) from exc
+        if not response.is_success:
+            raise OrpheusConnectionError(
+                f"upload PUT failed: {response.status_code} {response.text[:200]}"
+            )
+        return (response.headers.get("ETag") or "").strip('"')
 
     def close(self) -> None:
         if self._owns_client:
@@ -245,6 +266,23 @@ class _JobsAPI:
     def cancel(self, job_id: str) -> Job:
         data = self._t.request("POST", f"/v1/jobs/{job_id}/cancel")
         return Job.from_dict(data)
+
+    def wait(self, job_id: str, *, poll_interval: float = 2.0, timeout: float = 600.0) -> Job:
+        """Poll a job until it reaches a terminal state and return it.
+
+        Raises :class:`JobFailedError` if the job ends non-successfully and
+        :class:`JobTimeoutError` if it does not finish within ``timeout`` seconds.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            job = self.get(job_id)
+            if job.is_terminal:
+                if not job.succeeded:
+                    raise JobFailedError(job)
+                return job
+            if time.monotonic() >= deadline:
+                raise JobTimeoutError(job, timeout)
+            time.sleep(poll_interval)
 
     def list(
         self,
@@ -473,6 +511,109 @@ class OrpheusClient:
 
     def iter_audit_log(self, **kwargs: Any) -> Iterator[AuditLog]:
         yield from _paginate(self.audit_log, **kwargs)
+
+    # -- high-level helpers -------------------------------------------------
+
+    def upload_file(
+        self,
+        path: Union[str, "os.PathLike[str]"],
+        *,
+        filename: Optional[str] = None,
+        content_type: Optional[str] = None,
+    ) -> Artifact:
+        """Upload a local file end-to-end and return the finalized Artifact.
+
+        Runs the presigned-multipart dance (create the session, PUT each part to
+        its presigned URL, then complete). ``content_type`` is guessed from the
+        filename when omitted.
+        """
+        source = os.fspath(path)
+        with open(source, "rb") as fh:
+            data = fh.read()
+        name = filename or os.path.basename(source)
+        ctype = content_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
+        sha = hashlib.sha256(data).hexdigest()
+        session = self.uploads.create(
+            filename=name, content_type=ctype, size_bytes=len(data), sha256=sha
+        )
+        completed: List[JSON] = []
+        for part in sorted(session.parts, key=lambda p: p.part_number):
+            start = (part.part_number - 1) * session.part_size
+            chunk = data[start : start + session.part_size]
+            etag = self._t.put_bytes(part.url, chunk, content_type=ctype)
+            completed.append({"part_number": part.part_number, "etag": etag})
+        return self.uploads.complete(session.id, parts=completed)
+
+    def run(
+        self,
+        path: Union[str, "os.PathLike[str]"],
+        *,
+        processor: str,
+        version: str = "1.0.0",
+        params: Optional[JSON] = None,
+        content_type: Optional[str] = None,
+        wait: bool = True,
+        poll_interval: float = 2.0,
+        timeout: float = 600.0,
+    ) -> Job:
+        """Upload ``path`` and submit a job for ``processor``.
+
+        Waits for the job to finish by default (returns the completed
+        :class:`Job`); pass ``wait=False`` to return immediately after submission.
+        """
+        artifact = self.upload_file(path, content_type=content_type)
+        job = self.jobs.create(
+            artifact_id=artifact.id,
+            processor={"name": processor, "version": version},
+            params=params,
+        )
+        if wait:
+            return self.jobs.wait(job.id, poll_interval=poll_interval, timeout=timeout)
+        return job
+
+    def transcribe(
+        self,
+        path: Union[str, "os.PathLike[str]"],
+        *,
+        model: Optional[str] = None,
+        language: Optional[str] = None,
+        word_timestamps: Optional[bool] = None,
+        formatting: Optional[Any] = None,
+        alignment: Optional[str] = None,
+        params: Optional[JSON] = None,
+        version: str = "1.0.0",
+        content_type: Optional[str] = None,
+        wait: bool = True,
+        poll_interval: float = 2.0,
+        timeout: float = 600.0,
+    ) -> Job:
+        """Upload an audio file and transcribe it, waiting for the result by default.
+
+        A convenience wrapper over :meth:`run` for the ``transcribe`` processor.
+        Returns the completed :class:`Job`; ``job.result`` holds the transcript.
+        The keyword params map onto the transcribe processor's params and are
+        merged over an explicit ``params`` dict.
+        """
+        merged: JSON = dict(params or {})
+        for key, value in (
+            ("model", model),
+            ("language", language),
+            ("word_timestamps", word_timestamps),
+            ("formatting", formatting),
+            ("alignment", alignment),
+        ):
+            if value is not None:
+                merged[key] = value
+        return self.run(
+            path,
+            processor="transcribe",
+            version=version,
+            params=merged or None,
+            content_type=content_type,
+            wait=wait,
+            poll_interval=poll_interval,
+            timeout=timeout,
+        )
 
     # -- lifecycle ----------------------------------------------------------
 
