@@ -26,6 +26,34 @@ def test_already_written_times_are_not_corrupted():
     assert "3:30 pm" in format_text("the meeting is at three thirty pm")
 
 
+def test_punctuation_restoration():
+    # Adds a sentence-final period to unpunctuated text...
+    assert format_text("hello world", punctuation=True) == "Hello world."
+    # ...but is a no-op when already punctuated (modern ASR output).
+    assert format_text("Hello world.", punctuation=True) == "Hello world."
+    assert format_text("Is it?", punctuation=True) == "Is it?"
+    # Off by default.
+    assert format_text("hello world") == "Hello world"
+    # Applies per-segment on a word-timed transcript.
+    tr = {
+        "text": "",
+        "segments": [
+            {
+                "start": 0.0,
+                "end": 0.5,
+                "text": "hi there",
+                "words": [
+                    {"word": "hi", "start": 0.0, "end": 0.2, "confidence": 0.9},
+                    {"word": "there", "start": 0.2, "end": 0.5, "confidence": 0.9},
+                ],
+            },
+        ],
+    }
+    out = format_transcript(dict(tr), {"enabled": True, "punctuation": True})
+    assert out["segments"][0]["text"].endswith(".")
+    assert out["text"].endswith(".")
+
+
 def test_truecasing():
     assert format_text("hello world. how are you") == "Hello world. How are you"
     assert format_text("i think i am right") == "I think I am right"
