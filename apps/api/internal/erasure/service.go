@@ -14,16 +14,24 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/orpheus/api/internal/db"
 	"github.com/orpheus/api/internal/storage/s3"
 )
+
+// errLegalHold marks a request whose target artifact was placed under legal
+// hold after scheduling: erasure must not proceed, and the request must fail
+// (not silently complete) so the hold is respected.
+var errLegalHold = errors.New("target under legal hold")
 
 const defaultInterval = 5 * time.Second
 
@@ -76,9 +84,20 @@ func (s *Service) ProcessScheduled(ctx context.Context) error {
 	}
 	var reqs []request
 	if err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
+		// Claim newly scheduled work AND recover rows stuck in 'running': a
+		// worker crash or a failed finalize would otherwise orphan a 'running'
+		// row forever. erasure_requests has no updated_at column, so we stamp
+		// scheduled_at at claim time to act as the lease marker — any 'running'
+		// row not finalized within the lease window is reclaimed and retried
+		// (deletes and soft-delete are idempotent, so re-running is safe).
 		rows, err := tx.Query(ctx, `
-			UPDATE erasure_requests SET status='running'
-			WHERE id IN (SELECT id FROM erasure_requests WHERE status='scheduled' ORDER BY scheduled_at LIMIT 20 FOR UPDATE SKIP LOCKED)
+			UPDATE erasure_requests SET status='running', scheduled_at=now()
+			WHERE id IN (
+				SELECT id FROM erasure_requests
+				WHERE status='scheduled'
+				   OR (status='running' AND scheduled_at < now() - interval '15 minutes')
+				ORDER BY scheduled_at LIMIT 20 FOR UPDATE SKIP LOCKED
+			)
 			RETURNING id::text, org_id::text, scope, COALESCE(target_id::text,'')
 		`)
 		if err != nil {
@@ -117,11 +136,23 @@ func (s *Service) execute(ctx context.Context, r request) {
 	for _, a := range artifacts {
 		// 2) Hard-delete the bytes + verify the purge (HEAD → not found).
 		if a.key != "" && s.S3 != nil {
+			// A failed delete leaves bytes behind — treat it as a hard failure,
+			// never a swallowed warning, or we would certify an erasure that
+			// did not happen.
 			if err := s.S3.DeleteObject(ctx, a.key); err != nil {
-				s.Logger.Warn("erasure.s3_delete_failed", "key", a.key, "err", err)
+				s.fail(ctx, r.id, "s3 delete failed: "+a.key+": "+err.Error())
+				return
 			}
+			// Verify the purge. Only a *definitive* not-found proves the bytes
+			// are gone: a nil error means the object is still present, and any
+			// other HeadObject error (transient 5xx/timeout/network) is
+			// inconclusive. Both must fail the request rather than be misread
+			// as "object deleted".
 			if _, _, herr := s.S3.HeadObject(ctx, a.key); herr == nil {
 				s.fail(ctx, r.id, "purge verification failed: object still present: "+a.key)
+				return
+			} else if !isNotFound(herr) {
+				s.fail(ctx, r.id, "purge verification inconclusive: "+a.key+": "+herr.Error())
 				return
 			}
 			purged++
@@ -190,7 +221,10 @@ func (s *Service) execute(ctx context.Context, r request) {
 	// 4) Certificate + finalize + data.erased event.
 	certKey := s.writeCertificate(ctx, r, counts, purgedKeys)
 	countsJSON, _ := json.Marshal(counts)
-	_ = s.withServiceTx(ctx, func(tx pgx.Tx) error {
+	// Do not swallow the finalize error: if the commit fails the row stays in
+	// 'running' and is reclaimed and retried by the lease recovery in
+	// ProcessScheduled, rather than being falsely reported as completed.
+	if err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			UPDATE erasure_requests SET status='completed', completed_at=now(), deleted_counts=$2::jsonb, s3_objects_purged=$3, certificate_s3_key=NULLIF($4,'') WHERE id=$1
 		`, r.id, countsJSON, purged, certKey); err != nil {
@@ -202,21 +236,52 @@ func (s *Service) execute(ctx context.Context, r request) {
 			VALUES (gen_random_uuid(), $1, 'erasure', $2, 'data.erased', $3::jsonb, '{}'::jsonb)
 		`, r.orgID, r.id, payload)
 		return err
-	})
+	}); err != nil {
+		s.Logger.Error("erasure.finalize_failed", "request_id", r.id, "err", err)
+		return
+	}
 	s.Logger.Info("erasure.completed", "request_id", r.id, "artifacts", len(erasedIDs), "purged", purged)
+}
+
+// isNotFound reports whether a HeadObject error definitively means the object
+// is gone (S3 NoSuchKey / NotFound / HTTP 404). HeadObject wraps every error
+// identically, so we unwrap to the underlying SDK/smithy error to tell a real
+// "object absent" apart from a transient failure.
+func isNotFound(err error) bool {
+	var nsk *types.NoSuchKey
+	if errors.As(err, &nsk) {
+		return true
+	}
+	var nf *types.NotFound
+	if errors.As(err, &nf) {
+		return true
+	}
+	var apiErr smithy.APIError
+	if errors.As(err, &apiErr) {
+		switch apiErr.ErrorCode() {
+		case "NoSuchKey", "NotFound", "404":
+			return true
+		}
+	}
+	return false
 }
 
 type artifactRef struct{ id, key string }
 
 func (s *Service) targetArtifacts(ctx context.Context, r request) ([]artifactRef, error) {
 	var out []artifactRef
+	held := false
 	err := s.withServiceTx(ctx, func(tx pgx.Tx) error {
 		var q string
 		switch r.scope {
+		// A legal hold can be placed AFTER scheduling, so it must be re-checked
+		// here at execution time: `AND legal_hold = false` keeps held artifacts
+		// out of the erase set, and we flag any hold so the request fails rather
+		// than silently completing a partial erasure that skipped held bytes.
 		case "artifact":
-			q = `SELECT id::text, COALESCE(s3_key,'') FROM artifacts WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`
+			q = `SELECT id::text, COALESCE(s3_key,''), legal_hold FROM artifacts WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`
 		case "job":
-			q = `SELECT id::text, COALESCE(s3_key,'') FROM artifacts WHERE id IN (SELECT artifact_id FROM jobs WHERE id=$1) AND org_id=$2 AND deleted_at IS NULL`
+			q = `SELECT id::text, COALESCE(s3_key,''), legal_hold FROM artifacts WHERE id IN (SELECT artifact_id FROM jobs WHERE id=$1) AND org_id=$2 AND deleted_at IS NULL`
 		default:
 			return nil
 		}
@@ -227,14 +292,25 @@ func (s *Service) targetArtifacts(ctx context.Context, r request) ([]artifactRef
 		defer rows.Close()
 		for rows.Next() {
 			var a artifactRef
-			if err := rows.Scan(&a.id, &a.key); err != nil {
+			var legalHold bool
+			if err := rows.Scan(&a.id, &a.key, &legalHold); err != nil {
 				return err
+			}
+			if legalHold {
+				held = true
+				continue
 			}
 			out = append(out, a)
 		}
 		return rows.Err()
 	})
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	if held {
+		return nil, errLegalHold
+	}
+	return out, nil
 }
 
 func (s *Service) writeCertificate(ctx context.Context, r request, counts map[string]int, purgedKeyHashes []string) string {

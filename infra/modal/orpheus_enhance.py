@@ -22,6 +22,7 @@ import modal
 APP_NAME = "orpheus-enhance"
 CACHE_DIR = "/cache"
 MODEL_VERSION_ID = "metricgan-plus+demucs-1"
+MAX_AUDIO_BYTES = 300 * 1024 * 1024  # reject decoded audio larger than ~300 MB
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
@@ -123,9 +124,28 @@ class Enhancer:
         import torchaudio
 
         t0 = time.monotonic()
-        raw = base64.b64decode(payload.get("audio_b64") or "")
         mode = str(payload.get("mode", "denoise")).lower()
         warnings = []
+        try:
+            raw = base64.b64decode(payload.get("audio_b64") or "")
+        except Exception:
+            return {
+                "audio_b64": "",
+                "metrics": {},
+                "warnings": ["invalid_audio"],
+                "error": "invalid or unreadable audio",
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
+        if len(raw) > MAX_AUDIO_BYTES:
+            return {
+                "audio_b64": "",
+                "metrics": {},
+                "warnings": ["audio_too_large"],
+                "error": "audio exceeds maximum size",
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
         if not raw:
             return {
                 "audio_b64": "",
@@ -135,7 +155,17 @@ class Enhancer:
                 "gpu_seconds": 0.0,
             }
 
-        audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        try:
+            audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
+        except Exception:  # malformed/non-audio bytes → clean error, not a 500
+            return {
+                "audio_b64": "",
+                "metrics": {},
+                "warnings": ["invalid_audio"],
+                "error": "invalid or unreadable audio",
+                "model_version_id": MODEL_VERSION_ID,
+                "gpu_seconds": round(time.monotonic() - t0, 4),
+            }
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
         in_rms = self._rms(audio)

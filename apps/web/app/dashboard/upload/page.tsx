@@ -4,7 +4,14 @@ import { UploadStudio, type ProcessorOption } from "./UploadStudio";
 
 export const dynamic = "force-dynamic";
 
-export default async function UploadPage() {
+export default async function UploadPage({
+  searchParams,
+}: {
+  searchParams?: { proc?: string | string[] };
+}) {
+  const procParam = searchParams?.proc;
+  const initialProc = Array.isArray(procParam) ? procParam[0] : procParam;
+
   let processors: ProcessorOption[] = [];
   let failed = false;
 
@@ -52,7 +59,7 @@ export default async function UploadPage() {
           detail="The API didn't return the processor catalog. Confirm it's running and your key has access."
         />
       ) : (
-        <UploadStudio processors={processors} />
+        <UploadStudio processors={processors} initialProc={initialProc} />
       )}
     </div>
   );
