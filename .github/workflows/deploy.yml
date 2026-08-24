@@ -97,13 +97,16 @@ jobs:
         with:
           node-version: "20"
       - run: npm install --global vercel@latest
-      - name: Build & deploy to Vercel (production)
+      - name: Deploy to Vercel (production)
+        # Remote build: Vercel installs deps and builds. apps/web is a
+        # self-contained Next app (no workspace deps), so a local prebuilt
+        # (--prebuilt) is avoided — in this pnpm monorepo node_modules hoist to
+        # the repo root, which broke the prebuilt deploy's node_modules check.
         working-directory: apps/web
         run: |
           set -euo pipefail
           vercel pull --yes --environment=production --token="${{ secrets.VERCEL_TOKEN }}"
-          vercel build --prod --token="${{ secrets.VERCEL_TOKEN }}"
-          vercel deploy --prebuilt --prod --token="${{ secrets.VERCEL_TOKEN }}"
+          vercel deploy --prod --token="${{ secrets.VERCEL_TOKEN }}"
 
   deploy-backend:
     needs: changes
