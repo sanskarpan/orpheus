@@ -18,7 +18,7 @@ const config: Config = {
         ink: {
           hi: "#ECEDEF",
           mid: "#A0A4AB",
-          lo: "#6B7079",
+          lo: "#8A8F98",
         },
         brass: {
           DEFAULT: "#E0A340",
@@ -26,7 +26,7 @@ const config: Config = {
           dim: "#8A6220",
         },
         ok: "#86C67C",
-        warn: "#E0A340",
+        warn: "#E8863B",
         fail: "#E5675B",
       },
       fontFamily: {

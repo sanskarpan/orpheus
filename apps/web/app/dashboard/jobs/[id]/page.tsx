@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { orpheus, OrpheusError } from "@/lib/orpheus";
 import { PageHeader } from "@/components/layout";
 import { ResultView } from "@/components/ResultView";
+import { CopyButton, DownloadButton } from "@/components/ResultActions";
 import { JobActions } from "@/components/JobActions";
 import { RunAnalysis, type AnalysisProcessor } from "@/components/RunAnalysis";
 import { StatusBadge } from "@/components/primitives";
@@ -90,7 +91,20 @@ export default async function JobDetailPage({ params }: { params: { id: string }
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Result — the main event */}
         <div className="panel p-6 lg:col-span-2">
-          <div className="label mb-4">Result</div>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div className="label">Result</div>
+            {job.result != null && (
+              <div className="flex flex-wrap items-center gap-2">
+                <CopyButton text={JSON.stringify(job.result, null, 2)} label="Copy JSON" />
+                <DownloadButton
+                  content={JSON.stringify(job.result, null, 2)}
+                  filename={`job-${job.id.slice(0, 8)}.json`}
+                  mime="application/json"
+                  label="Download .json"
+                />
+              </div>
+            )}
+          </div>
           {job.status === "completed" ? (
             <ResultView result={job.result} />
           ) : job.status === "failed" || job.status === "dead_letter" ? (

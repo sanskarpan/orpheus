@@ -29,6 +29,20 @@ import modal
 APP_NAME = "orpheus-transcribe"
 DEFAULT_MODEL = "large-v3-turbo"
 CACHE_DIR = "/cache"
+MAX_AUDIO_BYTES = 300 * 1024 * 1024  # reject decoded audio larger than ~300 MB
+MAX_CACHED_MODELS = 3  # cap resident models so distinct sizes can't exhaust memory
+# Only these Whisper sizes may be requested — an unfiltered caller-supplied name
+# would let anyone trigger arbitrary HuggingFace downloads onto the GPU/Volume.
+ALLOWED_MODELS = {
+    "large-v3-turbo",
+    "large-v3",
+    "medium",
+    "small",
+    "base",
+    "tiny",
+    "tiny.en",
+    "distil-large-v3",
+}
 
 image = (
     modal.Image.from_registry("nvidia/cuda:12.8.0-cudnn-devel-ubuntu22.04", add_python="3.12")
@@ -64,8 +78,17 @@ class Transcriber:
     def _get(self, model_size: str):
         from faster_whisper import WhisperModel
 
+        if model_size not in ALLOWED_MODELS:
+            raise ValueError(f"unsupported model: {model_size!r}")
         m = self._models.get(model_size)
         if m is None:
+            # Bound resident models so a burst of distinct sizes can't exhaust
+            # GPU/host memory; never evict the warmed default.
+            if len(self._models) >= MAX_CACHED_MODELS:
+                for k in list(self._models):
+                    if k != DEFAULT_MODEL:
+                        del self._models[k]
+                        break
             m = WhisperModel(
                 model_size,
                 device="cuda",
@@ -101,36 +124,68 @@ class Transcriber:
         audio_b64 = payload.get("audio_b64")
         if not audio_b64:
             raise ValueError("audio_b64 is required")
-        raw = base64.b64decode(audio_b64)
+        try:
+            raw = base64.b64decode(audio_b64)
+        except Exception:
+            return {
+                "error": "invalid or unreadable audio",
+                "text": "",
+                "segments": [],
+                "language": None,
+                "duration_seconds": 0.0,
+                "model": model_size,
+                "gpu_seconds": 0.0,
+            }
+        if len(raw) > MAX_AUDIO_BYTES:
+            return {
+                "error": "audio exceeds maximum size",
+                "text": "",
+                "segments": [],
+                "language": None,
+                "duration_seconds": 0.0,
+                "model": model_size,
+                "gpu_seconds": 0.0,
+            }
 
         model = self._get(model_size)
-        with tempfile.NamedTemporaryFile(suffix=".audio", delete=True) as f:
-            f.write(raw)
-            f.flush()
-            t0 = time.monotonic()
-            segments_iter, info = model.transcribe(
-                f.name,
-                beam_size=5,
-                language=language,
-                initial_prompt=prompt,
-                word_timestamps=word_timestamps,
-            )
-            segments = []
-            for seg in segments_iter:
-                entry = {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
-                words = getattr(seg, "words", None) if word_timestamps else None
-                if words:
-                    entry["words"] = [
-                        {
-                            "start": w.start,
-                            "end": w.end,
-                            "word": w.word.strip(),
-                            "confidence": float(getattr(w, "probability", 0.0) or 0.0),
-                        }
-                        for w in words
-                    ]
-                segments.append(entry)
-            gpu_seconds = time.monotonic() - t0
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".audio", delete=True) as f:
+                f.write(raw)
+                f.flush()
+                t0 = time.monotonic()
+                segments_iter, info = model.transcribe(
+                    f.name,
+                    beam_size=5,
+                    language=language,
+                    initial_prompt=prompt,
+                    word_timestamps=word_timestamps,
+                )
+                segments = []
+                for seg in segments_iter:
+                    entry = {"start": seg.start, "end": seg.end, "text": seg.text.strip()}
+                    words = getattr(seg, "words", None) if word_timestamps else None
+                    if words:
+                        entry["words"] = [
+                            {
+                                "start": w.start,
+                                "end": w.end,
+                                "word": w.word.strip(),
+                                "confidence": float(getattr(w, "probability", 0.0) or 0.0),
+                            }
+                            for w in words
+                        ]
+                    segments.append(entry)
+                gpu_seconds = time.monotonic() - t0
+        except Exception:  # malformed/non-audio bytes → clean error, not a 500
+            return {
+                "error": "invalid or unreadable audio",
+                "text": "",
+                "segments": [],
+                "language": None,
+                "duration_seconds": 0.0,
+                "model": model_size,
+                "gpu_seconds": 0.0,
+            }
 
         text = " ".join(s["text"] for s in segments).strip()
         return {

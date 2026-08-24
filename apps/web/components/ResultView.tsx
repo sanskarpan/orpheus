@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { clsx } from "@/lib/clsx";
+import { CopyButton, DownloadButton } from "@/components/ResultActions";
 
 /* Renders a job `result` intelligently: a purpose-built view when the payload
  * matches a known processor-output shape (transcript, chapters, emotion, events,
@@ -16,6 +17,65 @@ function ts(sec: number | undefined): string {
 
 function isObj(r: unknown): r is Record<string, unknown> {
   return !!r && typeof r === "object" && !Array.isArray(r);
+}
+
+/* Flattens a transcript payload into plain text for copying. */
+function transcriptText(t: TranscriptShape): string {
+  if (typeof t.text === "string" && t.text.trim()) return t.text;
+  return (t.segments ?? [])
+    .map((s) => s.text?.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+/* Picks the most useful downloadable file for an arbitrary result: a subtitle
+ * track (.srt/.vtt) or a plain-text field (.txt) when present, otherwise null
+ * so callers fall back to pretty JSON. */
+function pickTextDownload(r: Record<string, unknown>): { content: string; filename: string; mime: string } | null {
+  const str = (k: string): string | null => (typeof r[k] === "string" && (r[k] as string).trim() ? (r[k] as string) : null);
+
+  const srt = str("srt");
+  if (srt) return { content: srt, filename: "subtitles.srt", mime: "application/x-subrip" };
+  const vtt = str("vtt");
+  if (vtt) return { content: vtt, filename: "subtitles.vtt", mime: "text/vtt" };
+
+  const fmt = typeof r.format === "string" ? r.format.toLowerCase() : "";
+  const body = str("content") ?? str("subtitles") ?? str("output");
+  if ((fmt === "srt" || fmt === "vtt") && body) {
+    return {
+      content: body,
+      filename: `subtitles.${fmt}`,
+      mime: fmt === "vtt" ? "text/vtt" : "application/x-subrip",
+    };
+  }
+
+  const text = body ?? str("text") ?? str("translation") ?? str("translated_text") ?? str("summary");
+  if (text) return { content: text, filename: "result.txt", mime: "text/plain" };
+
+  return null;
+}
+
+/* Copy-JSON + Download toolbar shown above raw / unstructured results. */
+function FallbackView({ result }: { result: unknown }) {
+  const json = JSON.stringify(result, null, 2);
+  const textDl = isObj(result) ? pickTextDownload(result) : null;
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <CopyButton text={json} label="Copy JSON" />
+        <DownloadButton content={json} filename="result.json" mime="application/json" label="Download .json" />
+        {textDl && (
+          <DownloadButton
+            content={textDl.content}
+            filename={textDl.filename}
+            mime={textDl.mime}
+            label={`Download .${textDl.filename.split(".").pop()}`}
+          />
+        )}
+      </div>
+      <JsonView value={result} />
+    </div>
+  );
 }
 
 function JsonView({ value }: { value: unknown }) {
@@ -54,8 +114,15 @@ function looksLikeTranscript(r: Record<string, unknown>): boolean {
 
 function TranscriptView({ t }: { t: TranscriptShape }) {
   const segs = t.segments ?? [];
+  const full = transcriptText(t);
   return (
     <div className="space-y-5">
+      {full && (
+        <div className="flex flex-wrap items-center gap-2">
+          <CopyButton text={full} label="Copy transcript" />
+          <DownloadButton content={full} filename="transcript.txt" mime="text/plain" label="Download .txt" />
+        </div>
+      )}
       {t.text && (
         <div>
           <div className="mb-2 flex items-center gap-3">
@@ -448,9 +515,14 @@ function DiarizationView({ r }: { r: { segments?: DiarSegment[]; speakers?: unkn
 function AudioOutputView({ artifactId, metrics }: { artifactId: string; metrics?: unknown }) {
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <span className="label">Output audio</span>
-        <ArtifactLink id={artifactId} />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <span className="label">Output audio</span>
+          <ArtifactLink id={artifactId} />
+        </div>
+        <Link href={`/dashboard/artifacts/${artifactId}`} className="btn">
+          Open artifact →
+        </Link>
       </div>
       {isObj(metrics) && <MetricsGrid metrics={metrics} />}
     </div>
@@ -463,7 +535,7 @@ export function ResultView({ result }: { result: unknown }) {
   if (result === undefined || result === null) {
     return <div className="text-sm text-ink-lo">No result payload.</div>;
   }
-  if (!isObj(result)) return <JsonView value={result} />;
+  if (!isObj(result)) return <FallbackView result={result} />;
   const r = result;
 
   // Most-specific shapes first (several carry `segments`).
@@ -484,5 +556,5 @@ export function ResultView({ result }: { result: unknown }) {
 
   if (looksLikeTranscript(r)) return <TranscriptView t={r as TranscriptShape} />;
 
-  return <JsonView value={result} />;
+  return <FallbackView result={result} />;
 }

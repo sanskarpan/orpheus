@@ -224,6 +224,9 @@ class Worker:
         processor_name = ((params.get("_processor") or {}).get("name") or "").strip()
         if not processor_name:
             logger.warning("worker.no_processor", job_id=job_id)
+            # The job is already 'running' from claim_job; terminalize it so the
+            # org's concurrency slot is released instead of leaking forever.
+            self._db.mark_job_failed(job_id, "no processor")
             await msg.ack()
             metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
@@ -234,6 +237,9 @@ class Worker:
                 processor=processor_name,
                 job_id=job_id,
             )
+            # As above: reach a terminal state so the claimed 'running' slot is
+            # freed rather than left occupied by an unprocessable job.
+            self._db.mark_job_failed(job_id, f"unknown processor: {processor_name}")
             await msg.ack()
             metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
             return
@@ -264,23 +270,6 @@ class Worker:
                 cost = duration * self._settings.cost_usd_per_second
             metrics.JOBS_PROCESSED.labels(processor=processor_name, status="completed").inc()
             self._db.mark_job_completed(job_id, result or {}, cost_usd=cost)
-            # Content-addressed cache (PRD 01): populate from the completed
-            # job when it carries cache_meta (no-op otherwise).
-            self._db.populate_result_cache(job_id, result or {})
-            self._sync_workflow_status(job_id, params, completed=True, result=result or {})
-            self._db.enqueue_outbox(
-                org_id=org_id,
-                aggregate_id=job_id,
-                event_type="job.completed",
-                payload={
-                    "job_id": job_id,
-                    "processor": processor_name,
-                    "duration_seconds": (result or {}).get("duration_seconds"),
-                    "cost_usd": cost,
-                },
-            )
-            await msg.ack()
-            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
         except Exception as exc:
             metrics.JOBS_PROCESSED.labels(processor=processor_name, status="failed").inc()
             logger.exception(
@@ -324,6 +313,33 @@ class Worker:
                 )
                 await msg.term()
                 metrics.JETSTREAM_MESSAGES.labels(result="term").inc()
+        else:
+            # The job is durably 'completed'. Everything below is post-completion
+            # bookkeeping — a failure here must never flip a committed job into a
+            # failure state, so it is logged and swallowed instead of raised into
+            # the failure path above (which would dead-letter the job and
+            # overwrite its result with an error).
+            result = result or {}
+            try:
+                # Content-addressed cache (PRD 01): populate from the completed
+                # job when it carries cache_meta (no-op otherwise).
+                self._db.populate_result_cache(job_id, result)
+                self._sync_workflow_status(job_id, params, completed=True, result=result)
+                self._db.enqueue_outbox(
+                    org_id=org_id,
+                    aggregate_id=job_id,
+                    event_type="job.completed",
+                    payload={
+                        "job_id": job_id,
+                        "processor": processor_name,
+                        "duration_seconds": result.get("duration_seconds"),
+                        "cost_usd": cost,
+                    },
+                )
+            except Exception:
+                logger.exception("worker.post_completion_failed", job_id=job_id)
+            await msg.ack()
+            metrics.JETSTREAM_MESSAGES.labels(result="ack").inc()
         finally:
             metrics.JOB_PROCESSING_DURATION.labels(processor=processor_name).observe(
                 time.monotonic() - start

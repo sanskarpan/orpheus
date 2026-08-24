@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
@@ -97,7 +96,11 @@ func (h *StreamingHandler) Create(w http.ResponseWriter, r *http.Request) {
 // Get returns one session.
 func (h *StreamingHandler) Get(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Session not found")
+		return
+	}
 	s, err := h.load(r.Context(), p.OrgID, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeProblem(w, http.StatusNotFound, "not_found", "Session not found")
@@ -144,40 +147,50 @@ func (h *StreamingHandler) List(w http.ResponseWriter, r *http.Request) {
 // that returns the stored result.
 func (h *StreamingHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 	p, _ := auth.PrincipalFromContext(r.Context())
-	id := chi.URLParam(r, "id")
+	id, ok := uuidParam(r, "id")
+	if !ok {
+		writeProblem(w, http.StatusNotFound, "not_found", "Session not found")
+		return
+	}
 	var req finalizeStreamingSessionRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeProblem(w, http.StatusBadRequest, "validation", "Invalid JSON")
 		return
 	}
-	if req.AudioSeconds < 0 {
-		writeProblem(w, http.StatusBadRequest, "validation", "audio_seconds must be >= 0")
-		return
-	}
+	// req.AudioSeconds is deliberately ignored: billing is derived only from the
+	// server-metered audio_seconds the relay persisted, which a client cannot
+	// spoof. Accepting a client duration here is what allowed a $0 finalize.
 
-	var found bool
+	var found, conflict bool
 	err := h.DB.WithTenant(r.Context(), p.OrgID, func(ctx context.Context) error {
 		var tag string
-		// Bill on the server-metered audio_seconds recorded by the relay when it
-		// is present; fall back to the client-reported value only when the relay
-		// metered nothing. The pre-update audio_seconds is read in every SET
-		// expression, so cost_usd uses the same resolved duration.
+		// Bill strictly on the server-metered audio_seconds recorded by the relay;
+		// the client-reported value is never used. Finalize is only permitted once
+		// the relay has finished the session — status 'closing' (metered) or
+		// 'failed' (never streamed). A still-'connecting'/'live' session is not
+		// finalize-able, so a mid-stream finalize cannot close it or zero out the
+		// bill before the relay has metered the audio.
 		e := dbtx.QueryRow(ctx, h.DB,
 			`UPDATE streaming_sessions
 			 SET status = 'closed', ended_at = now(), transcript = $2,
-			     audio_seconds = COALESCE(NULLIF(audio_seconds, 0), $3),
-			     cost_usd = COALESCE(NULLIF(audio_seconds, 0), $3) * $4
-			 WHERE id = $1 AND org_id = $5 AND status <> 'closed'
+			     cost_usd = COALESCE(audio_seconds, 0) * $3
+			 WHERE id = $1 AND org_id = $4 AND status IN ('closing', 'failed')
 			 RETURNING 'ok'`,
-			id, req.Transcript, req.AudioSeconds, streamingCostPerAudioSecond, p.OrgID,
+			id, req.Transcript, streamingCostPerAudioSecond, p.OrgID,
 		).Scan(&tag)
 		if errors.Is(e, pgx.ErrNoRows) {
-			// Either not found, or already closed (idempotent) — distinguish below.
-			var exists bool
+			// No row finalized: the session is missing, already closed (idempotent
+			// replay), or still in flight (not yet finalize-able) — distinguish by
+			// reading its current status.
+			var status string
 			if e2 := dbtx.QueryRow(ctx, h.DB,
-				`SELECT true FROM streaming_sessions WHERE id = $1 AND org_id = $2`, id, p.OrgID,
-			).Scan(&exists); e2 == nil {
-				found = true // already closed
+				`SELECT status FROM streaming_sessions WHERE id = $1 AND org_id = $2`, id, p.OrgID,
+			).Scan(&status); e2 == nil {
+				if status == "closed" {
+					found = true // already finalized — return the stored result
+					return nil
+				}
+				conflict = true // 'connecting'/'live' — relay hasn't finished metering
 				return nil
 			}
 			return pgx.ErrNoRows
@@ -188,12 +201,16 @@ func (h *StreamingHandler) Finalize(w http.ResponseWriter, r *http.Request) {
 		found = true
 		return nil
 	})
-	if errors.Is(err, pgx.ErrNoRows) || !found {
+	if errors.Is(err, pgx.ErrNoRows) || (!found && !conflict) {
 		writeProblem(w, http.StatusNotFound, "not_found", "Session not found")
 		return
 	}
 	if err != nil {
 		writeProblem(w, http.StatusInternalServerError, "internal", "Failed to finalize session")
+		return
+	}
+	if conflict {
+		writeProblem(w, http.StatusConflict, "conflict", "Session is still streaming; finalize is not available until the relay has closed it")
 		return
 	}
 	s, err := h.load(r.Context(), p.OrgID, id)

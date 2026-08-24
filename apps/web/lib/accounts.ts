@@ -78,7 +78,15 @@ function ensureSchema(): Promise<void> {
          is_platform_admin INTEGER NOT NULL DEFAULT 0,
          created_at        TEXT NOT NULL
        );`,
-    ).then(() => undefined);
+    )
+      .then(() => undefined)
+      // Do NOT cache a rejected promise — a transient D1 failure at first use
+      // would otherwise brick the store until process restart. Reset so the
+      // next call retries.
+      .catch((e) => {
+        _schemaReady = null;
+        throw e;
+      });
   }
   return _schemaReady;
 }
@@ -132,15 +140,13 @@ function adminEmails(): Set<string> {
   );
 }
 
-async function countAccounts(): Promise<number> {
-  const rows = await d1Query<{ n: number }>("SELECT COUNT(*) AS n FROM accounts");
-  return rows[0]?.n ?? 0;
-}
-
-/** The first account created, or any configured email, is a platform admin. */
+/** Platform admin is granted ONLY to explicitly configured emails
+ * (`ORPHEUS_PLATFORM_ADMIN_EMAILS`). We deliberately do NOT auto-promote the
+ * first account: on a public deployment that would make the first random
+ * signup a cross-tenant platform admin. Seed the first admin by configuring
+ * its email. */
 export async function resolvePlatformAdmin(email: string): Promise<boolean> {
-  if (adminEmails().has(email.toLowerCase())) return true;
-  return (await countAccounts()) === 0;
+  return adminEmails().has(email.toLowerCase());
 }
 
 /* ---- account CRUD ---- */
@@ -213,13 +219,16 @@ export async function setOrgKeyId(accountId: string, keyId: string): Promise<voi
 }
 
 export async function getAccountById(id: string): Promise<Account | null> {
+  await ensureSchema();
+  const rows = await d1Query<Row>("SELECT * FROM accounts WHERE id = ?", [id]);
+  // D1/network errors above propagate as real failures — a transient outage
+  // must not look like "no such account" and silently sign valid users out.
+  if (!rows[0]) return null;
   try {
-    await ensureSchema();
-    const rows = await d1Query<Row>("SELECT * FROM accounts WHERE id = ?", [id]);
-    return rows[0] ? rowToAccount(rows[0]) : null;
+    return rowToAccount(rows[0]);
   } catch {
-    // Corrupt org_key_enc or a rotated SESSION_SECRET makes decrypt() throw.
-    // Treat as "no account" so callers run the stale-session recovery path.
+    // Only a decrypt failure (corrupt org_key_enc / rotated SESSION_SECRET) is
+    // treated as "no account", so callers run stale-session recovery.
     return null;
   }
 }

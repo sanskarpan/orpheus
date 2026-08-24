@@ -159,6 +159,22 @@ def _norm(word: str) -> str:
     return "".join(c for c in word.lower() if c.isalnum())
 
 
+# A client-supplied sample rate must fall in this range. Anything else (notably
+# 0, which divides into a ZeroDivisionError on the first audio frame) is rejected
+# on the `start` control frame before it can reach the session.
+_MIN_SAMPLE_RATE = 8_000
+_MAX_SAMPLE_RATE = 48_000
+
+
+def _valid_sample_rate(rate: Any) -> bool:
+    """True for an int (not bool) sample rate within the accepted range."""
+    return (
+        isinstance(rate, int)
+        and not isinstance(rate, bool)
+        and _MIN_SAMPLE_RATE <= rate <= _MAX_SAMPLE_RATE
+    )
+
+
 @dataclass
 class StreamConfig:
     sample_rate: int = 16_000
@@ -218,6 +234,12 @@ class StreamConfig:
     # The client sets this (via a bot_state control frame) while the agent's TTS is
     # playing; a user speech_start while it's True raises a barge_in.
     bot_speaking: bool = False
+
+    @property
+    def sample_rate_hz(self) -> int:
+        """Sample rate guarded for use as a divisor: never zero, even if a bad
+        value somehow slipped past control-frame validation."""
+        return self.sample_rate if self.sample_rate > 0 else 16_000
 
     @property
     def min_chunk_samples(self) -> int:
@@ -604,7 +626,7 @@ class StreamSession:
     def _detect_speech_events(self) -> list[dict[str, Any]]:
         """Emit speech_start / speech_end (+ barge_in) on VAD state transitions."""
         events: list[dict[str, Any]] = []
-        now = round(self._offset_s + self._buffer_samples / self.config.sample_rate, 3)
+        now = round(self._offset_s + self._buffer_samples / self.config.sample_rate_hz, 3)
         speech = self._vad_is_speech()
         if speech and not self._in_speech:
             self._in_speech = True
@@ -779,7 +801,7 @@ class StreamSession:
             cut_s = words[self._committed - 1]["end"]
             cut_samples = min(int(cut_s * self.config.sample_rate), self._buffer_samples)
             del self._buffer[: cut_samples * _BYTES_PER_SAMPLE]
-            self._offset_s += cut_samples / self.config.sample_rate
+            self._offset_s += cut_samples / self.config.sample_rate_hz
             self._committed = 0
             self._committed_local_end_s = 0.0
             self._prev = []
@@ -792,7 +814,7 @@ class StreamSession:
             drop = self._buffer_samples - int(self.config.max_buffer_samples * 0.5)
             if drop > 0:
                 del self._buffer[: drop * _BYTES_PER_SAMPLE]
-                self._offset_s += drop / self.config.sample_rate
+                self._offset_s += drop / self.config.sample_rate_hz
                 self._committed = 0
                 self._committed_local_end_s = 0.0
                 self._prev = []
@@ -989,7 +1011,12 @@ def create_app(
 
                 if (data := msg.get("bytes")) is not None:
                     sess = await ensure_session()
-                    for ev in sess.add_audio(data):
+                    try:
+                        events = sess.add_audio(data)
+                    except Exception:
+                        # A malformed frame must not tear down the session; skip it.
+                        continue
+                    for ev in events:
                         await ws.send_text(json.dumps(ev))
                     continue
 
@@ -1004,7 +1031,20 @@ def create_app(
 
                 ctype = control.get("type")
                 if ctype == "start":
-                    if isinstance(control.get("sample_rate"), int):
+                    if "sample_rate" in control:
+                        if not _valid_sample_rate(control["sample_rate"]):
+                            await ws.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "error",
+                                        "error": (
+                                            "invalid sample_rate (require "
+                                            f"{_MIN_SAMPLE_RATE}-{_MAX_SAMPLE_RATE} Hz)"
+                                        ),
+                                    }
+                                )
+                            )
+                            continue
                         config.sample_rate = control["sample_rate"]
                     if isinstance(control.get("turn_backend"), str):
                         config.turn_backend = control["turn_backend"]
@@ -1076,7 +1116,12 @@ def create_app(
                 if msg["type"] == "websocket.disconnect":
                     break
                 if (data := msg.get("bytes")) is not None:
-                    for ev in ensure().add_audio(data):
+                    try:
+                        events = ensure().add_audio(data)
+                    except Exception:
+                        # A malformed frame must not tear down the session; skip it.
+                        continue
+                    for ev in events:
                         await ws.send_text(json.dumps(ev))
                     continue
                 text = msg.get("text")
@@ -1089,7 +1134,20 @@ def create_app(
                     continue
                 ctype = control.get("type")
                 if ctype == "start":
-                    if isinstance(control.get("sample_rate"), int):
+                    if "sample_rate" in control:
+                        if not _valid_sample_rate(control["sample_rate"]):
+                            await ws.send_text(
+                                json.dumps(
+                                    {
+                                        "type": "error",
+                                        "error": (
+                                            "invalid sample_rate (require "
+                                            f"{_MIN_SAMPLE_RATE}-{_MAX_SAMPLE_RATE} Hz)"
+                                        ),
+                                    }
+                                )
+                            )
+                            continue
                         config.sample_rate = control["sample_rate"]
                     session = None
                     await ws.send_text(json.dumps({"type": "ready"}))
