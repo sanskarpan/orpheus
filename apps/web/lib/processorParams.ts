@@ -28,6 +28,8 @@ export interface ParamField {
   required?: boolean;
   /** A checkbox that MUST be checked to submit (e.g. biometric consent). */
   mustBeTrue?: boolean;
+  /** Power-user field — hidden behind an "Advanced options" disclosure by default. */
+  advanced?: boolean;
   default?: ParamValue;
   placeholder?: string;
   help?: string;
@@ -56,41 +58,44 @@ const REDACT_FIELDS: ParamField[] = [
   },
   {
     name: "mask",
-    label: "Mask",
+    label: "Mask style",
     type: "select",
+    advanced: true,
     options: [
-      { value: "type", label: "type (label)" },
-      { value: "char", label: "char (•••)" },
-      { value: "hash", label: "hash" },
+      { value: "type", label: "Type label" },
+      { value: "char", label: "Characters (•••)" },
+      { value: "hash", label: "Hash" },
     ],
   },
 ];
 
 export const CURATED_PARAMS: Record<string, ParamField[]> = {
   transcribe: [
-    { name: "model", label: "Model", type: "text", default: "tiny.en", placeholder: "tiny.en" },
     { name: "language", label: "Language", type: "text", placeholder: "blank = auto-detect" },
     { name: "word_timestamps", label: "Word timestamps", type: "bool" },
+    { name: "model", label: "Model", type: "text", advanced: true, placeholder: "server default" },
     {
       name: "chunking",
       label: "Chunking",
       type: "select",
+      advanced: true,
       options: [
-        { value: "vad", label: "vad" },
-        { value: "fixed", label: "fixed" },
+        { value: "vad", label: "Voice activity (VAD)" },
+        { value: "fixed", label: "Fixed windows" },
       ],
     },
-    { name: "multilang", label: "Multilingual", type: "bool" },
+    { name: "multilang", label: "Multilingual", type: "bool", advanced: true },
     {
       name: "alignment",
       label: "Alignment",
       type: "select",
+      advanced: true,
       options: [
-        { value: "", label: "none" },
-        { value: "forced", label: "forced" },
+        { value: "", label: "None" },
+        { value: "forced", label: "Forced" },
       ],
     },
-    { name: "per_channel", label: "Per channel", type: "bool" },
+    { name: "per_channel", label: "Per channel", type: "bool", advanced: true },
   ],
   slice: [
     { name: "start_seconds", label: "Start (s)", type: "number", required: true },
@@ -98,7 +103,7 @@ export const CURATED_PARAMS: Record<string, ParamField[]> = {
   ],
   "text.translate": [
     { name: "target_language", label: "Target language", type: "text", required: true, placeholder: "es" },
-    { name: "source_language", label: "Source language", type: "text", default: "auto" },
+    { name: "source_language", label: "Source language", type: "text", advanced: true, default: "auto" },
   ],
   "text.summarize": [
     {
@@ -106,26 +111,27 @@ export const CURATED_PARAMS: Record<string, ParamField[]> = {
       label: "Mode",
       type: "select",
       options: [
-        { value: "abstract", label: "abstract" },
-        { value: "bullets", label: "bullets" },
-        { value: "chapters", label: "chapters" },
-        { value: "action_items", label: "action_items" },
+        { value: "abstract", label: "Abstract" },
+        { value: "bullets", label: "Bullet points" },
+        { value: "chapters", label: "Chapters" },
+        { value: "action_items", label: "Action items" },
       ],
     },
-    { name: "max_tokens", label: "Max tokens", type: "number", default: 512 },
+    { name: "max_tokens", label: "Max tokens", type: "number", advanced: true, default: 512 },
   ],
   "audio.chapters": [],
   "text.moderate": [
+    { name: "mask_profanity", label: "Mask profanity", type: "bool" },
     {
       name: "engine",
       label: "Engine",
       type: "select",
+      advanced: true,
       options: [
-        { value: "lexicon", label: "lexicon" },
-        { value: "llm", label: "llm" },
+        { value: "lexicon", label: "Lexicon" },
+        { value: "llm", label: "LLM" },
       ],
     },
-    { name: "mask_profanity", label: "Mask profanity", type: "bool" },
   ],
   "audio.redact": REDACT_FIELDS,
   "text.redact": REDACT_FIELDS,
@@ -135,12 +141,12 @@ export const CURATED_PARAMS: Record<string, ParamField[]> = {
       label: "Mode",
       type: "select",
       options: [
-        { value: "denoise", label: "denoise" },
-        { value: "dereverb", label: "dereverb" },
-        { value: "isolate", label: "isolate" },
-        { value: "background_voice", label: "background_voice" },
-        { value: "telephony", label: "telephony" },
-        { value: "accent", label: "accent" },
+        { value: "denoise", label: "Denoise" },
+        { value: "dereverb", label: "De-reverb" },
+        { value: "isolate", label: "Isolate voice" },
+        { value: "background_voice", label: "Background voice" },
+        { value: "telephony", label: "Telephony" },
+        { value: "accent", label: "Accent" },
       ],
     },
   ],
@@ -149,7 +155,7 @@ export const CURATED_PARAMS: Record<string, ParamField[]> = {
       name: "mode",
       label: "Mode",
       type: "select",
-      options: [{ value: "remove_fillers", label: "remove_fillers" }],
+      options: [{ value: "remove_fillers", label: "Remove fillers" }],
     },
   ],
   "speaker.enroll": [
@@ -226,9 +232,26 @@ function fieldsFromJsonSchema(schema: unknown): ParamField[] | null {
   return fields.length > 0 ? fields : null;
 }
 
+/* Power-user field names per processor, applied to schema-derived fields (curated
+ * specs carry their own `advanced` flags inline). Keeps the default form to the
+ * genuinely useful basics; everything here hides behind "Advanced options". */
+const ADVANCED_FIELDS: Record<string, Set<string>> = {
+  transcribe: new Set(["model", "chunking", "multilang", "alignment", "per_channel"]),
+  "text.translate": new Set(["source_language"]),
+  "text.summarize": new Set(["max_tokens"]),
+  "text.moderate": new Set(["engine"]),
+  "audio.redact": new Set(["mask"]),
+  "text.redact": new Set(["mask"]),
+};
+
 /** Resolve the param fields for a processor: JSON-Schema first, curated fallback. */
 export function fieldsForProcessor(name: string, inputSchema?: unknown): ParamField[] {
-  return fieldsFromJsonSchema(inputSchema) ?? CURATED_PARAMS[name] ?? [];
+  const schemaFields = fieldsFromJsonSchema(inputSchema);
+  if (schemaFields) {
+    const adv = ADVANCED_FIELDS[name];
+    return adv ? schemaFields.map((f) => (adv.has(f.name) ? { ...f, advanced: true } : f)) : schemaFields;
+  }
+  return CURATED_PARAMS[name] ?? [];
 }
 
 /* ---- values: init / validate / build ---- */
